@@ -164,8 +164,9 @@ python main.py pretrain \
 
 ### Neptune/Merlin launcher
 For Neptune/Merlin workers, use `run_train.sh` so environment checks, run
-workspace creation, GPU detection, and `torchrun` arguments are handled in one
-place.
+workspace creation, GPU detection, and the `python main.py pretrain` command are
+handled in one place. The launcher intentionally uses `python` directly, matching
+the default cluster entrypoint style used by `neptune_chat`.
 
 Smoke test:
 ```

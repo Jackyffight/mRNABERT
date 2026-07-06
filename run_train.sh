@@ -4,7 +4,7 @@
 # Examples:
 #   ./run_train.sh --env devbox --smoke --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt
 #   ./run_train.sh --env devbox --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt
-#   ./run_train.sh --env devbox --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt --batch-size 48 --grad-accum 2 --python /usr/bin/python3
+#   ./run_train.sh --env devbox --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt --batch-size 48 --grad-accum 2
 
 set -euo pipefail
 
@@ -35,7 +35,7 @@ TF32=true
 USE_TRITON_FLASH_ATTN=false
 RESUME=""
 INSTALL_DEPS=false
-PYTHON_BIN="${MRNABERT_PYTHON:-}"
+PYTHON_BIN="${MRNABERT_PYTHON:-python}"
 
 BATCH_SIZE_SET=false
 GRAD_ACCUM_SET=false
@@ -77,7 +77,7 @@ Launcher args:
                               Default is stable PyTorch attention fallback.
   --resume <checkpoint>       Resume from checkpoint.
   --install-deps              pip install -r requirements.txt before training.
-  --python <path>             Python binary. Default: $MRNABERT_PYTHON, then python3/python.
+  --python <path>             Python binary. Default: $MRNABERT_PYTHON or python.
 
 Any unknown arguments are passed through to `python main.py pretrain`.
 EOF
@@ -190,14 +190,14 @@ mkdir -p "$TRITON_CACHE_DIR"
 export NCCL_DEBUG=${NCCL_DEBUG:-WARN}
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 
-if [ -n "$PYTHON_BIN" ]; then
-  PYTHON="$PYTHON_BIN"
-else
-  PYTHON=$(command -v python3 || command -v python)
-fi
+PYTHON="$PYTHON_BIN"
 if [ ! -x "$PYTHON" ]; then
-  echo "Error: python is not executable: $PYTHON"
-  exit 1
+  if command -v "$PYTHON" >/dev/null 2>&1; then
+    PYTHON=$(command -v "$PYTHON")
+  else
+    echo "Error: python is not executable or on PATH: $PYTHON"
+    exit 1
+  fi
 fi
 
 if [ "$INSTALL_DEPS" = true ]; then
@@ -228,12 +228,6 @@ print(
 )
 PY
 
-if [ -x "$(dirname "$PYTHON")/torchrun" ]; then
-  TORCHRUN="$(dirname "$PYTHON")/torchrun"
-else
-  TORCHRUN=$(command -v torchrun)
-fi
-
 NUM_GPUS=$("$PYTHON" - <<'PY'
 import torch
 print(torch.cuda.device_count())
@@ -242,17 +236,6 @@ PY
 if [ "$NUM_GPUS" -lt 1 ]; then
   echo "Error: no CUDA GPU detected."
   exit 1
-fi
-
-if [ -z "${MASTER_PORT:-}" ]; then
-  MASTER_PORT=$("$PYTHON" - <<'PY'
-import socket
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.bind(("", 0))
-print(s.getsockname()[1])
-s.close()
-PY
-)
 fi
 
 mkdir -p "$WORK_DATA" "$WORK_LOGS" "$OUTPUT_DIR"
@@ -294,7 +277,6 @@ echo "model: $MODEL_NAME"
 echo "train_file: $EFFECTIVE_TRAIN_FILE"
 echo "output_dir: $OUTPUT_DIR"
 echo "gpus: $NUM_GPUS"
-echo "master_port: $MASTER_PORT"
 echo "batch_size: $BATCH_SIZE"
 echo "grad_accum: $GRAD_ACCUM"
 echo "epochs: $EPOCHS"
@@ -310,10 +292,7 @@ if command -v nvidia-smi >/dev/null 2>&1; then
 fi
 echo "========================="
 
-"$TORCHRUN" \
-  --nproc_per_node="$NUM_GPUS" \
-  --master_port="$MASTER_PORT" \
-  main.py pretrain \
+"$PYTHON" main.py pretrain \
   --output_dir "$OUTPUT_DIR" \
   --model_name_or_path "$MODEL_NAME" \
   --do_train \

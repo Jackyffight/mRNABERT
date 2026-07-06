@@ -144,11 +144,11 @@ class TrainingSummaryCallback(TrainerCallback):
         if not getattr(state, "is_local_process_zero", True):
             return
         world_size = max(1, getattr(args, "world_size", 1))
-        effective_batch = args.per_device_train_batch_size * args.gradient_accumulation_steps * world_size
+        effective_batch = args.train_batch_size * args.gradient_accumulation_steps * world_size
         logger.info(
-            "Effective batch size: %s = per_device(%s) * grad_accum(%s) * world_size(%s)",
+            "Effective batch size: %s = train_batch(%s) * grad_accum(%s) * world_size(%s)",
             effective_batch,
-            args.per_device_train_batch_size,
+            args.train_batch_size,
             args.gradient_accumulation_steps,
             world_size,
         )
