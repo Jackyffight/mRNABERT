@@ -99,6 +99,10 @@ class DataTrainingArguments:
     dataset_config_name: Optional[str] = field(default=None)
     train_file: Optional[str] = field(default=None)
     validation_file: Optional[str] = field(default=None)
+    dataset_cache_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "Cache directory for HuggingFace datasets/Arrow files."},
+    )
     overwrite_cache: bool = field(default=False)
     validation_split_percentage: int = field(default=5)
     max_seq_length: int = field(default=1024)
@@ -211,12 +215,13 @@ def _file_extension(path: str) -> str:
 
 def load_raw_datasets(data_args: DataTrainingArguments, model_args: ModelArguments, do_eval: bool):
     dataset_auth_kwargs = get_dataset_auth_kwargs(model_args.use_auth_token)
+    dataset_cache_dir = data_args.dataset_cache_dir or model_args.cache_dir
 
     if data_args.dataset_name is not None:
         raw_datasets = load_dataset(
             data_args.dataset_name,
             data_args.dataset_config_name,
-            cache_dir=model_args.cache_dir,
+            cache_dir=dataset_cache_dir,
             streaming=data_args.streaming,
             **dataset_auth_kwargs,
         )
@@ -225,7 +230,7 @@ def load_raw_datasets(data_args: DataTrainingArguments, model_args: ModelArgumen
                 data_args.dataset_name,
                 data_args.dataset_config_name,
                 split=f"train[:{data_args.validation_split_percentage}%]",
-                cache_dir=model_args.cache_dir,
+                cache_dir=dataset_cache_dir,
                 streaming=data_args.streaming,
                 **dataset_auth_kwargs,
             )
@@ -233,7 +238,7 @@ def load_raw_datasets(data_args: DataTrainingArguments, model_args: ModelArgumen
                 data_args.dataset_name,
                 data_args.dataset_config_name,
                 split=f"train[{data_args.validation_split_percentage}%:]",
-                cache_dir=model_args.cache_dir,
+                cache_dir=dataset_cache_dir,
                 streaming=data_args.streaming,
                 **dataset_auth_kwargs,
             )
@@ -253,7 +258,7 @@ def load_raw_datasets(data_args: DataTrainingArguments, model_args: ModelArgumen
     raw_datasets = load_dataset(
         extension,
         data_files=data_files,
-        cache_dir=model_args.cache_dir,
+        cache_dir=dataset_cache_dir,
         streaming=data_args.streaming,
     )
     if do_eval and "validation" not in raw_datasets.keys():
@@ -261,14 +266,14 @@ def load_raw_datasets(data_args: DataTrainingArguments, model_args: ModelArgumen
             extension,
             data_files=data_files,
             split=f"train[:{data_args.validation_split_percentage}%]",
-            cache_dir=model_args.cache_dir,
+            cache_dir=dataset_cache_dir,
             streaming=data_args.streaming,
         )
         raw_datasets["train"] = load_dataset(
             extension,
             data_files=data_files,
             split=f"train[{data_args.validation_split_percentage}%:]",
-            cache_dir=model_args.cache_dir,
+            cache_dir=dataset_cache_dir,
             streaming=data_args.streaming,
         )
     return raw_datasets

@@ -16,6 +16,7 @@ OUTPUT_ROOT="/mnt/hdfs/byte_neptune_ai/mrna/train/runs"
 OUTPUT_DIR=""
 RUN_NAME=""
 SAMPLE_LINES=20000
+DATASET_CACHE_DIR=""
 
 BATCH_SIZE=32
 GRAD_ACCUM=4
@@ -58,6 +59,7 @@ Launcher args:
   --output-root <dir>         Run workspace root. Default: /mnt/hdfs/byte_neptune_ai/mrna/train/runs.
   --output-dir <dir>          Exact output dir for Trainer. Overrides --output-root workspace output.
   --run-name <name>           Run name under --output-root.
+  --dataset-cache-dir <dir>   HuggingFace datasets cache. Default: <workspace>/cache/datasets.
   --sample-lines <n>          Smoke sample lines. Default: 20000.
   --batch-size <n>            Per-device train batch size. Default: 32, smoke default: 8.
   --grad-accum <n>            Gradient accumulation. Default: 4, smoke default: 1.
@@ -95,6 +97,7 @@ while [ $# -gt 0 ]; do
     --output-root|--output_root) OUTPUT_ROOT="$2"; shift 2 ;;
     --output-dir|--output_dir) OUTPUT_DIR="$2"; shift 2 ;;
     --run-name|--run_name) RUN_NAME="$2"; shift 2 ;;
+    --dataset-cache-dir|--dataset_cache_dir) DATASET_CACHE_DIR="$2"; shift 2 ;;
     --sample-lines|--sample_lines) SAMPLE_LINES="$2"; shift 2 ;;
     --batch-size|--batch_size) BATCH_SIZE="$2"; BATCH_SIZE_SET=true; shift 2 ;;
     --grad-accum|--grad_accum) GRAD_ACCUM="$2"; GRAD_ACCUM_SET=true; shift 2 ;;
@@ -151,8 +154,12 @@ fi
 WORKSPACE="${OUTPUT_ROOT}/${RUN_NAME}"
 WORK_DATA="${WORKSPACE}/data"
 WORK_LOGS="${WORKSPACE}/logs"
+WORK_CACHE="${WORKSPACE}/cache"
 if [ -z "$OUTPUT_DIR" ]; then
   OUTPUT_DIR="${WORKSPACE}/output"
+fi
+if [ -z "$DATASET_CACHE_DIR" ]; then
+  DATASET_CACHE_DIR="${WORK_CACHE}/datasets"
 fi
 
 requires_hdfs=false
@@ -258,7 +265,7 @@ if [ "$NUM_GPUS" -lt 1 ]; then
   exit 1
 fi
 
-mkdir -p "$WORK_DATA" "$WORK_LOGS" "$OUTPUT_DIR"
+mkdir -p "$WORK_DATA" "$WORK_LOGS" "$OUTPUT_DIR" "$DATASET_CACHE_DIR"
 
 EFFECTIVE_TRAIN_FILE="$TRAIN_FILE"
 if [ "$MODE" = "smoke" ]; then
@@ -296,6 +303,7 @@ echo "workspace: $WORKSPACE"
 echo "model: $MODEL_NAME"
 echo "train_file: $EFFECTIVE_TRAIN_FILE"
 echo "output_dir: $OUTPUT_DIR"
+echo "dataset_cache_dir: $DATASET_CACHE_DIR"
 echo "gpus: $NUM_GPUS"
 echo "cuda_visible_devices: ${CUDA_VISIBLE_DEVICES:-all}"
 echo "batch_size: $BATCH_SIZE"
@@ -318,6 +326,7 @@ echo "========================="
   --model_name_or_path "$MODEL_NAME" \
   --do_train \
   --train_file "$EFFECTIVE_TRAIN_FILE" \
+  --dataset_cache_dir "$DATASET_CACHE_DIR" \
   --line_by_line \
   --max_seq_length "$MAX_SEQ_LENGTH" \
   --per_device_train_batch_size "$BATCH_SIZE" \

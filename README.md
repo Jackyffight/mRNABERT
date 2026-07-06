@@ -174,6 +174,13 @@ the intended smoke-test path. Use `--devices <id>` to pick another GPU, or
 `--devices all` only when an external distributed launcher is managing one
 process per GPU.
 
+Large training files do not live in GPU memory. GPU memory is mainly determined
+by model size, sequence length, batch size, precision, activations, gradients,
+and optimizer state. The large-file risk is disk cache: HuggingFace datasets
+materializes Arrow/tokenized cache. The launcher therefore defaults
+`--dataset-cache-dir` to `<workspace>/cache/datasets` instead of writing large
+cache files under `~/.cache/huggingface`.
+
 Smoke test:
 ```
 ./run_train.sh \
