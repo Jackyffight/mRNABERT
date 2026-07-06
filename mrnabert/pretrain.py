@@ -130,18 +130,18 @@ class DataTrainingArguments:
     max_eval_samples: Optional[int] = field(default=None)
     streaming: bool = field(default=False)
     streaming_reader: str = field(
-        default="byte-range",
+        default="line-stride",
         metadata={
-            "help": "byte-range uses an in-process rank/worker sharded local text reader; "
-            "hf uses HuggingFace datasets streaming."
+            "help": "line-stride sequentially reads local text and shards by rank/worker; "
+            "byte-range uses seek-based sharding; hf uses HuggingFace datasets streaming."
         },
     )
 
     def __post_init__(self) -> None:
         if self.streaming:
             require_version("datasets>=2.0.0", "The streaming feature requires datasets>=2.0.0")
-        if self.streaming_reader not in {"byte-range", "hf"}:
-            raise ValueError("--streaming_reader must be byte-range or hf.")
+        if self.streaming_reader not in {"line-stride", "byte-range", "hf"}:
+            raise ValueError("--streaming_reader must be line-stride, byte-range, or hf.")
         if self.dataset_name is None and self.train_file is None and self.validation_file is None:
             raise ValueError("Need either a dataset name or a train/validation file.")
         for value, label in ((self.train_file, "train_file"), (self.validation_file, "validation_file")):
@@ -256,6 +256,56 @@ class ByteRangeTokenizedTextDataset(torch.utils.data.IterableDataset):
                     return
                 yielded += 1
                 yield self._tokenize(line)
+
+
+class LineStrideTokenizedTextDataset(torch.utils.data.IterableDataset):
+    """Read local text files sequentially and shard lines across ranks/workers."""
+
+    def __init__(
+        self,
+        files: Sequence[str],
+        tokenizer,
+        max_seq_length: int,
+        pad_to_max_length: bool,
+        max_samples: Optional[int] = None,
+    ) -> None:
+        self.files = list(files)
+        self.tokenizer = tokenizer
+        self.max_seq_length = max_seq_length
+        self.pad_to_max_length = pad_to_max_length
+        self.max_samples = max_samples
+
+    def _tokenize(self, line: str) -> dict:
+        padding = "max_length" if self.pad_to_max_length else False
+        return self.tokenizer(
+            line,
+            padding=padding,
+            truncation=True,
+            max_length=self.max_seq_length,
+            return_special_tokens_mask=True,
+        )
+
+    def __iter__(self):
+        rank, world_size = get_distributed_rank_info()
+        worker_info = torch.utils.data.get_worker_info()
+        worker_id = worker_info.id if worker_info is not None else 0
+        num_workers = worker_info.num_workers if worker_info is not None else 1
+        partition_id = rank * num_workers + worker_id
+        num_partitions = max(1, world_size * num_workers)
+        yielded = 0
+
+        for path in self.files:
+            with open(path, "rb") as handle:
+                for line_index, raw_line in enumerate(handle):
+                    if line_index % num_partitions != partition_id:
+                        continue
+                    line = raw_line.decode("utf-8", errors="ignore").strip()
+                    if not line:
+                        continue
+                    if self.max_samples is not None and yielded >= self.max_samples:
+                        return
+                    yielded += 1
+                    yield self._tokenize(line)
 
 
 def setup_logging(training_args: TrainingArguments) -> None:
@@ -403,10 +453,10 @@ def shard_streaming_datasets(raw_datasets, data_args: DataTrainingArguments):
     return raw_datasets
 
 
-def can_use_byte_range_streaming(data_args: DataTrainingArguments) -> bool:
+def can_use_local_text_streaming(data_args: DataTrainingArguments) -> bool:
     return (
         data_args.streaming
-        and data_args.streaming_reader == "byte-range"
+        and data_args.streaming_reader in {"line-stride", "byte-range"}
         and data_args.dataset_name is None
         and data_args.line_by_line
         and data_args.train_file is not None
@@ -414,17 +464,23 @@ def can_use_byte_range_streaming(data_args: DataTrainingArguments) -> bool:
     )
 
 
-def build_byte_range_streaming_datasets(tokenizer, data_args: DataTrainingArguments):
+def build_local_text_streaming_datasets(tokenizer, data_args: DataTrainingArguments):
     train_files = resolve_text_files(data_args.train_file or "")
     rank, world_size = get_distributed_rank_info()
     max_seq_length = resolve_max_seq_length(tokenizer, data_args)
+    dataset_cls = (
+        ByteRangeTokenizedTextDataset
+        if data_args.streaming_reader == "byte-range"
+        else LineStrideTokenizedTextDataset
+    )
     logger.info(
-        "Using byte-range streaming reader for %s train file(s), rank=%s, world_size=%s",
+        "Using %s streaming reader for %s train file(s), rank=%s, world_size=%s",
+        data_args.streaming_reader,
         len(train_files),
         rank,
         world_size,
     )
-    train_dataset = ByteRangeTokenizedTextDataset(
+    train_dataset = dataset_cls(
         files=train_files,
         tokenizer=tokenizer,
         max_seq_length=max_seq_length,
@@ -435,7 +491,7 @@ def build_byte_range_streaming_datasets(tokenizer, data_args: DataTrainingArgume
     eval_dataset = None
     if data_args.validation_file is not None:
         validation_files = resolve_text_files(data_args.validation_file)
-        eval_dataset = ByteRangeTokenizedTextDataset(
+        eval_dataset = dataset_cls(
             files=validation_files,
             tokenizer=tokenizer,
             max_seq_length=max_seq_length,
@@ -609,8 +665,8 @@ def build_trainer(
     runtime = model_args.runtime_config(model_max_length=data_args.max_seq_length or training_args.model_max_length)
     bundle = load_mlm_model_and_tokenizer(runtime)
 
-    if can_use_byte_range_streaming(data_args):
-        train_dataset, eval_dataset = build_byte_range_streaming_datasets(bundle.tokenizer, data_args)
+    if can_use_local_text_streaming(data_args):
+        train_dataset, eval_dataset = build_local_text_streaming_datasets(bundle.tokenizer, data_args)
     else:
         raw_datasets = load_raw_datasets(data_args, model_args, do_eval=training_args.do_eval)
         raw_datasets = shard_streaming_datasets(raw_datasets, data_args)

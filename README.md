@@ -221,10 +221,11 @@ Short exploratory run on the full file:
 ```
 
 This uses streaming by default because `--max-steps` is set. For local text
-training files, streaming defaults to the in-process `byte-range` reader, which
-automatically shards each file across DDP ranks and dataloader workers. You do
-not need to split or recombine `pre.txt` manually. Use
-`--streaming-reader hf` only to fall back to HuggingFace datasets streaming.
+training files on HDFS/FUSE, streaming defaults to the in-process `line-stride`
+reader, which sequentially scans each file and shards lines across DDP ranks and
+dataloader workers. You do not need to split or recombine `pre.txt` manually.
+Use `--streaming-reader byte-range` only on filesystems with fast random seek,
+or `--streaming-reader hf` to fall back to HuggingFace datasets streaming.
 
 The default output workspace is:
 ```

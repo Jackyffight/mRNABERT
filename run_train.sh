@@ -45,7 +45,7 @@ LAUNCHER="${MRNABERT_LAUNCHER:-direct}"
 NPROC_PER_NODE="${MRNABERT_NPROC_PER_NODE:-}"
 MASTER_PORT="${MRNABERT_MASTER_PORT:-}"
 STREAMING_MODE="auto"
-STREAMING_READER="${MRNABERT_STREAMING_READER:-byte-range}"
+STREAMING_READER="${MRNABERT_STREAMING_READER:-line-stride}"
 
 BATCH_SIZE_SET=false
 GRAD_ACCUM_SET=false
@@ -97,7 +97,7 @@ Launcher args:
   --devices <list|all>        CUDA_VISIBLE_DEVICES. Default: first currently visible GPU.
                               For torchrun, default is all visible GPUs.
   --streaming                 Stream data without Arrow/tokenized cache. Default when --max-steps is set.
-  --streaming-reader <reader> byte-range or hf. Default: byte-range.
+  --streaming-reader <reader> line-stride, byte-range, or hf. Default: line-stride.
   --no-streaming              Force Arrow/tokenized cache creation.
 
 Any unknown arguments are passed through to `python main.py pretrain`.
@@ -168,8 +168,8 @@ if [ "$LAUNCHER" != "direct" ] && [ "$LAUNCHER" != "torchrun" ]; then
   echo "Error: --launcher must be direct or torchrun."
   exit 1
 fi
-if [ "$STREAMING_READER" != "byte-range" ] && [ "$STREAMING_READER" != "hf" ]; then
-  echo "Error: --streaming-reader must be byte-range or hf."
+if [ "$STREAMING_READER" != "line-stride" ] && [ "$STREAMING_READER" != "byte-range" ] && [ "$STREAMING_READER" != "hf" ]; then
+  echo "Error: --streaming-reader must be line-stride, byte-range, or hf."
   exit 1
 fi
 
