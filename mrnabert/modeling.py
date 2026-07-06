@@ -90,7 +90,10 @@ def load_mlm_model_and_tokenizer(runtime: ModelRuntimeConfig) -> ModelBundle:
     config_source = runtime.config_name or runtime.model_name_or_path
     tokenizer_source = runtime.tokenizer_name or runtime.model_name_or_path
 
-    config = AutoConfig.from_pretrained(config_source, trust_remote_code=True, **pretrained_kwargs)
+    # YYLY66/mRNABERT ships a remote BertForMaskedLM whose config_class points
+    # at Transformers' built-in BertConfig. Loading the config through remote
+    # code creates a different Python class and AutoModel registration fails.
+    config = AutoConfig.from_pretrained(config_source, trust_remote_code=False, **pretrained_kwargs)
     _force_pytorch_attention_if_needed(config, runtime)
 
     tokenizer = AutoTokenizer.from_pretrained(
