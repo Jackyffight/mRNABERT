@@ -59,7 +59,7 @@ Launcher args:
   --output-root <dir>         Run workspace root. Default: /mnt/hdfs/byte_neptune_ai/mrna/train/runs.
   --output-dir <dir>          Exact output dir for Trainer. Overrides --output-root workspace output.
   --run-name <name>           Run name under --output-root.
-  --dataset-cache-dir <dir>   HuggingFace datasets cache. Default: <workspace>/cache/datasets.
+  --dataset-cache-dir <dir>   HuggingFace datasets cache. Default: <output-root>/cache/datasets.
   --sample-lines <n>          Smoke sample lines. Default: 20000.
   --batch-size <n>            Per-device train batch size. Default: 32, smoke default: 8.
   --grad-accum <n>            Gradient accumulation. Default: 4, smoke default: 1.
@@ -154,12 +154,11 @@ fi
 WORKSPACE="${OUTPUT_ROOT}/${RUN_NAME}"
 WORK_DATA="${WORKSPACE}/data"
 WORK_LOGS="${WORKSPACE}/logs"
-WORK_CACHE="${WORKSPACE}/cache"
 if [ -z "$OUTPUT_DIR" ]; then
   OUTPUT_DIR="${WORKSPACE}/output"
 fi
 if [ -z "$DATASET_CACHE_DIR" ]; then
-  DATASET_CACHE_DIR="${WORK_CACHE}/datasets"
+  DATASET_CACHE_DIR="${OUTPUT_ROOT}/cache/datasets"
 fi
 
 requires_hdfs=false
@@ -171,6 +170,14 @@ done
 if [ "$requires_hdfs" = true ]; then
   if [ ! -d "$HDFS_MNT" ] || ! ls "$HDFS_MNT" >/dev/null 2>&1; then
     echo "Error: HDFS mount is not ready: $HDFS_MNT"
+    exit 1
+  fi
+fi
+
+if [[ "$DATASET_CACHE_DIR" == "$HOME"/* || "$DATASET_CACHE_DIR" == /home/* || "$DATASET_CACHE_DIR" == /root/* ]]; then
+  if [ "${MRNABERT_ALLOW_HOME_CACHE:-false}" != "true" ]; then
+    echo "Error: dataset cache points to a home/root filesystem: $DATASET_CACHE_DIR"
+    echo "Use --dataset-cache-dir on a large mounted path, or set MRNABERT_ALLOW_HOME_CACHE=true to override."
     exit 1
   fi
 fi
@@ -201,6 +208,7 @@ mkdir -p "$TRITON_CACHE_DIR"
 export NCCL_DEBUG=${MRNABERT_NCCL_DEBUG:-WARN}
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 export TRANSFORMERS_NO_ADVISORY_WARNINGS=${TRANSFORMERS_NO_ADVISORY_WARNINGS:-1}
+export HF_DATASETS_CACHE="$DATASET_CACHE_DIR"
 
 # The YYLY66/mRNABERT remote model is not compatible with PyTorch DataParallel:
 # one replica can see an empty parameter iterator inside bert_layers.py and fail

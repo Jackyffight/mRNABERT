@@ -216,6 +216,7 @@ def _file_extension(path: str) -> str:
 def load_raw_datasets(data_args: DataTrainingArguments, model_args: ModelArguments, do_eval: bool):
     dataset_auth_kwargs = get_dataset_auth_kwargs(model_args.use_auth_token)
     dataset_cache_dir = data_args.dataset_cache_dir or model_args.cache_dir
+    logger.info("Using datasets cache dir: %s", dataset_cache_dir or "default")
 
     if data_args.dataset_name is not None:
         raw_datasets = load_dataset(
