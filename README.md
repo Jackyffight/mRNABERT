@@ -168,6 +168,12 @@ workspace creation, GPU detection, and the `python main.py pretrain` command are
 handled in one place. The launcher intentionally uses `python` directly, matching
 the default cluster entrypoint style used by `neptune_chat`.
 
+Because the HuggingFace remote mRNABERT code is not compatible with PyTorch
+`DataParallel`, direct `python` launch defaults to the first visible GPU. This is
+the intended smoke-test path. Use `--devices <id>` to pick another GPU, or
+`--devices all` only when an external distributed launcher is managing one
+process per GPU.
+
 Smoke test:
 ```
 ./run_train.sh \

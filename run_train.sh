@@ -36,6 +36,7 @@ USE_TRITON_FLASH_ATTN=false
 RESUME=""
 INSTALL_DEPS=false
 PYTHON_BIN="${MRNABERT_PYTHON:-python}"
+CUDA_DEVICES="${MRNABERT_CUDA_VISIBLE_DEVICES:-}"
 
 BATCH_SIZE_SET=false
 GRAD_ACCUM_SET=false
@@ -78,6 +79,8 @@ Launcher args:
   --resume <checkpoint>       Resume from checkpoint.
   --install-deps              pip install -r requirements.txt before training.
   --python <path>             Python binary. Default: $MRNABERT_PYTHON or python.
+  --devices <list|all>        CUDA_VISIBLE_DEVICES. Default: first currently visible GPU.
+                              Use all only with a distributed launcher; DataParallel is not supported.
 
 Any unknown arguments are passed through to `python main.py pretrain`.
 EOF
@@ -112,6 +115,7 @@ while [ $# -gt 0 ]; do
     --resume) RESUME="$2"; shift 2 ;;
     --install-deps|--install_deps) INSTALL_DEPS=true; shift ;;
     --python) PYTHON_BIN="$2"; shift 2 ;;
+    --devices|--cuda-visible-devices|--cuda_visible_devices) CUDA_DEVICES="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) TRAIN_ARGS+=("$1"); shift ;;
   esac
@@ -187,8 +191,24 @@ fi
 
 export TRITON_CACHE_DIR=/tmp/triton_cache_mrnabert_$$
 mkdir -p "$TRITON_CACHE_DIR"
-export NCCL_DEBUG=${NCCL_DEBUG:-WARN}
+export NCCL_DEBUG=${MRNABERT_NCCL_DEBUG:-WARN}
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+export TRANSFORMERS_NO_ADVISORY_WARNINGS=${TRANSFORMERS_NO_ADVISORY_WARNINGS:-1}
+
+# The YYLY66/mRNABERT remote model is not compatible with PyTorch DataParallel:
+# one replica can see an empty parameter iterator inside bert_layers.py and fail
+# with StopIteration. Direct `python` launch therefore defaults to one GPU.
+ORIGINAL_CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-}"
+if [ -z "$CUDA_DEVICES" ]; then
+  if [ -n "$ORIGINAL_CUDA_VISIBLE_DEVICES" ]; then
+    CUDA_DEVICES="${ORIGINAL_CUDA_VISIBLE_DEVICES%%,*}"
+  else
+    CUDA_DEVICES="0"
+  fi
+fi
+if [ "$CUDA_DEVICES" != "all" ]; then
+  export CUDA_VISIBLE_DEVICES="$CUDA_DEVICES"
+fi
 
 PYTHON="$PYTHON_BIN"
 if [ ! -x "$PYTHON" ]; then
@@ -277,6 +297,7 @@ echo "model: $MODEL_NAME"
 echo "train_file: $EFFECTIVE_TRAIN_FILE"
 echo "output_dir: $OUTPUT_DIR"
 echo "gpus: $NUM_GPUS"
+echo "cuda_visible_devices: ${CUDA_VISIBLE_DEVICES:-all}"
 echo "batch_size: $BATCH_SIZE"
 echo "grad_accum: $GRAD_ACCUM"
 echo "epochs: $EPOCHS"
