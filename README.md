@@ -180,7 +180,10 @@ by model size, sequence length, batch size, precision, activations, gradients,
 and optimizer state. The large-file risk is disk cache: HuggingFace datasets
 materializes Arrow/tokenized cache. The launcher therefore defaults
 `--dataset-cache-dir` to `<output-root>/cache/datasets` instead of writing large
-cache files under `~/.cache/huggingface`.
+cache files under `~/.cache/huggingface`. Exploratory runs with `--max-steps`
+default to `--streaming`, which skips Arrow/tokenized cache creation. If you
+force cached preprocessing on an HDFS/FUSE mount, the launcher reduces
+tokenization workers to 1 to avoid concurrent Arrow temp-file write failures.
 
 Smoke test:
 ```
@@ -198,6 +201,18 @@ Full stage-1 pretraining:
   --batch-size 32 \
   --grad-accum 4
 ```
+
+Short exploratory run on the full file:
+```
+./run_train.sh \
+  --env devbox \
+  --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt \
+  --max-steps 1000 \
+  --batch-size 16 \
+  --grad-accum 2
+```
+
+This uses streaming by default because `--max-steps` is set.
 
 The default output workspace is:
 ```

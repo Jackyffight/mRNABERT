@@ -38,6 +38,7 @@ RESUME=""
 INSTALL_DEPS=false
 PYTHON_BIN="${MRNABERT_PYTHON:-python}"
 CUDA_DEVICES="${MRNABERT_CUDA_VISIBLE_DEVICES:-}"
+STREAMING_MODE="auto"
 
 BATCH_SIZE_SET=false
 GRAD_ACCUM_SET=false
@@ -83,6 +84,8 @@ Launcher args:
   --python <path>             Python binary. Default: $MRNABERT_PYTHON or python.
   --devices <list|all>        CUDA_VISIBLE_DEVICES. Default: first currently visible GPU.
                               Use all only with a distributed launcher; DataParallel is not supported.
+  --streaming                 Stream data without Arrow/tokenized cache. Default when --max-steps is set.
+  --no-streaming              Force Arrow/tokenized cache creation.
 
 Any unknown arguments are passed through to `python main.py pretrain`.
 EOF
@@ -119,6 +122,8 @@ while [ $# -gt 0 ]; do
     --install-deps|--install_deps) INSTALL_DEPS=true; shift ;;
     --python) PYTHON_BIN="$2"; shift 2 ;;
     --devices|--cuda-visible-devices|--cuda_visible_devices) CUDA_DEVICES="$2"; shift 2 ;;
+    --streaming) STREAMING_MODE=true; shift ;;
+    --no-streaming|--no_streaming) STREAMING_MODE=false; shift ;;
     -h|--help) usage; exit 0 ;;
     *) TRAIN_ARGS+=("$1"); shift ;;
   esac
@@ -144,6 +149,14 @@ if [ "$MODE" = "smoke" ]; then
   [ "$LOGGING_STEPS_SET" = false ] && LOGGING_STEPS=1
   [ "$SAVE_STEPS_SET" = false ] && SAVE_STEPS=20
   [ -z "$MAX_STEPS" ] && MAX_STEPS=20
+fi
+
+if [ "$STREAMING_MODE" = "auto" ]; then
+  if [ -n "$MAX_STEPS" ]; then
+    STREAMING_MODE=true
+  else
+    STREAMING_MODE=false
+  fi
 fi
 
 HDFS_MNT="/mnt/hdfs/byte_neptune_ai"
@@ -180,6 +193,11 @@ if [[ "$DATASET_CACHE_DIR" == "$HOME"/* || "$DATASET_CACHE_DIR" == /home/* || "$
     echo "Use --dataset-cache-dir on a large mounted path, or set MRNABERT_ALLOW_HOME_CACHE=true to override."
     exit 1
   fi
+fi
+
+if [ "$STREAMING_MODE" != "true" ] && [[ "$DATASET_CACHE_DIR" == /mnt/hdfs/* ]] && [ "$PREPROCESSING_NUM_WORKERS" -gt 1 ]; then
+  echo "[preflight] Dataset cache is on HDFS/FUSE; forcing preprocessing workers from $PREPROCESSING_NUM_WORKERS to 1 to avoid concurrent Arrow temp-file writes."
+  PREPROCESSING_NUM_WORKERS=1
 fi
 
 if [ ! -f "$TRAIN_FILE" ]; then
@@ -304,6 +322,11 @@ if [ "$USE_TRITON_FLASH_ATTN" = true ]; then
   FLASH_ATTN_ARGS=(--attention_backend remote-triton)
 fi
 
+STREAMING_ARGS=()
+if [ "$STREAMING_MODE" = "true" ]; then
+  STREAMING_ARGS=(--streaming)
+fi
+
 echo "=== mRNABERT training ==="
 echo "env: $ENV_NAME"
 echo "mode: $MODE"
@@ -321,6 +344,7 @@ echo "epochs: $EPOCHS"
 echo "dtype: $DTYPE"
 echo "preprocessing_workers: $PREPROCESSING_NUM_WORKERS"
 echo "dataloader_workers: $DATALOADER_NUM_WORKERS"
+echo "streaming: $STREAMING_MODE"
 echo "tf32: $TF32"
 echo "use_triton_flash_attn: $USE_TRITON_FLASH_ATTN"
 echo "python: $($PYTHON --version)"
@@ -349,6 +373,7 @@ echo "========================="
   --tf32 "$TF32" \
   "${PRECISION_ARGS[@]}" \
   "${FLASH_ATTN_ARGS[@]}" \
+  "${STREAMING_ARGS[@]}" \
   --save_steps "$SAVE_STEPS" \
   --save_total_limit "$SAVE_TOTAL_LIMIT" \
   --logging_steps "$LOGGING_STEPS" \
