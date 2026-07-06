@@ -197,6 +197,9 @@ def setup_logging(training_args: TrainingArguments) -> None:
 
 
 def configure_torch_runtime(training_args: TrainingArguments) -> None:
+    local_rank = int(os.environ.get("LOCAL_RANK", "-1"))
+    if local_rank >= 0 and torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
     if training_args.tf32 is not None and torch.cuda.is_available():
         torch.backends.cuda.matmul.allow_tf32 = bool(training_args.tf32)
         torch.backends.cudnn.allow_tf32 = bool(training_args.tf32)

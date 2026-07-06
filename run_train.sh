@@ -232,7 +232,7 @@ if [ -n "$HF_CACHE_DIR" ] && [[ "$HF_CACHE_DIR" == "$HOME"/* || "$HF_CACHE_DIR" 
   fi
 fi
 
-if [ ! -f "$TRAIN_FILE" ]; then
+if [ ! -f "$TRAIN_FILE" ] && ! compgen -G "$TRAIN_FILE" >/dev/null; then
   echo "Error: training file not found: $TRAIN_FILE"
   exit 1
 fi
@@ -367,7 +367,11 @@ EFFECTIVE_TRAIN_FILE="$TRAIN_FILE"
 if [ "$MODE" = "smoke" ]; then
   EFFECTIVE_TRAIN_FILE="${WORK_DATA}/smoke.txt"
   echo "Creating smoke dataset: $EFFECTIVE_TRAIN_FILE (${SAMPLE_LINES} lines)"
-  head -n "$SAMPLE_LINES" "$TRAIN_FILE" > "$EFFECTIVE_TRAIN_FILE"
+  SMOKE_SOURCE="$TRAIN_FILE"
+  if [ ! -f "$SMOKE_SOURCE" ]; then
+    SMOKE_SOURCE=$(compgen -G "$TRAIN_FILE" | sort | head -n 1)
+  fi
+  head -n "$SAMPLE_LINES" "$SMOKE_SOURCE" > "$EFFECTIVE_TRAIN_FILE"
 fi
 
 PRECISION_ARGS=()
@@ -398,6 +402,11 @@ fi
 CACHE_ARGS=()
 if [ -n "$HF_CACHE_DIR" ]; then
   CACHE_ARGS=(--cache_dir "$HF_CACHE_DIR")
+fi
+
+DDP_ARGS=()
+if [ "$LAUNCHER" = "torchrun" ]; then
+  DDP_ARGS=(--ddp_backend nccl --ddp_find_unused_parameters false)
 fi
 
 STREAMING_ARGS=()
@@ -459,6 +468,7 @@ TRAIN_CMD=(
   --tf32 "$TF32"
   "${PRECISION_ARGS[@]}"
   "${FLASH_ATTN_ARGS[@]}"
+  "${DDP_ARGS[@]}"
   "${STREAMING_ARGS[@]}"
   --save_steps "$SAVE_STEPS"
   --save_total_limit "$SAVE_TOTAL_LIMIT"

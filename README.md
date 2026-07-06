@@ -223,6 +223,25 @@ Short exploratory run on the full file:
 This uses streaming by default because `--max-steps` is set. In streaming DDP
 runs, the training code shards the iterable dataset by distributed rank.
 
+For better streaming throughput, split the large `pre.txt` into multiple files
+once and pass a glob as `--train-file`:
+```
+mkdir -p /mnt/hdfs/byte_neptune_ai/mrna/pre_shards_24
+split -n l/24 -d --additional-suffix=.txt \
+  /mnt/hdfs/byte_neptune_ai/mrna/pre.txt \
+  /mnt/hdfs/byte_neptune_ai/mrna/pre_shards_24/pre_
+
+./run_train.sh \
+  --env devbox \
+  --train-file '/mnt/hdfs/byte_neptune_ai/mrna/pre_shards_24/*.txt' \
+  --launcher torchrun \
+  --devices 0,1,2 \
+  --max-steps 1000 \
+  --batch-size 16 \
+  --grad-accum 2 \
+  --dataloader-workers 1
+```
+
 The default output workspace is:
 ```
 /mnt/hdfs/byte_neptune_ai/mrna/train/runs/mrnabert-<mode>-<env>-<timestamp>/
