@@ -515,6 +515,9 @@ fi
 DDP_ARGS=()
 if [ "$LAUNCHER" = "torchrun" ]; then
   DDP_ARGS=(--ddp_backend nccl --ddp_find_unused_parameters false)
+  if [ "$STREAMING_MODE" = "true" ]; then
+    DDP_ARGS+=(--dispatch_batches false)
+  fi
 fi
 
 STREAMING_ARGS=()

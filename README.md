@@ -230,6 +230,11 @@ manifest still matches the source file. Use `--reshard` to force a rebuild,
 `--no-auto-shard` to disable this path, or `--shard-count`, `--shard-seed`, and
 `--shard-dir` to control it.
 
+For streaming DDP, the launcher also sets `--dispatch_batches false` so each
+process reads its assigned shard directly. This avoids the default IterableDataset
+path where the main process becomes the only data reader and can bottleneck or
+stall the whole job.
+
 The older streaming readers are still available for debugging: `line-stride`
 sequentially scans the source file in every rank, `byte-range` uses seek-based
 sharding and should only be used on filesystems with fast random seek, and `hf`
