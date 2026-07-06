@@ -20,6 +20,7 @@ To reproduce our results, please follow the instructions in the **[Fine-tune wit
 - [Pre-trained Model and Datasets](#pre-trained-model-and-datasets)
 - [Pre-Training](#pre-training)
 - [Fine-tuning](#fine-tuning)
+- [Reports](#reports)
 - [Citation](#citation)
 - [Contact](#contact)
 
@@ -283,6 +284,11 @@ python classification.py \
     --find_unused_parameters False       
 ```
 You need to choose different `batch sizes` and `epochs` based on the dataset to achieve optimal results. Incidentally, you can also use this code to test other benchmark models through HuggingFace.
+
+
+## Reports
+
+- [Protein-to-mRNA design pipeline report](docs/reports/protein-mrna-design-pipeline.md)
 
 
 ## Citation
