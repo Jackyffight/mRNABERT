@@ -2,6 +2,7 @@ import logging
 import math
 import os
 import sys
+import inspect
 from dataclasses import dataclass, field
 from itertools import chain
 from typing import Optional
@@ -35,6 +36,14 @@ require_version("datasets>=1.8.0")
 logger = logging.getLogger(__name__)
 MODEL_CONFIG_CLASSES = list(MODEL_FOR_MASKED_LM_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
+
+
+def get_dataset_auth_kwargs(use_auth_token: bool):
+    if not use_auth_token:
+        return {}
+    if "token" in inspect.signature(load_dataset).parameters:
+        return {"token": True}
+    return {"use_auth_token": True}
 
 
 @dataclass
@@ -276,12 +285,13 @@ def main():
     # download the dataset.
     if data_args.dataset_name is not None:
         # Downloading and loading a dataset from the hub.
+        dataset_auth_kwargs = get_dataset_auth_kwargs(model_args.use_auth_token)
         raw_datasets = load_dataset(
             data_args.dataset_name,
             data_args.dataset_config_name,
             cache_dir=model_args.cache_dir,
-            use_auth_token=True if model_args.use_auth_token else None,
             streaming=data_args.streaming,
+            **dataset_auth_kwargs,
         )
         if "validation" not in raw_datasets.keys():
             raw_datasets["validation"] = load_dataset(
@@ -289,16 +299,16 @@ def main():
                 data_args.dataset_config_name,
                 split=f"train[:{data_args.validation_split_percentage}%]",
                 cache_dir=model_args.cache_dir,
-                use_auth_token=True if model_args.use_auth_token else None,
                 streaming=data_args.streaming,
+                **dataset_auth_kwargs,
             )
             raw_datasets["train"] = load_dataset(
                 data_args.dataset_name,
                 data_args.dataset_config_name,
                 split=f"train[{data_args.validation_split_percentage}%:]",
                 cache_dir=model_args.cache_dir,
-                use_auth_token=True if model_args.use_auth_token else None,
                 streaming=data_args.streaming,
+                **dataset_auth_kwargs,
             )
     else:
         data_files = {}
@@ -310,11 +320,12 @@ def main():
             extension = data_args.validation_file.split(".")[-1]
         if extension == "txt":
             extension = "text"
+        dataset_auth_kwargs = get_dataset_auth_kwargs(model_args.use_auth_token)
         raw_datasets = load_dataset(
             extension,
             data_files=data_files,
             cache_dir=model_args.cache_dir,
-            use_auth_token=True if model_args.use_auth_token else None,
+            **dataset_auth_kwargs,
         )
         
         # If no validation data is there, validation_split_percentage will be used to divide the dataset.
@@ -324,14 +335,14 @@ def main():
                 data_files=data_files,
                 split=f"train[:{data_args.validation_split_percentage}%]",
                 cache_dir=model_args.cache_dir,
-                use_auth_token=True if model_args.use_auth_token else None,
+                **dataset_auth_kwargs,
             )
             raw_datasets["train"] = load_dataset(
                 extension,
                 data_files=data_files,
                 split=f"train[{data_args.validation_split_percentage}%:]",
                 cache_dir=model_args.cache_dir,
-                use_auth_token=True if model_args.use_auth_token else None,
+                **dataset_auth_kwargs,
             )
 
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at

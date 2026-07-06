@@ -189,6 +189,7 @@ PY
 
 "$PYTHON" - <<'PY'
 import accelerate
+import datasets
 import torch
 import transformers
 from transformers import Trainer  # noqa: F401
@@ -196,7 +197,9 @@ from transformers import Trainer  # noqa: F401
 print(
     "Dependency check: "
     f"torch={torch.__version__} cuda={torch.version.cuda} "
-    f"transformers={transformers.__version__} accelerate={accelerate.__version__}",
+    f"transformers={transformers.__version__} "
+    f"datasets={datasets.__version__} "
+    f"accelerate={accelerate.__version__}",
     flush=True,
 )
 PY
