@@ -9,6 +9,7 @@ import math
 import os
 import sys
 from dataclasses import asdict, dataclass, field
+from glob import glob
 from itertools import chain
 from pathlib import Path
 from typing import Optional, Sequence
@@ -128,10 +129,19 @@ class DataTrainingArguments:
     max_train_samples: Optional[int] = field(default=None)
     max_eval_samples: Optional[int] = field(default=None)
     streaming: bool = field(default=False)
+    streaming_reader: str = field(
+        default="byte-range",
+        metadata={
+            "help": "byte-range uses an in-process rank/worker sharded local text reader; "
+            "hf uses HuggingFace datasets streaming."
+        },
+    )
 
     def __post_init__(self) -> None:
         if self.streaming:
             require_version("datasets>=2.0.0", "The streaming feature requires datasets>=2.0.0")
+        if self.streaming_reader not in {"byte-range", "hf"}:
+            raise ValueError("--streaming_reader must be byte-range or hf.")
         if self.dataset_name is None and self.train_file is None and self.validation_file is None:
             raise ValueError("Need either a dataset name or a train/validation file.")
         for value, label in ((self.train_file, "train_file"), (self.validation_file, "validation_file")):
@@ -165,6 +175,87 @@ class TrainingSummaryCallback(TrainerCallback):
             args.gradient_accumulation_steps,
             world_size,
         )
+
+
+def get_distributed_rank_info() -> tuple[int, int]:
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        return torch.distributed.get_rank(), torch.distributed.get_world_size()
+    return int(os.environ.get("RANK", "0")), int(os.environ.get("WORLD_SIZE", "1"))
+
+
+def resolve_text_files(pattern: str) -> list[str]:
+    files = sorted(glob(pattern))
+    if not files and Path(pattern).is_file():
+        files = [pattern]
+    if not files:
+        raise ValueError(f"No text files matched: {pattern}")
+    return files
+
+
+class ByteRangeTokenizedTextDataset(torch.utils.data.IterableDataset):
+    """Read local text files by byte range across DDP ranks and dataloader workers."""
+
+    def __init__(
+        self,
+        files: Sequence[str],
+        tokenizer,
+        max_seq_length: int,
+        pad_to_max_length: bool,
+        max_samples: Optional[int] = None,
+    ) -> None:
+        self.files = list(files)
+        self.tokenizer = tokenizer
+        self.max_seq_length = max_seq_length
+        self.pad_to_max_length = pad_to_max_length
+        self.max_samples = max_samples
+
+    @staticmethod
+    def _iter_lines(path: str, start: int, end: int):
+        if end <= start:
+            return
+        with open(path, "rb") as handle:
+            if start > 0:
+                handle.seek(start)
+                handle.readline()
+            else:
+                handle.seek(0)
+
+            while handle.tell() < end:
+                raw_line = handle.readline()
+                if not raw_line:
+                    break
+                line = raw_line.decode("utf-8", errors="ignore").strip()
+                if line:
+                    yield line
+
+    def _tokenize(self, line: str) -> dict:
+        padding = "max_length" if self.pad_to_max_length else False
+        return self.tokenizer(
+            line,
+            padding=padding,
+            truncation=True,
+            max_length=self.max_seq_length,
+            return_special_tokens_mask=True,
+        )
+
+    def __iter__(self):
+        rank, world_size = get_distributed_rank_info()
+        worker_info = torch.utils.data.get_worker_info()
+        worker_id = worker_info.id if worker_info is not None else 0
+        num_workers = worker_info.num_workers if worker_info is not None else 1
+        partition_id = rank * num_workers + worker_id
+        num_partitions = max(1, world_size * num_workers)
+        yielded = 0
+
+        for path in self.files:
+            size = os.path.getsize(path)
+            start = (size * partition_id) // num_partitions
+            end = (size * (partition_id + 1)) // num_partitions
+            for line in self._iter_lines(path, start, end):
+                if self.max_samples is not None and yielded >= self.max_samples:
+                    return
+                yielded += 1
+                yield self._tokenize(line)
 
 
 def setup_logging(training_args: TrainingArguments) -> None:
@@ -310,6 +401,48 @@ def shard_streaming_datasets(raw_datasets, data_args: DataTrainingArguments):
     for split in list(raw_datasets.keys()):
         raw_datasets[split] = split_dataset_by_node(raw_datasets[split], rank=rank, world_size=world_size)
     return raw_datasets
+
+
+def can_use_byte_range_streaming(data_args: DataTrainingArguments) -> bool:
+    return (
+        data_args.streaming
+        and data_args.streaming_reader == "byte-range"
+        and data_args.dataset_name is None
+        and data_args.line_by_line
+        and data_args.train_file is not None
+        and _file_extension(data_args.train_file) == "text"
+    )
+
+
+def build_byte_range_streaming_datasets(tokenizer, data_args: DataTrainingArguments):
+    train_files = resolve_text_files(data_args.train_file or "")
+    rank, world_size = get_distributed_rank_info()
+    max_seq_length = resolve_max_seq_length(tokenizer, data_args)
+    logger.info(
+        "Using byte-range streaming reader for %s train file(s), rank=%s, world_size=%s",
+        len(train_files),
+        rank,
+        world_size,
+    )
+    train_dataset = ByteRangeTokenizedTextDataset(
+        files=train_files,
+        tokenizer=tokenizer,
+        max_seq_length=max_seq_length,
+        pad_to_max_length=data_args.pad_to_max_length,
+        max_samples=data_args.max_train_samples,
+    )
+
+    eval_dataset = None
+    if data_args.validation_file is not None:
+        validation_files = resolve_text_files(data_args.validation_file)
+        eval_dataset = ByteRangeTokenizedTextDataset(
+            files=validation_files,
+            tokenizer=tokenizer,
+            max_seq_length=max_seq_length,
+            pad_to_max_length=data_args.pad_to_max_length,
+            max_samples=data_args.max_eval_samples,
+        )
+    return train_dataset, eval_dataset
 
 
 def resolve_max_seq_length(tokenizer, data_args: DataTrainingArguments) -> int:
@@ -473,12 +606,16 @@ def build_trainer(
     data_args: DataTrainingArguments,
     training_args: TrainingArguments,
 ) -> tuple[Trainer, object, object, object]:
-    raw_datasets = load_raw_datasets(data_args, model_args, do_eval=training_args.do_eval)
-    raw_datasets = shard_streaming_datasets(raw_datasets, data_args)
     runtime = model_args.runtime_config(model_max_length=data_args.max_seq_length or training_args.model_max_length)
     bundle = load_mlm_model_and_tokenizer(runtime)
-    tokenized_datasets = tokenize_datasets(raw_datasets, bundle.tokenizer, data_args, training_args)
-    train_dataset, eval_dataset = select_dataset_splits(tokenized_datasets, data_args, training_args)
+
+    if can_use_byte_range_streaming(data_args):
+        train_dataset, eval_dataset = build_byte_range_streaming_datasets(bundle.tokenizer, data_args)
+    else:
+        raw_datasets = load_raw_datasets(data_args, model_args, do_eval=training_args.do_eval)
+        raw_datasets = shard_streaming_datasets(raw_datasets, data_args)
+        tokenized_datasets = tokenize_datasets(raw_datasets, bundle.tokenizer, data_args, training_args)
+        train_dataset, eval_dataset = select_dataset_splits(tokenized_datasets, data_args, training_args)
 
     pad_to_multiple_of = None
     if not data_args.pad_to_max_length and (training_args.fp16 or training_args.bf16):

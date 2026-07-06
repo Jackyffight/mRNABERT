@@ -45,6 +45,7 @@ LAUNCHER="${MRNABERT_LAUNCHER:-direct}"
 NPROC_PER_NODE="${MRNABERT_NPROC_PER_NODE:-}"
 MASTER_PORT="${MRNABERT_MASTER_PORT:-}"
 STREAMING_MODE="auto"
+STREAMING_READER="${MRNABERT_STREAMING_READER:-byte-range}"
 
 BATCH_SIZE_SET=false
 GRAD_ACCUM_SET=false
@@ -96,6 +97,7 @@ Launcher args:
   --devices <list|all>        CUDA_VISIBLE_DEVICES. Default: first currently visible GPU.
                               For torchrun, default is all visible GPUs.
   --streaming                 Stream data without Arrow/tokenized cache. Default when --max-steps is set.
+  --streaming-reader <reader> byte-range or hf. Default: byte-range.
   --no-streaming              Force Arrow/tokenized cache creation.
 
 Any unknown arguments are passed through to `python main.py pretrain`.
@@ -139,6 +141,7 @@ while [ $# -gt 0 ]; do
     --master-port|--master_port) MASTER_PORT="$2"; shift 2 ;;
     --devices|--cuda-visible-devices|--cuda_visible_devices) CUDA_DEVICES="$2"; CUDA_DEVICES_SET=true; shift 2 ;;
     --streaming) STREAMING_MODE=true; shift ;;
+    --streaming-reader|--streaming_reader) STREAMING_READER="$2"; shift 2 ;;
     --no-streaming|--no_streaming) STREAMING_MODE=false; shift ;;
     -h|--help) usage; exit 0 ;;
     *) TRAIN_ARGS+=("$1"); shift ;;
@@ -163,6 +166,10 @@ if [ "$INIT_MODE" != "scratch" ] && [ "$INIT_MODE" != "pretrained" ]; then
 fi
 if [ "$LAUNCHER" != "direct" ] && [ "$LAUNCHER" != "torchrun" ]; then
   echo "Error: --launcher must be direct or torchrun."
+  exit 1
+fi
+if [ "$STREAMING_READER" != "byte-range" ] && [ "$STREAMING_READER" != "hf" ]; then
+  echo "Error: --streaming-reader must be byte-range or hf."
   exit 1
 fi
 
@@ -437,6 +444,7 @@ echo "dtype: $DTYPE"
 echo "preprocessing_workers: $PREPROCESSING_NUM_WORKERS"
 echo "dataloader_workers: $DATALOADER_NUM_WORKERS"
 echo "streaming: $STREAMING_MODE"
+echo "streaming_reader: $STREAMING_READER"
 echo "tf32: $TF32"
 echo "use_triton_flash_attn: $USE_TRITON_FLASH_ATTN"
 echo "python: $($PYTHON --version)"
@@ -470,6 +478,7 @@ TRAIN_CMD=(
   "${FLASH_ATTN_ARGS[@]}"
   "${DDP_ARGS[@]}"
   "${STREAMING_ARGS[@]}"
+  --streaming_reader "$STREAMING_READER"
   --save_steps "$SAVE_STEPS"
   --save_total_limit "$SAVE_TOTAL_LIMIT"
   --logging_steps "$LOGGING_STEPS"
