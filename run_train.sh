@@ -40,6 +40,10 @@ RESUME=""
 INSTALL_DEPS=false
 PYTHON_BIN="${MRNABERT_PYTHON:-python}"
 CUDA_DEVICES="${MRNABERT_CUDA_VISIBLE_DEVICES:-}"
+CUDA_DEVICES_SET=false
+LAUNCHER="${MRNABERT_LAUNCHER:-direct}"
+NPROC_PER_NODE="${MRNABERT_NPROC_PER_NODE:-}"
+MASTER_PORT="${MRNABERT_MASTER_PORT:-}"
 STREAMING_MODE="auto"
 
 BATCH_SIZE_SET=false
@@ -86,8 +90,11 @@ Launcher args:
   --resume <checkpoint>       Resume from checkpoint.
   --install-deps              pip install -r requirements.txt before training.
   --python <path>             Python binary. Default: $MRNABERT_PYTHON or python.
+  --launcher <direct|torchrun> Launch mode. Default: direct.
+  --nproc-per-node <n>        Processes for torchrun. Default: visible GPU count.
+  --master-port <n>           Master port for torchrun. Default: auto.
   --devices <list|all>        CUDA_VISIBLE_DEVICES. Default: first currently visible GPU.
-                              Use all only with a distributed launcher; DataParallel is not supported.
+                              For torchrun, default is all visible GPUs.
   --streaming                 Stream data without Arrow/tokenized cache. Default when --max-steps is set.
   --no-streaming              Force Arrow/tokenized cache creation.
 
@@ -127,7 +134,10 @@ while [ $# -gt 0 ]; do
     --resume) RESUME="$2"; shift 2 ;;
     --install-deps|--install_deps) INSTALL_DEPS=true; shift ;;
     --python) PYTHON_BIN="$2"; shift 2 ;;
-    --devices|--cuda-visible-devices|--cuda_visible_devices) CUDA_DEVICES="$2"; shift 2 ;;
+    --launcher) LAUNCHER="$2"; shift 2 ;;
+    --nproc-per-node|--nproc_per_node) NPROC_PER_NODE="$2"; shift 2 ;;
+    --master-port|--master_port) MASTER_PORT="$2"; shift 2 ;;
+    --devices|--cuda-visible-devices|--cuda_visible_devices) CUDA_DEVICES="$2"; CUDA_DEVICES_SET=true; shift 2 ;;
     --streaming) STREAMING_MODE=true; shift ;;
     --no-streaming|--no_streaming) STREAMING_MODE=false; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -149,6 +159,10 @@ if [ "$DTYPE" != "bf16" ] && [ "$DTYPE" != "fp16" ] && [ "$DTYPE" != "fp32" ]; t
 fi
 if [ "$INIT_MODE" != "scratch" ] && [ "$INIT_MODE" != "pretrained" ]; then
   echo "Error: --init-mode must be scratch or pretrained."
+  exit 1
+fi
+if [ "$LAUNCHER" != "direct" ] && [ "$LAUNCHER" != "torchrun" ]; then
+  echo "Error: --launcher must be direct or torchrun."
   exit 1
 fi
 
@@ -253,13 +267,21 @@ if [ -n "$HF_CACHE_DIR" ]; then
 fi
 
 # Direct `python` launch defaults to one GPU to avoid implicit DataParallel.
-# Use an outer distributed launcher when running one process per GPU.
+# torchrun defaults to all GPUs made visible by the environment.
 ORIGINAL_CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-}"
-if [ -z "$CUDA_DEVICES" ]; then
+if [ -z "$CUDA_DEVICES" ] && [ "$CUDA_DEVICES_SET" = false ]; then
   if [ -n "$ORIGINAL_CUDA_VISIBLE_DEVICES" ]; then
-    CUDA_DEVICES="${ORIGINAL_CUDA_VISIBLE_DEVICES%%,*}"
+    if [ "$LAUNCHER" = "torchrun" ]; then
+      CUDA_DEVICES="$ORIGINAL_CUDA_VISIBLE_DEVICES"
+    else
+      CUDA_DEVICES="${ORIGINAL_CUDA_VISIBLE_DEVICES%%,*}"
+    fi
   else
-    CUDA_DEVICES="0"
+    if [ "$LAUNCHER" = "torchrun" ]; then
+      CUDA_DEVICES="all"
+    else
+      CUDA_DEVICES="0"
+    fi
   fi
 fi
 if [ "$CUDA_DEVICES" != "all" ]; then
@@ -312,6 +334,28 @@ PY
 if [ "$NUM_GPUS" -lt 1 ]; then
   echo "Error: no CUDA GPU detected."
   exit 1
+fi
+if [ "$LAUNCHER" = "torchrun" ]; then
+  if [ -z "$NPROC_PER_NODE" ]; then
+    NPROC_PER_NODE="$NUM_GPUS"
+  fi
+  if [ "$NPROC_PER_NODE" -lt 1 ]; then
+    echo "Error: --nproc-per-node must be >= 1."
+    exit 1
+  fi
+  if [ "$NPROC_PER_NODE" -gt "$NUM_GPUS" ]; then
+    echo "Error: --nproc-per-node ($NPROC_PER_NODE) is greater than visible GPU count ($NUM_GPUS)."
+    exit 1
+  fi
+  if [ -z "$MASTER_PORT" ]; then
+    MASTER_PORT=$("$PYTHON" - <<'PY'
+import socket
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.bind(("", 0))
+    print(sock.getsockname()[1])
+PY
+)
+  fi
 fi
 
 mkdir -p "$WORK_DATA" "$WORK_LOGS" "$OUTPUT_DIR" "$DATASET_CACHE_DIR"
@@ -371,6 +415,9 @@ echo "train_file: $EFFECTIVE_TRAIN_FILE"
 echo "output_dir: $OUTPUT_DIR"
 echo "dataset_cache_dir: $DATASET_CACHE_DIR"
 [ -n "$HF_CACHE_DIR" ] && echo "hf_cache_dir: $HF_CACHE_DIR"
+echo "launcher: $LAUNCHER"
+[ "$LAUNCHER" = "torchrun" ] && echo "nproc_per_node: $NPROC_PER_NODE"
+[ "$LAUNCHER" = "torchrun" ] && echo "master_port: $MASTER_PORT"
 echo "gpus: $NUM_GPUS"
 echo "cuda_visible_devices: ${CUDA_VISIBLE_DEVICES:-all}"
 echo "batch_size: $BATCH_SIZE"
@@ -389,36 +436,48 @@ if command -v nvidia-smi >/dev/null 2>&1; then
 fi
 echo "========================="
 
-"$PYTHON" main.py pretrain \
-  --output_dir "$OUTPUT_DIR" \
-  --model_name_or_path "$MODEL_NAME" \
-  "${CACHE_ARGS[@]}" \
-  --init_mode "$INIT_MODE" \
-  --do_train \
-  --train_file "$EFFECTIVE_TRAIN_FILE" \
-  --dataset_cache_dir "$DATASET_CACHE_DIR" \
-  --line_by_line \
-  --max_seq_length "$MAX_SEQ_LENGTH" \
-  --per_device_train_batch_size "$BATCH_SIZE" \
-  --gradient_accumulation_steps "$GRAD_ACCUM" \
-  --num_train_epochs "$EPOCHS" \
-  "${MAX_STEP_ARGS[@]}" \
-  --learning_rate "$LR" \
-  --warmup_steps "$WARMUP_STEPS" \
-  --mlm_probability "$MLM_PROBABILITY" \
-  --preprocessing_num_workers "$PREPROCESSING_NUM_WORKERS" \
-  --dataloader_num_workers "$DATALOADER_NUM_WORKERS" \
-  --tf32 "$TF32" \
-  "${PRECISION_ARGS[@]}" \
-  "${FLASH_ATTN_ARGS[@]}" \
-  "${STREAMING_ARGS[@]}" \
-  --save_steps "$SAVE_STEPS" \
-  --save_total_limit "$SAVE_TOTAL_LIMIT" \
-  --logging_steps "$LOGGING_STEPS" \
-  --overwrite_output_dir \
-  --report_to none \
-  "${RESUME_ARGS[@]}" \
+TRAIN_CMD=(
+  main.py pretrain
+  --output_dir "$OUTPUT_DIR"
+  --model_name_or_path "$MODEL_NAME"
+  "${CACHE_ARGS[@]}"
+  --init_mode "$INIT_MODE"
+  --do_train
+  --train_file "$EFFECTIVE_TRAIN_FILE"
+  --dataset_cache_dir "$DATASET_CACHE_DIR"
+  --line_by_line
+  --max_seq_length "$MAX_SEQ_LENGTH"
+  --per_device_train_batch_size "$BATCH_SIZE"
+  --gradient_accumulation_steps "$GRAD_ACCUM"
+  --num_train_epochs "$EPOCHS"
+  "${MAX_STEP_ARGS[@]}"
+  --learning_rate "$LR"
+  --warmup_steps "$WARMUP_STEPS"
+  --mlm_probability "$MLM_PROBABILITY"
+  --preprocessing_num_workers "$PREPROCESSING_NUM_WORKERS"
+  --dataloader_num_workers "$DATALOADER_NUM_WORKERS"
+  --tf32 "$TF32"
+  "${PRECISION_ARGS[@]}"
+  "${FLASH_ATTN_ARGS[@]}"
+  "${STREAMING_ARGS[@]}"
+  --save_steps "$SAVE_STEPS"
+  --save_total_limit "$SAVE_TOTAL_LIMIT"
+  --logging_steps "$LOGGING_STEPS"
+  --overwrite_output_dir
+  --report_to none
+  "${RESUME_ARGS[@]}"
   "${TRAIN_ARGS[@]}"
+)
+
+if [ "$LAUNCHER" = "torchrun" ]; then
+  "$PYTHON" -m torch.distributed.run \
+    --nnodes 1 \
+    --nproc_per_node "$NPROC_PER_NODE" \
+    --master_port "$MASTER_PORT" \
+    "${TRAIN_CMD[@]}"
+else
+  "$PYTHON" "${TRAIN_CMD[@]}"
+fi
 
 echo ""
 echo "===== training finished ====="

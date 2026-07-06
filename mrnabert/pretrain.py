@@ -18,6 +18,10 @@ import numpy as np
 import torch
 import transformers
 from datasets import load_dataset
+try:
+    from datasets.distributed import split_dataset_by_node
+except ImportError:  # pragma: no cover - older datasets fallback
+    split_dataset_by_node = None
 from transformers import (
     DataCollatorForLanguageModeling,
     HfArgumentParser,
@@ -285,6 +289,26 @@ def load_raw_datasets(data_args: DataTrainingArguments, model_args: ModelArgumen
     return raw_datasets
 
 
+def shard_streaming_datasets(raw_datasets, data_args: DataTrainingArguments):
+    if not data_args.streaming:
+        return raw_datasets
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        return raw_datasets
+
+    world_size = torch.distributed.get_world_size()
+    rank = torch.distributed.get_rank()
+    if world_size <= 1:
+        return raw_datasets
+    if split_dataset_by_node is None:
+        logger.warning("datasets.distributed.split_dataset_by_node is unavailable; streaming data is not rank-sharded.")
+        return raw_datasets
+
+    logger.info("Sharding streaming datasets by distributed rank: rank=%s world_size=%s", rank, world_size)
+    for split in list(raw_datasets.keys()):
+        raw_datasets[split] = split_dataset_by_node(raw_datasets[split], rank=rank, world_size=world_size)
+    return raw_datasets
+
+
 def resolve_max_seq_length(tokenizer, data_args: DataTrainingArguments) -> int:
     tokenizer_limit = tokenizer.model_max_length
     if tokenizer_limit and tokenizer_limit > 0:
@@ -447,6 +471,7 @@ def build_trainer(
     training_args: TrainingArguments,
 ) -> tuple[Trainer, object, object, object]:
     raw_datasets = load_raw_datasets(data_args, model_args, do_eval=training_args.do_eval)
+    raw_datasets = shard_streaming_datasets(raw_datasets, data_args)
     runtime = model_args.runtime_config(model_max_length=data_args.max_seq_length or training_args.model_max_length)
     bundle = load_mlm_model_and_tokenizer(runtime)
     tokenized_datasets = tokenize_datasets(raw_datasets, bundle.tokenizer, data_args, training_args)

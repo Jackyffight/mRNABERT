@@ -175,9 +175,8 @@ handled in one place. The launcher intentionally uses `python` directly, matchin
 the default cluster entrypoint style used by `neptune_chat`.
 
 Direct `python` launch defaults to the first visible GPU, avoiding implicit
-PyTorch `DataParallel`. Use `--devices <id>` to pick another GPU. Keep
-`--devices all` for environments where the outer training framework manages
-one process per GPU.
+PyTorch `DataParallel`. Use `--launcher torchrun --devices 0,1,2` for single-node
+DDP on three GPUs.
 
 Large training files do not live in GPU memory. GPU memory is mainly determined
 by model size, sequence length, batch size, precision, activations, gradients,
@@ -203,6 +202,8 @@ Full stage-1 pretraining:
 ./run_train.sh \
   --env devbox \
   --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt \
+  --launcher torchrun \
+  --devices 0,1,2 \
   --batch-size 32 \
   --grad-accum 4
 ```
@@ -212,12 +213,15 @@ Short exploratory run on the full file:
 ./run_train.sh \
   --env devbox \
   --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt \
+  --launcher torchrun \
+  --devices 0,1,2 \
   --max-steps 1000 \
   --batch-size 16 \
   --grad-accum 2
 ```
 
-This uses streaming by default because `--max-steps` is set.
+This uses streaming by default because `--max-steps` is set. In streaming DDP
+runs, the training code shards the iterable dataset by distributed rank.
 
 The default output workspace is:
 ```
