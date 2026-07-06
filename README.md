@@ -159,6 +159,18 @@ The default output workspace is:
 /mnt/hdfs/byte_neptune_ai/mrna/train/runs/mrnabert-<mode>-<env>-<timestamp>/
 ```
 
+By default the launcher disables the remote Triton flash-attention path from
+`YYLY66/mRNABERT` and uses its PyTorch attention fallback. This avoids
+compatibility failures with newer PyTorch/Triton stacks while preserving the
+mRNABERT remote architecture. If your environment has a compatible Triton stack,
+you can opt back in:
+```
+./run_train.sh \
+  --env devbox \
+  --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt \
+  --use-triton-flash-attn
+```
+
 Use `./run_train.sh --help` for all launcher options. Unknown arguments are
 passed through to `run_mlm.py`.
 

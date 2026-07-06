@@ -109,6 +109,24 @@ class ModelArguments:
             )
         },
     )
+    use_triton_flash_attn: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Use the remote Triton flash-attention kernel from YYLY66/mRNABERT. "
+                "Disabled by default because that kernel is incompatible with newer Triton versions."
+            )
+        },
+    )
+    triton_fallback_attention_dropout: float = field(
+        default=1e-12,
+        metadata={
+            "help": (
+                "Tiny non-zero attention dropout used to force the remote mRNABERT code path to use "
+                "PyTorch attention instead of the old Triton kernel when --use_triton_flash_attn is not set."
+            )
+        },
+    )
 
     def __post_init__(self):
         if self.config_overrides is not None and (self.config_name is not None or self.model_name_or_path is not None):
@@ -369,6 +387,17 @@ def main():
             logger.info(f"Overriding config: {model_args.config_overrides}")
             config.update_from_string(model_args.config_overrides)
             logger.info(f"New config: {config}")
+
+    if not model_args.use_triton_flash_attn and hasattr(config, "attention_probs_dropout_prob"):
+        attention_dropout = getattr(config, "attention_probs_dropout_prob")
+        fallback_dropout = model_args.triton_fallback_attention_dropout
+        if attention_dropout == 0 and fallback_dropout > 0:
+            logger.warning(
+                "Disabling the remote Triton flash-attention path by setting "
+                f"attention_probs_dropout_prob={fallback_dropout}. This keeps dropout effectively zero "
+                "while forcing mRNABERT's remote code to use its PyTorch attention fallback."
+            )
+            config.attention_probs_dropout_prob = fallback_dropout
     
     tokenizer_kwargs = {
         "cache_dir": model_args.cache_dir,

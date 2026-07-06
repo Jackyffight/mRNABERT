@@ -29,6 +29,10 @@ SAVE_STEPS=1000
 SAVE_TOTAL_LIMIT=3
 MLM_PROBABILITY=0.15
 DTYPE="bf16"
+PREPROCESSING_NUM_WORKERS=8
+DATALOADER_NUM_WORKERS=4
+TF32=true
+USE_TRITON_FLASH_ATTN=false
 RESUME=""
 INSTALL_DEPS=false
 
@@ -65,6 +69,11 @@ Launcher args:
   --save-total-limit <n>      Max checkpoints to keep. Default: 3.
   --mlm-probability <float>   MLM mask probability. Default: 0.15.
   --dtype <bf16|fp16|fp32>    Training dtype. Default: bf16.
+  --preprocessing-workers <n> Dataset tokenization workers. Default: 8.
+  --dataloader-workers <n>    PyTorch DataLoader workers. Default: 4.
+  --no-tf32                   Disable TF32 matmul on Ampere+ GPUs.
+  --use-triton-flash-attn     Use YYLY66/mRNABERT remote Triton flash-attention.
+                              Default is stable PyTorch attention fallback.
   --resume <checkpoint>       Resume from checkpoint.
   --install-deps              pip install -r requirements.txt before training.
 
@@ -94,6 +103,10 @@ while [ $# -gt 0 ]; do
     --save-total-limit|--save_total_limit) SAVE_TOTAL_LIMIT="$2"; shift 2 ;;
     --mlm-probability|--mlm_probability) MLM_PROBABILITY="$2"; shift 2 ;;
     --dtype) DTYPE="$2"; shift 2 ;;
+    --preprocessing-workers|--preprocessing_workers) PREPROCESSING_NUM_WORKERS="$2"; shift 2 ;;
+    --dataloader-workers|--dataloader_workers) DATALOADER_NUM_WORKERS="$2"; shift 2 ;;
+    --no-tf32|--no_tf32) TF32=false; shift ;;
+    --use-triton-flash-attn|--use_triton_flash_attn) USE_TRITON_FLASH_ATTN=true; shift ;;
     --resume) RESUME="$2"; shift 2 ;;
     --install-deps|--install_deps) INSTALL_DEPS=true; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -257,6 +270,11 @@ if [ -n "$MAX_STEPS" ]; then
   MAX_STEP_ARGS=(--max_steps "$MAX_STEPS")
 fi
 
+FLASH_ATTN_ARGS=()
+if [ "$USE_TRITON_FLASH_ATTN" = true ]; then
+  FLASH_ATTN_ARGS=(--use_triton_flash_attn)
+fi
+
 echo "=== mRNABERT training ==="
 echo "env: $ENV_NAME"
 echo "mode: $MODE"
@@ -271,6 +289,10 @@ echo "grad_accum: $GRAD_ACCUM"
 echo "epochs: $EPOCHS"
 [ -n "$MAX_STEPS" ] && echo "max_steps: $MAX_STEPS"
 echo "dtype: $DTYPE"
+echo "preprocessing_workers: $PREPROCESSING_NUM_WORKERS"
+echo "dataloader_workers: $DATALOADER_NUM_WORKERS"
+echo "tf32: $TF32"
+echo "use_triton_flash_attn: $USE_TRITON_FLASH_ATTN"
 echo "python: $($PYTHON --version)"
 if command -v nvidia-smi >/dev/null 2>&1; then
   nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader
@@ -295,7 +317,11 @@ echo "========================="
   --learning_rate "$LR" \
   --warmup_steps "$WARMUP_STEPS" \
   --mlm_probability "$MLM_PROBABILITY" \
+  --preprocessing_num_workers "$PREPROCESSING_NUM_WORKERS" \
+  --dataloader_num_workers "$DATALOADER_NUM_WORKERS" \
+  --tf32 "$TF32" \
   "${PRECISION_ARGS[@]}" \
+  "${FLASH_ATTN_ARGS[@]}" \
   --save_steps "$SAVE_STEPS" \
   --save_total_limit "$SAVE_TOTAL_LIMIT" \
   --logging_steps "$LOGGING_STEPS" \
