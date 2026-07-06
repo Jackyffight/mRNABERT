@@ -131,6 +131,37 @@ python run_mlm.py \
   --per_device_train_batch_size=32
 
 ```
+
+### Neptune/Merlin launcher
+For Neptune/Merlin workers, use `run_train.sh` so environment checks, run
+workspace creation, GPU detection, and `torchrun` arguments are handled in one
+place.
+
+Smoke test:
+```
+./run_train.sh \
+  --env devbox \
+  --smoke \
+  --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt
+```
+
+Full stage-1 pretraining:
+```
+./run_train.sh \
+  --env devbox \
+  --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt \
+  --batch-size 32 \
+  --grad-accum 4
+```
+
+The default output workspace is:
+```
+/mnt/hdfs/byte_neptune_ai/mrna/train/runs/mrnabert-<mode>-<env>-<timestamp>/
+```
+
+Use `./run_train.sh --help` for all launcher options. Unknown arguments are
+passed through to `run_mlm.py`.
+
 ### Pretraining stage 2
 We used the [OpenAI-CLIP](https://github.com/moein-shariatnia/OpenAI-CLIP) for contrastive learning.You can modify the code using the embedding extraction method mentioned above and reproduce the model training.
 
