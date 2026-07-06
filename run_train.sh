@@ -8,7 +8,8 @@
 
 set -euo pipefail
 
-MODEL_NAME="YYLY66/mRNABERT"
+MODEL_NAME="assets/mrnabert-base"
+INIT_MODE="scratch"
 ENV_NAME=""
 MODE="full"
 TRAIN_FILE="/mnt/hdfs/byte_neptune_ai/mrna/pre.txt"
@@ -17,6 +18,7 @@ OUTPUT_DIR=""
 RUN_NAME=""
 SAMPLE_LINES=20000
 DATASET_CACHE_DIR=""
+HF_CACHE_DIR="${MRNABERT_HF_CACHE_DIR:-}"
 
 BATCH_SIZE=32
 GRAD_ACCUM=4
@@ -55,12 +57,14 @@ Usage:
 Launcher args:
   --env <devbox|online>       Required environment label.
   --smoke                     Create a small smoke dataset and run 20 steps by default.
-  --model <name-or-path>      Model path or HuggingFace ID. Default: YYLY66/mRNABERT.
+  --model <name-or-path>      Config/tokenizer path or HF ID. Default: assets/mrnabert-base.
+  --init-mode <mode>          scratch or pretrained. Default: scratch.
   --train-file <path>         Preprocessed pre.txt path. Default: /mnt/hdfs/byte_neptune_ai/mrna/pre.txt.
   --output-root <dir>         Run workspace root. Default: /mnt/hdfs/byte_neptune_ai/mrna/train/runs.
   --output-dir <dir>          Exact output dir for Trainer. Overrides --output-root workspace output.
   --run-name <name>           Run name under --output-root.
   --dataset-cache-dir <dir>   HuggingFace datasets cache. Default: <output-root>/cache/datasets.
+  --hf-cache-dir <dir>        HuggingFace hub cache for explicit pretrained runs.
   --sample-lines <n>          Smoke sample lines. Default: 20000.
   --batch-size <n>            Per-device train batch size. Default: 32, smoke default: 8.
   --grad-accum <n>            Gradient accumulation. Default: 4, smoke default: 1.
@@ -77,8 +81,8 @@ Launcher args:
   --preprocessing-workers <n> Dataset tokenization workers. Default: 8.
   --dataloader-workers <n>    PyTorch DataLoader workers. Default: 4.
   --no-tf32                   Disable TF32 matmul on Ampere+ GPUs.
-  --use-triton-flash-attn     Use YYLY66/mRNABERT remote Triton flash-attention.
-                              Default is stable PyTorch attention fallback.
+  --use-triton-flash-attn     Use YYLY66/mRNABERT remote Triton flash-attention
+                              for explicit pretrained baseline runs.
   --resume <checkpoint>       Resume from checkpoint.
   --install-deps              pip install -r requirements.txt before training.
   --python <path>             Python binary. Default: $MRNABERT_PYTHON or python.
@@ -96,11 +100,13 @@ while [ $# -gt 0 ]; do
     --env) ENV_NAME="$2"; shift 2 ;;
     --smoke) MODE="smoke"; shift ;;
     --model) MODEL_NAME="$2"; shift 2 ;;
+    --init-mode|--init_mode) INIT_MODE="$2"; shift 2 ;;
     --train-file|--train_file) TRAIN_FILE="$2"; shift 2 ;;
     --output-root|--output_root) OUTPUT_ROOT="$2"; shift 2 ;;
     --output-dir|--output_dir) OUTPUT_DIR="$2"; shift 2 ;;
     --run-name|--run_name) RUN_NAME="$2"; shift 2 ;;
     --dataset-cache-dir|--dataset_cache_dir) DATASET_CACHE_DIR="$2"; shift 2 ;;
+    --hf-cache-dir|--hf_cache_dir) HF_CACHE_DIR="$2"; shift 2 ;;
     --sample-lines|--sample_lines) SAMPLE_LINES="$2"; shift 2 ;;
     --batch-size|--batch_size) BATCH_SIZE="$2"; BATCH_SIZE_SET=true; shift 2 ;;
     --grad-accum|--grad_accum) GRAD_ACCUM="$2"; GRAD_ACCUM_SET=true; shift 2 ;;
@@ -141,6 +147,10 @@ if [ "$DTYPE" != "bf16" ] && [ "$DTYPE" != "fp16" ] && [ "$DTYPE" != "fp32" ]; t
   echo "Error: --dtype must be bf16, fp16, or fp32."
   exit 1
 fi
+if [ "$INIT_MODE" != "scratch" ] && [ "$INIT_MODE" != "pretrained" ]; then
+  echo "Error: --init-mode must be scratch or pretrained."
+  exit 1
+fi
 
 if [ "$MODE" = "smoke" ]; then
   [ "$BATCH_SIZE_SET" = false ] && BATCH_SIZE=8
@@ -173,13 +183,19 @@ fi
 if [ -z "$DATASET_CACHE_DIR" ]; then
   DATASET_CACHE_DIR="${OUTPUT_ROOT}/cache/datasets"
 fi
+if [ "$INIT_MODE" = "pretrained" ] && [ -z "$HF_CACHE_DIR" ]; then
+  HF_CACHE_DIR="${OUTPUT_ROOT}/cache/huggingface"
+fi
 
 requires_hdfs=false
-for path in "$TRAIN_FILE" "$OUTPUT_ROOT" "$OUTPUT_DIR"; do
+for path in "$TRAIN_FILE" "$OUTPUT_ROOT" "$OUTPUT_DIR" "$DATASET_CACHE_DIR"; do
   if [[ "$path" == /mnt/hdfs/* ]]; then
     requires_hdfs=true
   fi
 done
+if [ -n "$HF_CACHE_DIR" ] && [[ "$HF_CACHE_DIR" == /mnt/hdfs/* ]]; then
+  requires_hdfs=true
+fi
 if [ "$requires_hdfs" = true ]; then
   if [ ! -d "$HDFS_MNT" ] || ! ls "$HDFS_MNT" >/dev/null 2>&1; then
     echo "Error: HDFS mount is not ready: $HDFS_MNT"
@@ -191,6 +207,13 @@ if [[ "$DATASET_CACHE_DIR" == "$HOME"/* || "$DATASET_CACHE_DIR" == /home/* || "$
   if [ "${MRNABERT_ALLOW_HOME_CACHE:-false}" != "true" ]; then
     echo "Error: dataset cache points to a home/root filesystem: $DATASET_CACHE_DIR"
     echo "Use --dataset-cache-dir on an HDFS-mounted training path, or set MRNABERT_ALLOW_HOME_CACHE=true to override."
+    exit 1
+  fi
+fi
+if [ -n "$HF_CACHE_DIR" ] && [[ "$HF_CACHE_DIR" == "$HOME"/* || "$HF_CACHE_DIR" == /home/* || "$HF_CACHE_DIR" == /root/* ]]; then
+  if [ "${MRNABERT_ALLOW_HOME_CACHE:-false}" != "true" ]; then
+    echo "Error: HuggingFace cache points to a home/root filesystem: $HF_CACHE_DIR"
+    echo "Use --hf-cache-dir on an HDFS-mounted training path, or set MRNABERT_ALLOW_HOME_CACHE=true to override."
     exit 1
   fi
 fi
@@ -222,10 +245,15 @@ export NCCL_DEBUG=${MRNABERT_NCCL_DEBUG:-WARN}
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 export TRANSFORMERS_NO_ADVISORY_WARNINGS=${TRANSFORMERS_NO_ADVISORY_WARNINGS:-1}
 export HF_DATASETS_CACHE="$DATASET_CACHE_DIR"
+if [ -n "$HF_CACHE_DIR" ]; then
+  export HF_HOME="$HF_CACHE_DIR"
+  export HUGGINGFACE_HUB_CACHE="${HF_CACHE_DIR}/hub"
+  export HF_MODULES_CACHE="${HF_CACHE_DIR}/modules"
+  export TRANSFORMERS_CACHE="${HF_CACHE_DIR}/hub"
+fi
 
-# The YYLY66/mRNABERT remote model is not compatible with PyTorch DataParallel:
-# one replica can see an empty parameter iterator inside bert_layers.py and fail
-# with StopIteration. Direct `python` launch therefore defaults to one GPU.
+# Direct `python` launch defaults to one GPU to avoid implicit DataParallel.
+# Use an outer distributed launcher when running one process per GPU.
 ORIGINAL_CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-}"
 if [ -z "$CUDA_DEVICES" ]; then
   if [ -n "$ORIGINAL_CUDA_VISIBLE_DEVICES" ]; then
@@ -287,6 +315,9 @@ if [ "$NUM_GPUS" -lt 1 ]; then
 fi
 
 mkdir -p "$WORK_DATA" "$WORK_LOGS" "$OUTPUT_DIR" "$DATASET_CACHE_DIR"
+if [ -n "$HF_CACHE_DIR" ]; then
+  mkdir -p "$HUGGINGFACE_HUB_CACHE" "$HF_MODULES_CACHE"
+fi
 
 EFFECTIVE_TRAIN_FILE="$TRAIN_FILE"
 if [ "$MODE" = "smoke" ]; then
@@ -316,6 +347,14 @@ FLASH_ATTN_ARGS=(--attention_backend remote-safe)
 if [ "$USE_TRITON_FLASH_ATTN" = true ]; then
   FLASH_ATTN_ARGS=(--attention_backend remote-triton)
 fi
+if [ "$INIT_MODE" = "scratch" ]; then
+  FLASH_ATTN_ARGS=(--attention_backend pytorch)
+fi
+
+CACHE_ARGS=()
+if [ -n "$HF_CACHE_DIR" ]; then
+  CACHE_ARGS=(--cache_dir "$HF_CACHE_DIR")
+fi
 
 STREAMING_ARGS=()
 if [ "$STREAMING_MODE" = "true" ]; then
@@ -327,9 +366,11 @@ echo "env: $ENV_NAME"
 echo "mode: $MODE"
 echo "workspace: $WORKSPACE"
 echo "model: $MODEL_NAME"
+echo "init_mode: $INIT_MODE"
 echo "train_file: $EFFECTIVE_TRAIN_FILE"
 echo "output_dir: $OUTPUT_DIR"
 echo "dataset_cache_dir: $DATASET_CACHE_DIR"
+[ -n "$HF_CACHE_DIR" ] && echo "hf_cache_dir: $HF_CACHE_DIR"
 echo "gpus: $NUM_GPUS"
 echo "cuda_visible_devices: ${CUDA_VISIBLE_DEVICES:-all}"
 echo "batch_size: $BATCH_SIZE"
@@ -351,6 +392,8 @@ echo "========================="
 "$PYTHON" main.py pretrain \
   --output_dir "$OUTPUT_DIR" \
   --model_name_or_path "$MODEL_NAME" \
+  "${CACHE_ARGS[@]}" \
+  --init_mode "$INIT_MODE" \
   --do_train \
   --train_file "$EFFECTIVE_TRAIN_FILE" \
   --dataset_cache_dir "$DATASET_CACHE_DIR" \

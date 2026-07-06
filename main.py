@@ -13,7 +13,7 @@ def usage() -> str:
         "  python main.py pretrain [args]\n"
         "  python main.py preprocess [args]\n\n"
         "Examples:\n"
-        "  python main.py pretrain --model_name_or_path YYLY66/mRNABERT --train_file sample_data/pre.txt --do_train\n"
+        "  python main.py pretrain --model_name_or_path assets/mrnabert-base --init_mode scratch --train_file sample_data/pre.txt --do_train\n"
         "  python main.py preprocess --raw-dir raw --output-dir data/pretrain\n"
     )
 

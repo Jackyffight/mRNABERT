@@ -128,7 +128,8 @@ python data_process/process_pretrain_data.py --input_file "data_process/pre-trai
 ```
 python main.py pretrain \
   --output_dir=output/pre/mRNABERT- \
-  --model_name_or_path=YYLY66/mRNABERT \
+  --model_name_or_path=assets/mrnabert-base \
+  --init_mode=scratch \
   --do_train \
   --learning_rate=5e-5 \
   --num_train_epochs=10 \
@@ -153,14 +154,18 @@ The training entrypoint is split into deeper modules:
 - `mrnabert.modeling`: model/tokenizer loading and attention backend selection.
 - `mrnabert.pretrain`: dataset loading, tokenization, Trainer construction, manifests, and metrics.
 
-By default, pretraining uses dynamic padding and the `remote-safe` attention backend. This keeps the HuggingFace remote mRNABERT architecture and weights, but bypasses its old Triton kernel by using the model's PyTorch attention fallback. Opt into the legacy Triton path only after validating your PyTorch/Triton runtime:
+By default, pretraining is a from-scratch run using the local
+`assets/mrnabert-base` config and vocabulary. It does not load
+`YYLY66/mRNABERT` checkpoint weights. Use pretrained mode only for explicit
+baseline or continuation runs:
 
 ```
 python main.py pretrain \
   --model_name_or_path YYLY66/mRNABERT \
+  --init_mode pretrained \
   --train_file sample_data/pre.txt \
   --do_train \
-  --attention_backend remote-triton
+  --attention_backend remote-safe
 ```
 
 ### Neptune/Merlin launcher
@@ -169,11 +174,10 @@ workspace creation, GPU detection, and the `python main.py pretrain` command are
 handled in one place. The launcher intentionally uses `python` directly, matching
 the default cluster entrypoint style used by `neptune_chat`.
 
-Because the HuggingFace remote mRNABERT code is not compatible with PyTorch
-`DataParallel`, direct `python` launch defaults to the first visible GPU. This is
-the intended smoke-test path. Use `--devices <id>` to pick another GPU, or
-`--devices all` only when an external distributed launcher is managing one
-process per GPU.
+Direct `python` launch defaults to the first visible GPU, avoiding implicit
+PyTorch `DataParallel`. Use `--devices <id>` to pick another GPU. Keep
+`--devices all` for environments where the outer training framework manages
+one process per GPU.
 
 Large training files do not live in GPU memory. GPU memory is mainly determined
 by model size, sequence length, batch size, precision, activations, gradients,
@@ -183,7 +187,8 @@ materializes Arrow/tokenized cache. The launcher therefore defaults
 an HDFS-mounted training path instead of `~/.cache/huggingface`. Exploratory
 runs with `--max-steps` default to `--streaming`, which skips Arrow/tokenized
 cache creation. For cached preprocessing, use `--no-streaming` and explicitly
-choose `--preprocessing-workers`.
+choose `--preprocessing-workers`. `--hf-cache-dir` is only needed for explicit
+`--init-mode pretrained` baseline runs.
 
 Smoke test:
 ```
@@ -219,15 +224,15 @@ The default output workspace is:
 /mnt/hdfs/byte_neptune_ai/mrna/train/runs/mrnabert-<mode>-<env>-<timestamp>/
 ```
 
-By default the launcher uses the `remote-safe` attention backend. This avoids
-compatibility failures with newer PyTorch/Triton stacks while preserving the
-mRNABERT remote architecture. If your environment has a compatible Triton stack,
-you can opt back in:
+By default the launcher initializes a standard BERT masked-LM model from
+`assets/mrnabert-base`. To compare against the public mRNABERT checkpoint, run
+an explicit pretrained baseline:
 ```
 ./run_train.sh \
   --env devbox \
   --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt \
-  --use-triton-flash-attn
+  --init-mode pretrained \
+  --model YYLY66/mRNABERT
 ```
 
 Use `./run_train.sh --help` for all launcher options. Unknown arguments are

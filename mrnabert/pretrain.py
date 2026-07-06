@@ -46,24 +46,28 @@ def get_dataset_auth_kwargs(use_auth_token: bool) -> dict:
 
 @dataclass
 class ModelArguments:
-    model_name_or_path: str = field(default="YYLY66/mRNABERT")
+    model_name_or_path: str = field(default="assets/mrnabert-base")
     model_type: Optional[str] = field(default=None, metadata={"help": "Accepted for run_mlm.py compatibility."})
     config_overrides: Optional[str] = field(
         default=None,
-        metadata={"help": "Accepted for run_mlm.py compatibility; not used when loading YYLY66/mRNABERT."},
+        metadata={"help": "Accepted for run_mlm.py compatibility; not used by the packaged loader."},
     )
     config_name: Optional[str] = field(default=None)
     tokenizer_name: Optional[str] = field(default=None)
     cache_dir: Optional[str] = field(default=None)
+    init_mode: str = field(
+        default="scratch",
+        metadata={"help": "scratch initializes from config; pretrained loads model_name_or_path weights."},
+    )
     use_fast_tokenizer: bool = field(default=True)
     model_revision: str = field(default="main")
     use_auth_token: bool = field(default=False)
     low_cpu_mem_usage: bool = field(default=False)
     attention_backend: str = field(
-        default="remote-safe",
+        default="pytorch",
         metadata={
-            "help": "remote-safe uses the remote mRNABERT architecture with PyTorch attention fallback; "
-            "remote-triton opts into the legacy remote Triton kernel."
+            "help": "pytorch uses the built-in Transformers BERT path for scratch training; "
+            "remote-safe/remote-triton are only for explicit pretrained baseline runs."
         },
     )
     use_triton_flash_attn: bool = field(
@@ -82,6 +86,7 @@ class ModelArguments:
             config_name=self.config_name,
             tokenizer_name=self.tokenizer_name,
             cache_dir=self.cache_dir,
+            init_mode=self.init_mode,
             model_revision=self.model_revision,
             use_auth_token=self.use_auth_token,
             use_fast_tokenizer=self.use_fast_tokenizer,
@@ -510,7 +515,9 @@ def run_pretrain(model_args: ModelArguments, data_args: DataTrainingArguments, t
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
 
-    kwargs = {"finetuned_from": model_args.model_name_or_path, "tasks": "fill-mask"}
+    kwargs = {"tasks": "fill-mask"}
+    if model_args.init_mode == "pretrained":
+        kwargs["finetuned_from"] = model_args.model_name_or_path
     if data_args.dataset_name is not None:
         kwargs["dataset_tags"] = data_args.dataset_name
         kwargs["dataset"] = data_args.dataset_name
