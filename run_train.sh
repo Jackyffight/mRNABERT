@@ -187,6 +187,20 @@ if missing:
     raise SystemExit("Missing Python packages: " + ", ".join(missing) + ". Install dependencies or rerun with --install-deps.")
 PY
 
+"$PYTHON" - <<'PY'
+import accelerate
+import torch
+import transformers
+from transformers import Trainer  # noqa: F401
+
+print(
+    "Dependency check: "
+    f"torch={torch.__version__} cuda={torch.version.cuda} "
+    f"transformers={transformers.__version__} accelerate={accelerate.__version__}",
+    flush=True,
+)
+PY
+
 if [ -x "$(dirname "$PYTHON")/torchrun" ]; then
   TORCHRUN="$(dirname "$PYTHON")/torchrun"
 else
