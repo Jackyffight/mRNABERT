@@ -4,7 +4,7 @@
 # Examples:
 #   ./run_train.sh --env devbox --smoke --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt
 #   ./run_train.sh --env devbox --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt
-#   ./run_train.sh --env devbox --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt --batch-size 48 --grad-accum 2
+#   ./run_train.sh --env devbox --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt --batch-size 48 --grad-accum 2 --python /usr/bin/python3
 
 set -euo pipefail
 
@@ -35,6 +35,7 @@ TF32=true
 USE_TRITON_FLASH_ATTN=false
 RESUME=""
 INSTALL_DEPS=false
+PYTHON_BIN="${MRNABERT_PYTHON:-}"
 
 BATCH_SIZE_SET=false
 GRAD_ACCUM_SET=false
@@ -46,7 +47,7 @@ TRAIN_ARGS=()
 usage() {
   cat <<'EOF'
 Usage:
-  ./run_train.sh --env <devbox|online> [launcher args] [run_mlm.py args...]
+  ./run_train.sh --env <devbox|online> [launcher args] [pretrain args...]
 
 Launcher args:
   --env <devbox|online>       Required environment label.
@@ -76,8 +77,9 @@ Launcher args:
                               Default is stable PyTorch attention fallback.
   --resume <checkpoint>       Resume from checkpoint.
   --install-deps              pip install -r requirements.txt before training.
+  --python <path>             Python binary. Default: $MRNABERT_PYTHON, then python3/python.
 
-Any unknown arguments are passed through to run_mlm.py.
+Any unknown arguments are passed through to `python main.py pretrain`.
 EOF
 }
 
@@ -109,6 +111,7 @@ while [ $# -gt 0 ]; do
     --use-triton-flash-attn|--use_triton_flash_attn) USE_TRITON_FLASH_ATTN=true; shift ;;
     --resume) RESUME="$2"; shift 2 ;;
     --install-deps|--install_deps) INSTALL_DEPS=true; shift ;;
+    --python) PYTHON_BIN="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) TRAIN_ARGS+=("$1"); shift ;;
   esac
@@ -170,7 +173,12 @@ fi
 unset RANK WORLD_SIZE LOCAL_RANK LOCAL_WORLD_SIZE GROUP_RANK ROLE_RANK
 unset MASTER_ADDR
 
-STALE_PIDS=$(pgrep -f "torchrun.*run_mlm.py" 2>/dev/null || true)
+STALE_PIDS=$(
+  {
+    pgrep -f "torchrun.*main.py pretrain" || true
+    pgrep -f "torchrun.*run_mlm.py" || true
+  } 2>/dev/null | sort -u
+)
 if [ -n "$STALE_PIDS" ]; then
   echo "[preflight] Killing stale mRNABERT torchrun processes: $STALE_PIDS"
   kill -9 $STALE_PIDS 2>/dev/null || true
@@ -182,15 +190,18 @@ mkdir -p "$TRITON_CACHE_DIR"
 export NCCL_DEBUG=${NCCL_DEBUG:-WARN}
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 
-if [ -x ".venv/bin/python" ]; then
-  PYTHON=".venv/bin/python"
+if [ -n "$PYTHON_BIN" ]; then
+  PYTHON="$PYTHON_BIN"
 else
   PYTHON=$(command -v python3 || command -v python)
+fi
+if [ ! -x "$PYTHON" ]; then
+  echo "Error: python is not executable: $PYTHON"
+  exit 1
 fi
 
 if [ "$INSTALL_DEPS" = true ]; then
   "$PYTHON" -m pip install -r requirements.txt
-  "$PYTHON" -m pip uninstall -y triton || true
 fi
 
 "$PYTHON" - <<'PY'
@@ -270,9 +281,9 @@ if [ -n "$MAX_STEPS" ]; then
   MAX_STEP_ARGS=(--max_steps "$MAX_STEPS")
 fi
 
-FLASH_ATTN_ARGS=()
+FLASH_ATTN_ARGS=(--attention_backend remote-safe)
 if [ "$USE_TRITON_FLASH_ATTN" = true ]; then
-  FLASH_ATTN_ARGS=(--use_triton_flash_attn)
+  FLASH_ATTN_ARGS=(--attention_backend remote-triton)
 fi
 
 echo "=== mRNABERT training ==="
@@ -302,9 +313,8 @@ echo "========================="
 "$TORCHRUN" \
   --nproc_per_node="$NUM_GPUS" \
   --master_port="$MASTER_PORT" \
-  run_mlm.py \
+  main.py pretrain \
   --output_dir "$OUTPUT_DIR" \
-  --model_type bert \
   --model_name_or_path "$MODEL_NAME" \
   --do_train \
   --train_file "$EFFECTIVE_TRAIN_FILE" \

@@ -35,9 +35,9 @@ mRNABERT is a robust language model pre-trained on over 18 million high-quality 
     conda create -n mrnabert python=3.8
     conda activate mrnabert
     
-    # install required packages
+    # install required packages. PyTorch is intentionally not pinned here;
+    # use the CUDA/PyTorch runtime provided by your training machine.
     pip install -r requirements.txt
-    pip uninstall triton
 
 Furthermore, to streamline the setup process, we have prepared a pre-configured Conda environment containing all mRNABERT dependencies at [Zenodo](https://zenodo.org/records/15051237). You can easily download and extract it into your Conda environments directory, and it will be ready to use immediately.
 
@@ -104,7 +104,20 @@ The extracted embeddings can be used for contrastive learning pretraining or as 
 
 ## Pre-Training
 ### Data processing
-Please see the template data at `/sample_data/pre.txt`, you should process your data into the same format as it. Please use `/data_process/process_pretrain_data` for CDS prediction and split.
+Please see the template data at `/sample_data/pre.txt`, you should process your data into the same format as it. The maintained preprocessing path is streaming and can process a directory of FASTA files:
+
+```
+python main.py preprocess \
+  --raw-dir raw \
+  --output-dir data/pretrain \
+  --workers 32 \
+  --chunksize 256 \
+  --progress-interval 30
+```
+
+This writes `data/pretrain/pre.txt` by default. It keeps the original repository heuristic: UTR is split into single bases, and the longest in-frame CDS is split into codons.
+
+The original single-file command is still available:
 
 for example:
 ```
@@ -112,9 +125,8 @@ python data_process/process_pretrain_data.py --input_file "data_process/pre-trai
 ```
 ### Pretraining stage 1
 ```
-python run_mlm.py \
+python main.py pretrain \
   --output_dir=output/pre/mRNABERT- \
-  --model_type=bert \
   --model_name_or_path=YYLY66/mRNABERT \
   --do_train \
   --learning_rate=5e-5 \
@@ -130,6 +142,24 @@ python run_mlm.py \
   --line_by_line \
   --per_device_train_batch_size=32
 
+```
+
+`run_mlm.py` is kept as a compatibility wrapper for older commands. New code should call `python main.py pretrain`.
+
+The training entrypoint is split into deeper modules:
+
+- `mrnabert.sequence_codec`: FASTA parsing, ORF detection, and mRNABERT token spacing.
+- `mrnabert.modeling`: model/tokenizer loading and attention backend selection.
+- `mrnabert.pretrain`: dataset loading, tokenization, Trainer construction, manifests, and metrics.
+
+By default, pretraining uses dynamic padding and the `remote-safe` attention backend. This keeps the HuggingFace remote mRNABERT architecture and weights, but bypasses its old Triton kernel by using the model's PyTorch attention fallback. Opt into the legacy Triton path only after validating your PyTorch/Triton runtime:
+
+```
+python main.py pretrain \
+  --model_name_or_path YYLY66/mRNABERT \
+  --train_file sample_data/pre.txt \
+  --do_train \
+  --attention_backend remote-triton
 ```
 
 ### Neptune/Merlin launcher
@@ -159,8 +189,7 @@ The default output workspace is:
 /mnt/hdfs/byte_neptune_ai/mrna/train/runs/mrnabert-<mode>-<env>-<timestamp>/
 ```
 
-By default the launcher disables the remote Triton flash-attention path from
-`YYLY66/mRNABERT` and uses its PyTorch attention fallback. This avoids
+By default the launcher uses the `remote-safe` attention backend. This avoids
 compatibility failures with newer PyTorch/Triton stacks while preserving the
 mRNABERT remote architecture. If your environment has a compatible Triton stack,
 you can opt back in:
@@ -172,7 +201,7 @@ you can opt back in:
 ```
 
 Use `./run_train.sh --help` for all launcher options. Unknown arguments are
-passed through to `run_mlm.py`.
+passed through to `python main.py pretrain`.
 
 ### Pretraining stage 2
 We used the [OpenAI-CLIP](https://github.com/moein-shariatnia/OpenAI-CLIP) for contrastive learning.You can modify the code using the embedding extraction method mentioned above and reproduce the model training.

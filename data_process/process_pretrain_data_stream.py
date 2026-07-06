@@ -1,48 +1,19 @@
 import argparse
 import os
+import sys
 import time
 from multiprocessing import Pool
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-STOP_CODONS = ("TAG", "TAA", "TGA")
-
-
-def find_longest_cds(mrna_sequence, start_codon="ATG", stop_codons=STOP_CODONS):
-    start_index = mrna_sequence.find(start_codon)
-    longest_cds_info = None
-
-    while start_index != -1:
-        for end_index in range(start_index + len(start_codon), len(mrna_sequence) - 2, 3):
-            codon = mrna_sequence[end_index : end_index + 3]
-            if codon in stop_codons:
-                current_cds_length = end_index - start_index + 3
-                if longest_cds_info is None or current_cds_length > longest_cds_info["length"]:
-                    longest_cds_info = {
-                        "start": start_index,
-                        "end": end_index + 2,
-                        "length": current_cds_length,
-                    }
-                break
-        start_index = mrna_sequence.find(start_codon, start_index + 1)
-
-    return longest_cds_info
-
-
-def split_sequence(sequence, cds_info):
-    if not cds_info:
-        return " ".join(sequence)
-
-    tokens = []
-    start = cds_info["start"]
-    end = cds_info["end"] + 1
-
-    tokens.extend(sequence[:start])
-    cds = sequence[start:end]
-    tokens.extend(cds[i : i + 3] for i in range(0, len(cds), 3))
-    tokens.extend(sequence[end:])
-
-    return " ".join(tokens)
+from mrnabert.sequence_codec import (  # noqa: E402
+    discover_fasta_files,
+    encode_record,
+    iter_all_fasta_records,
+)
 
 
 def format_duration(seconds):
@@ -63,66 +34,6 @@ def format_bytes(num_bytes):
             return f"{value:.2f} {unit}"
         value /= 1024
     return f"{value:.2f} TiB"
-
-
-def tokenize_sequence(sequence):
-    cds_info = find_longest_cds(sequence)
-    return split_sequence(sequence, cds_info)
-
-
-def tokenize_record(record):
-    sequence, file_index, file_bytes_read = record
-    return tokenize_sequence(sequence), file_index, file_bytes_read
-
-
-def iter_fasta_records(path, file_index):
-    current = []
-    bytes_read = 0
-    with path.open("rb") as handle:
-        for raw_line in handle:
-            bytes_read += len(raw_line)
-            line = raw_line.strip().upper()
-            if not line:
-                continue
-            if line.startswith(b">"):
-                if current:
-                    yield b"".join(current).decode("ascii"), file_index, bytes_read
-                    current = []
-                continue
-            current.append(line.replace(b"U", b"T"))
-    if current:
-        yield b"".join(current).decode("ascii"), file_index, bytes_read
-
-
-def iter_all_fasta_records(input_files):
-    for file_index, path in enumerate(input_files, start=1):
-        yield from iter_fasta_records(path, file_index)
-
-
-def iter_input_files(raw_dir, input_list):
-    seen = set()
-
-    candidates = [raw_dir]
-    if input_list:
-        with Path(input_list).open("r") as handle:
-            candidates.extend(Path(line.strip()) for line in handle if line.strip())
-
-    for candidate in candidates:
-        if candidate.is_dir():
-            files = sorted(
-                path
-                for path in candidate.rglob("*")
-                if path.suffix.lower() in {".fa", ".fasta", ".fna"}
-            )
-        else:
-            files = [candidate]
-
-        for path in files:
-            path = path.resolve()
-            if path in seen:
-                continue
-            seen.add(path)
-            yield path
 
 
 def log_progress(
@@ -171,37 +82,25 @@ def process_records(input_files, workers, chunksize, unordered):
     records = iter_all_fasta_records(input_files)
     if workers == 1:
         for record in records:
-            yield tokenize_record(record)
+            yield encode_record(record)
         return
 
     with Pool(processes=workers) as pool:
         mapper = pool.imap_unordered if unordered else pool.imap
-        yield from mapper(tokenize_record, records, chunksize=chunksize)
+        yield from mapper(encode_record, records, chunksize=chunksize)
 
 
-def process_files(
-    raw_dir,
-    input_list,
-    output_dir,
-    output_name,
-    progress_interval,
-    workers,
-    chunksize,
-    unordered,
-):
+def process_files(raw_dir, input_list, output_dir, output_name, progress_interval, workers, chunksize, unordered):
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / output_name
-    input_files = list(iter_input_files(raw_dir, input_list))
+    input_files = discover_fasta_files(raw_dir, input_list)
     if not input_files:
         raise FileNotFoundError(f"No FASTA files found under {raw_dir}")
 
     input_sizes = [path.stat().st_size for path in input_files]
     total_bytes = sum(input_sizes)
 
-    print(
-        f"Found {len(input_files)} FASTA files, total input {format_bytes(total_bytes)}",
-        flush=True,
-    )
+    print(f"Found {len(input_files)} FASTA files, total input {format_bytes(total_bytes)}", flush=True)
     order_mode = "unordered" if unordered else "ordered"
     print(f"Using workers={workers}, chunksize={chunksize}, mode={order_mode}", flush=True)
 
@@ -213,30 +112,19 @@ def process_files(
     last_file_index = None
 
     with output_path.open("w") as output:
-        for line, file_index, file_bytes_read in process_records(
-            input_files,
-            workers,
-            chunksize,
-            unordered,
-        ):
+        for line, file_index, file_bytes_read in process_records(input_files, workers, chunksize, unordered):
             output.write(line + "\n")
             file_offset = file_index - 1
             path = input_files[file_offset]
             file_size = input_sizes[file_offset]
 
             if last_file_index != file_index:
-                print(
-                    f"Processing {file_index}/{len(input_files)} {path} ({format_bytes(file_size)})",
-                    flush=True,
-                )
+                print(f"Processing {file_index}/{len(input_files)} {path} ({format_bytes(file_size)})", flush=True)
                 last_file_index = file_index
 
             file_sequences[file_offset] += 1
             total_sequences += 1
-            file_progress_bytes[file_offset] = max(
-                file_progress_bytes[file_offset],
-                file_bytes_read,
-            )
+            file_progress_bytes[file_offset] = max(file_progress_bytes[file_offset], file_bytes_read)
 
             now = time.time()
             if now - last_progress_at >= progress_interval:
@@ -272,61 +160,17 @@ def process_files(
     print(f"Processed {total_sequences} sequences -> {output_path}")
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Stream FASTA files into mRNABERT pretraining text format."
-    )
-    parser.add_argument(
-        "--raw-dir",
-        "--raw_dir",
-        type=Path,
-        default=Path("raw"),
-        help="Directory containing extracted FASTA files. Defaults to ./raw.",
-    )
-    parser.add_argument(
-        "--input-list",
-        "--input_list",
-        default=None,
-        help="Optional text file containing one FASTA path per line.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        "--output_dir",
-        type=Path,
-        required=True,
-        help="Output directory. The merged training file is written here.",
-    )
-    parser.add_argument(
-        "--output-name",
-        "--output_name",
-        default="pre.txt",
-        help="Output filename inside --output-dir. Defaults to pre.txt.",
-    )
-    parser.add_argument(
-        "--progress-interval",
-        "--progress_interval",
-        type=float,
-        default=60.0,
-        help="Seconds between progress logs. Defaults to 60.",
-    )
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=default_workers(),
-        help="Worker processes for sequence tokenization. Defaults to min(CPU count, 32). Use 1 for serial.",
-    )
-    parser.add_argument(
-        "--chunksize",
-        type=int,
-        default=32,
-        help="Number of FASTA records sent to each worker batch. Defaults to 32.",
-    )
-    parser.add_argument(
-        "--unordered",
-        action="store_true",
-        help="Write records as workers finish instead of preserving FASTA order. Faster for MLM pretraining.",
-    )
-    args = parser.parse_args()
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Stream FASTA files into mRNABERT pretraining text format.")
+    parser.add_argument("--raw-dir", "--raw_dir", type=Path, default=Path("raw"))
+    parser.add_argument("--input-list", "--input_list", default=None)
+    parser.add_argument("--output-dir", "--output_dir", type=Path, required=True)
+    parser.add_argument("--output-name", "--output_name", default="pre.txt")
+    parser.add_argument("--progress-interval", "--progress_interval", type=float, default=60.0)
+    parser.add_argument("--workers", type=int, default=default_workers())
+    parser.add_argument("--chunksize", type=int, default=32)
+    parser.add_argument("--unordered", action="store_true")
+    args = parser.parse_args(argv)
     if args.workers < 1:
         parser.error("--workers must be >= 1")
     if args.chunksize < 1:
@@ -336,8 +180,8 @@ def parse_args():
     return args
 
 
-if __name__ == "__main__":
-    args = parse_args()
+def main(argv=None):
+    args = parse_args(argv)
     process_files(
         args.raw_dir,
         args.input_list,
@@ -348,3 +192,7 @@ if __name__ == "__main__":
         args.chunksize,
         args.unordered,
     )
+
+
+if __name__ == "__main__":
+    main()
