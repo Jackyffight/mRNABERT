@@ -179,11 +179,11 @@ Large training files do not live in GPU memory. GPU memory is mainly determined
 by model size, sequence length, batch size, precision, activations, gradients,
 and optimizer state. The large-file risk is disk cache: HuggingFace datasets
 materializes Arrow/tokenized cache. The launcher therefore defaults
-`--dataset-cache-dir` to `<output-root>/cache/datasets` instead of writing large
-cache files under `~/.cache/huggingface`. Exploratory runs with `--max-steps`
-default to `--streaming`, which skips Arrow/tokenized cache creation. If you
-force cached preprocessing on an HDFS/FUSE mount, the launcher reduces
-tokenization workers to 1 to avoid concurrent Arrow temp-file write failures.
+`--dataset-cache-dir` to `<output-root>/cache/datasets`, which is intended to be
+an HDFS-mounted training path instead of `~/.cache/huggingface`. Exploratory
+runs with `--max-steps` default to `--streaming`, which skips Arrow/tokenized
+cache creation. For cached preprocessing, use `--no-streaming` and explicitly
+choose `--preprocessing-workers`.
 
 Smoke test:
 ```

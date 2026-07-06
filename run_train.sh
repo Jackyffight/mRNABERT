@@ -190,14 +190,9 @@ fi
 if [[ "$DATASET_CACHE_DIR" == "$HOME"/* || "$DATASET_CACHE_DIR" == /home/* || "$DATASET_CACHE_DIR" == /root/* ]]; then
   if [ "${MRNABERT_ALLOW_HOME_CACHE:-false}" != "true" ]; then
     echo "Error: dataset cache points to a home/root filesystem: $DATASET_CACHE_DIR"
-    echo "Use --dataset-cache-dir on a large mounted path, or set MRNABERT_ALLOW_HOME_CACHE=true to override."
+    echo "Use --dataset-cache-dir on an HDFS-mounted training path, or set MRNABERT_ALLOW_HOME_CACHE=true to override."
     exit 1
   fi
-fi
-
-if [ "$STREAMING_MODE" != "true" ] && [[ "$DATASET_CACHE_DIR" == /mnt/hdfs/* ]] && [ "$PREPROCESSING_NUM_WORKERS" -gt 1 ]; then
-  echo "[preflight] Dataset cache is on HDFS/FUSE; forcing preprocessing workers from $PREPROCESSING_NUM_WORKERS to 1 to avoid concurrent Arrow temp-file writes."
-  PREPROCESSING_NUM_WORKERS=1
 fi
 
 if [ ! -f "$TRAIN_FILE" ]; then
