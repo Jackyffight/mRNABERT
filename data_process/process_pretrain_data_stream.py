@@ -154,6 +154,7 @@ def log_progress(
         f"total_pct={total_pct:.2f}% "
         f"seq_file={file_sequences} "
         f"seq_total={total_sequences} "
+        f"speed={format_bytes(rate)}/s "
         f"rate={format_bytes(rate)}/s "
         f"elapsed={format_duration(elapsed)} "
         f"eta={format_duration(eta)}",
@@ -166,7 +167,7 @@ def default_workers():
     return max(1, min(cpu_count, 32))
 
 
-def process_records(input_files, workers, chunksize):
+def process_records(input_files, workers, chunksize, unordered):
     records = iter_all_fasta_records(input_files)
     if workers == 1:
         for record in records:
@@ -174,10 +175,20 @@ def process_records(input_files, workers, chunksize):
         return
 
     with Pool(processes=workers) as pool:
-        yield from pool.imap(tokenize_record, records, chunksize=chunksize)
+        mapper = pool.imap_unordered if unordered else pool.imap
+        yield from mapper(tokenize_record, records, chunksize=chunksize)
 
 
-def process_files(raw_dir, input_list, output_dir, output_name, progress_interval, workers, chunksize):
+def process_files(
+    raw_dir,
+    input_list,
+    output_dir,
+    output_name,
+    progress_interval,
+    workers,
+    chunksize,
+    unordered,
+):
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / output_name
     input_files = list(iter_input_files(raw_dir, input_list))
@@ -191,17 +202,23 @@ def process_files(raw_dir, input_list, output_dir, output_name, progress_interva
         f"Found {len(input_files)} FASTA files, total input {format_bytes(total_bytes)}",
         flush=True,
     )
-    print(f"Using workers={workers}, chunksize={chunksize}", flush=True)
+    order_mode = "unordered" if unordered else "ordered"
+    print(f"Using workers={workers}, chunksize={chunksize}, mode={order_mode}", flush=True)
 
     total_sequences = 0
     file_sequences = [0 for _ in input_files]
     file_progress_bytes = [0 for _ in input_files]
     started_at = time.time()
-    last_progress_at = started_at
+    last_progress_at = 0.0
     last_file_index = None
 
     with output_path.open("w") as output:
-        for line, file_index, file_bytes_read in process_records(input_files, workers, chunksize):
+        for line, file_index, file_bytes_read in process_records(
+            input_files,
+            workers,
+            chunksize,
+            unordered,
+        ):
             output.write(line + "\n")
             file_offset = file_index - 1
             path = input_files[file_offset]
@@ -301,8 +318,13 @@ def parse_args():
     parser.add_argument(
         "--chunksize",
         type=int,
-        default=128,
-        help="Number of FASTA records sent to each worker batch. Defaults to 128.",
+        default=32,
+        help="Number of FASTA records sent to each worker batch. Defaults to 32.",
+    )
+    parser.add_argument(
+        "--unordered",
+        action="store_true",
+        help="Write records as workers finish instead of preserving FASTA order. Faster for MLM pretraining.",
     )
     args = parser.parse_args()
     if args.workers < 1:
@@ -324,4 +346,5 @@ if __name__ == "__main__":
         args.progress_interval,
         args.workers,
         args.chunksize,
+        args.unordered,
     )
