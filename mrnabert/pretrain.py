@@ -133,6 +133,7 @@ class DataTrainingArguments:
         default="line-stride",
         metadata={
             "help": "line-stride sequentially reads local text and shards by rank/worker; "
+            "file-shard assigns matched files by distributed rank; "
             "byte-range uses seek-based sharding; hf uses HuggingFace datasets streaming."
         },
     )
@@ -140,8 +141,8 @@ class DataTrainingArguments:
     def __post_init__(self) -> None:
         if self.streaming:
             require_version("datasets>=2.0.0", "The streaming feature requires datasets>=2.0.0")
-        if self.streaming_reader not in {"line-stride", "byte-range", "hf"}:
-            raise ValueError("--streaming_reader must be line-stride, byte-range, or hf.")
+        if self.streaming_reader not in {"line-stride", "file-shard", "byte-range", "hf"}:
+            raise ValueError("--streaming_reader must be line-stride, file-shard, byte-range, or hf.")
         if self.dataset_name is None and self.train_file is None and self.validation_file is None:
             raise ValueError("Need either a dataset name or a train/validation file.")
         for value, label in ((self.train_file, "train_file"), (self.validation_file, "validation_file")):
@@ -308,6 +309,56 @@ class LineStrideTokenizedTextDataset(torch.utils.data.IterableDataset):
                     yield self._tokenize(line)
 
 
+class FileShardTokenizedTextDataset(torch.utils.data.IterableDataset):
+    """Read rank-assigned local text shard files sequentially."""
+
+    def __init__(
+        self,
+        files: Sequence[str],
+        tokenizer,
+        max_seq_length: int,
+        pad_to_max_length: bool,
+        max_samples: Optional[int] = None,
+    ) -> None:
+        self.files = list(files)
+        self.tokenizer = tokenizer
+        self.max_seq_length = max_seq_length
+        self.pad_to_max_length = pad_to_max_length
+        self.max_samples = max_samples
+
+    def _tokenize(self, line: str) -> dict:
+        padding = "max_length" if self.pad_to_max_length else False
+        return self.tokenizer(
+            line,
+            padding=padding,
+            truncation=True,
+            max_length=self.max_seq_length,
+            return_special_tokens_mask=True,
+        )
+
+    def __iter__(self):
+        rank, world_size = get_distributed_rank_info()
+        worker_info = torch.utils.data.get_worker_info()
+        worker_id = worker_info.id if worker_info is not None else 0
+        num_workers = worker_info.num_workers if worker_info is not None else 1
+        yielded = 0
+
+        for file_index, path in enumerate(self.files):
+            if file_index % max(1, world_size) != rank:
+                continue
+            with open(path, "rb") as handle:
+                for line_index, raw_line in enumerate(handle):
+                    if line_index % num_workers != worker_id:
+                        continue
+                    line = raw_line.decode("utf-8", errors="ignore").strip()
+                    if not line:
+                        continue
+                    if self.max_samples is not None and yielded >= self.max_samples:
+                        return
+                    yielded += 1
+                    yield self._tokenize(line)
+
+
 def setup_logging(training_args: TrainingArguments) -> None:
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -456,7 +507,7 @@ def shard_streaming_datasets(raw_datasets, data_args: DataTrainingArguments):
 def can_use_local_text_streaming(data_args: DataTrainingArguments) -> bool:
     return (
         data_args.streaming
-        and data_args.streaming_reader in {"line-stride", "byte-range"}
+        and data_args.streaming_reader in {"line-stride", "file-shard", "byte-range"}
         and data_args.dataset_name is None
         and data_args.line_by_line
         and data_args.train_file is not None
@@ -468,11 +519,12 @@ def build_local_text_streaming_datasets(tokenizer, data_args: DataTrainingArgume
     train_files = resolve_text_files(data_args.train_file or "")
     rank, world_size = get_distributed_rank_info()
     max_seq_length = resolve_max_seq_length(tokenizer, data_args)
-    dataset_cls = (
-        ByteRangeTokenizedTextDataset
-        if data_args.streaming_reader == "byte-range"
-        else LineStrideTokenizedTextDataset
-    )
+    if data_args.streaming_reader == "byte-range":
+        dataset_cls = ByteRangeTokenizedTextDataset
+    elif data_args.streaming_reader == "file-shard":
+        dataset_cls = FileShardTokenizedTextDataset
+    else:
+        dataset_cls = LineStrideTokenizedTextDataset
     logger.info(
         "Using %s streaming reader for %s train file(s), rank=%s, world_size=%s",
         data_args.streaming_reader,

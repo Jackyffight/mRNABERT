@@ -46,12 +46,20 @@ NPROC_PER_NODE="${MRNABERT_NPROC_PER_NODE:-}"
 MASTER_PORT="${MRNABERT_MASTER_PORT:-}"
 STREAMING_MODE="auto"
 STREAMING_READER="${MRNABERT_STREAMING_READER:-line-stride}"
+AUTO_SHARD_MODE="${MRNABERT_AUTO_SHARD:-auto}"
+SHARD_DIR="${MRNABERT_SHARD_DIR:-}"
+SHARD_COUNT="${MRNABERT_SHARD_COUNT:-}"
+SHARD_SEED="${MRNABERT_SHARD_SEED:-42}"
+SHARD_PROGRESS_INTERVAL="${MRNABERT_SHARD_PROGRESS_INTERVAL:-30}"
+RESHARD=false
 
 BATCH_SIZE_SET=false
 GRAD_ACCUM_SET=false
 WARMUP_STEPS_SET=false
 LOGGING_STEPS_SET=false
 SAVE_STEPS_SET=false
+DATALOADER_NUM_WORKERS_SET=false
+STREAMING_READER_SET=false
 TRAIN_ARGS=()
 
 usage() {
@@ -97,8 +105,17 @@ Launcher args:
   --devices <list|all>        CUDA_VISIBLE_DEVICES. Default: first currently visible GPU.
                               For torchrun, default is all visible GPUs.
   --streaming                 Stream data without Arrow/tokenized cache. Default when --max-steps is set.
-  --streaming-reader <reader> line-stride, byte-range, or hf. Default: line-stride.
+  --streaming-reader <reader> line-stride, file-shard, byte-range, or hf. Default: line-stride.
   --no-streaming              Force Arrow/tokenized cache creation.
+  --auto-shard                Split one train file into random shard files before torchrun training.
+                              Default: auto for torchrun + streaming + one txt file.
+  --no-auto-shard             Disable launcher-side data sharding.
+  --shard-dir <dir>           Shard cache dir. Default: <output-root>/data_shards/<file>-<n>shards-seed<seed>.
+  --shard-count <n>           Number of random shards. Default: torchrun process count.
+  --shard-seed <n>            Deterministic random shard assignment seed. Default: 42.
+  --shard-progress-interval <sec>
+                              Progress log interval for sharding. Default: 30.
+  --reshard                   Rebuild shard files even if manifest matches.
 
 Any unknown arguments are passed through to `python main.py pretrain`.
 EOF
@@ -130,7 +147,7 @@ while [ $# -gt 0 ]; do
     --mlm-probability|--mlm_probability) MLM_PROBABILITY="$2"; shift 2 ;;
     --dtype) DTYPE="$2"; shift 2 ;;
     --preprocessing-workers|--preprocessing_workers) PREPROCESSING_NUM_WORKERS="$2"; shift 2 ;;
-    --dataloader-workers|--dataloader_workers) DATALOADER_NUM_WORKERS="$2"; shift 2 ;;
+    --dataloader-workers|--dataloader_workers) DATALOADER_NUM_WORKERS="$2"; DATALOADER_NUM_WORKERS_SET=true; shift 2 ;;
     --no-tf32|--no_tf32) TF32=false; shift ;;
     --use-triton-flash-attn|--use_triton_flash_attn) USE_TRITON_FLASH_ATTN=true; shift ;;
     --resume) RESUME="$2"; shift 2 ;;
@@ -141,8 +158,15 @@ while [ $# -gt 0 ]; do
     --master-port|--master_port) MASTER_PORT="$2"; shift 2 ;;
     --devices|--cuda-visible-devices|--cuda_visible_devices) CUDA_DEVICES="$2"; CUDA_DEVICES_SET=true; shift 2 ;;
     --streaming) STREAMING_MODE=true; shift ;;
-    --streaming-reader|--streaming_reader) STREAMING_READER="$2"; shift 2 ;;
+    --streaming-reader|--streaming_reader) STREAMING_READER="$2"; STREAMING_READER_SET=true; shift 2 ;;
     --no-streaming|--no_streaming) STREAMING_MODE=false; shift ;;
+    --auto-shard|--auto_shard) AUTO_SHARD_MODE=true; shift ;;
+    --no-auto-shard|--no_auto_shard) AUTO_SHARD_MODE=false; shift ;;
+    --shard-dir|--shard_dir) SHARD_DIR="$2"; shift 2 ;;
+    --shard-count|--shard_count) SHARD_COUNT="$2"; shift 2 ;;
+    --shard-seed|--shard_seed) SHARD_SEED="$2"; shift 2 ;;
+    --shard-progress-interval|--shard_progress_interval) SHARD_PROGRESS_INTERVAL="$2"; shift 2 ;;
+    --reshard) RESHARD=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) TRAIN_ARGS+=("$1"); shift ;;
   esac
@@ -168,8 +192,12 @@ if [ "$LAUNCHER" != "direct" ] && [ "$LAUNCHER" != "torchrun" ]; then
   echo "Error: --launcher must be direct or torchrun."
   exit 1
 fi
-if [ "$STREAMING_READER" != "line-stride" ] && [ "$STREAMING_READER" != "byte-range" ] && [ "$STREAMING_READER" != "hf" ]; then
-  echo "Error: --streaming-reader must be line-stride, byte-range, or hf."
+if [ "$STREAMING_READER" != "line-stride" ] && [ "$STREAMING_READER" != "file-shard" ] && [ "$STREAMING_READER" != "byte-range" ] && [ "$STREAMING_READER" != "hf" ]; then
+  echo "Error: --streaming-reader must be line-stride, file-shard, byte-range, or hf."
+  exit 1
+fi
+if [ "$AUTO_SHARD_MODE" != "auto" ] && [ "$AUTO_SHARD_MODE" != "true" ] && [ "$AUTO_SHARD_MODE" != "false" ]; then
+  echo "Error: auto shard mode must be auto, true, or false."
   exit 1
 fi
 
@@ -365,6 +393,64 @@ PY
   fi
 fi
 
+TRAIN_FILE_HAS_GLOB=false
+if [[ "$TRAIN_FILE" == *"*"* || "$TRAIN_FILE" == *"?"* || "$TRAIN_FILE" == *"["* ]]; then
+  TRAIN_FILE_HAS_GLOB=true
+fi
+
+AUTO_SHARD_ENABLED=false
+if [ "$AUTO_SHARD_MODE" = "true" ]; then
+  AUTO_SHARD_ENABLED=true
+elif [ "$AUTO_SHARD_MODE" = "auto" ]; then
+  if [ "$MODE" != "smoke" ] \
+    && [ "$LAUNCHER" = "torchrun" ] \
+    && [ "$STREAMING_MODE" = "true" ] \
+    && [ "$TRAIN_FILE_HAS_GLOB" = false ] \
+    && [ -f "$TRAIN_FILE" ] \
+    && [[ "$TRAIN_FILE" == *.txt ]] \
+    && [ "${NPROC_PER_NODE:-1}" -gt 1 ]; then
+    AUTO_SHARD_ENABLED=true
+  fi
+fi
+
+if [ "$AUTO_SHARD_ENABLED" = true ]; then
+  if [ "$STREAMING_MODE" != "true" ]; then
+    echo "Error: --auto-shard requires streaming mode. Remove --no-streaming or add --streaming."
+    exit 1
+  fi
+  if [ "$TRAIN_FILE_HAS_GLOB" = true ] || [ ! -f "$TRAIN_FILE" ]; then
+    echo "Error: --auto-shard requires one concrete training txt file, got: $TRAIN_FILE"
+    exit 1
+  fi
+  if [[ "$TRAIN_FILE" != *.txt ]]; then
+    echo "Error: --auto-shard currently supports .txt pretraining files only: $TRAIN_FILE"
+    exit 1
+  fi
+  if [ -z "$SHARD_COUNT" ]; then
+    if [ "$LAUNCHER" = "torchrun" ]; then
+      SHARD_COUNT="$NPROC_PER_NODE"
+    else
+      SHARD_COUNT="$NUM_GPUS"
+    fi
+  fi
+  if [ "$SHARD_COUNT" -lt 1 ]; then
+    echo "Error: --shard-count must be >= 1."
+    exit 1
+  fi
+  if [ -z "$SHARD_DIR" ]; then
+    SHARD_BASE=$(basename "$TRAIN_FILE")
+    SHARD_STEM="${SHARD_BASE%.*}"
+    SHARD_STEM=$(printf '%s' "$SHARD_STEM" | tr -c 'A-Za-z0-9._-' '_')
+    SHARD_DIR="${OUTPUT_ROOT}/data_shards/${SHARD_STEM}-${SHARD_COUNT}shards-seed${SHARD_SEED}"
+  fi
+  if [ "$STREAMING_READER_SET" = false ]; then
+    STREAMING_READER="file-shard"
+  fi
+  if [ "$DATALOADER_NUM_WORKERS_SET" = false ]; then
+    DATALOADER_NUM_WORKERS=0
+  fi
+fi
+
 mkdir -p "$WORK_DATA" "$WORK_LOGS" "$OUTPUT_DIR" "$DATASET_CACHE_DIR"
 if [ -n "$HF_CACHE_DIR" ]; then
   mkdir -p "$HUGGINGFACE_HUB_CACHE" "$HF_MODULES_CACHE"
@@ -379,6 +465,21 @@ if [ "$MODE" = "smoke" ]; then
     SMOKE_SOURCE=$(compgen -G "$TRAIN_FILE" | sort | head -n 1)
   fi
   head -n "$SAMPLE_LINES" "$SMOKE_SOURCE" > "$EFFECTIVE_TRAIN_FILE"
+fi
+
+if [ "$AUTO_SHARD_ENABLED" = true ]; then
+  SHARD_ARGS=(
+    --input "$TRAIN_FILE"
+    --output-dir "$SHARD_DIR"
+    --shards "$SHARD_COUNT"
+    --seed "$SHARD_SEED"
+    --progress-interval "$SHARD_PROGRESS_INTERVAL"
+  )
+  if [ "$RESHARD" = true ]; then
+    SHARD_ARGS+=(--overwrite)
+  fi
+  "$PYTHON" data_process/shard_pretrain_text.py "${SHARD_ARGS[@]}"
+  EFFECTIVE_TRAIN_FILE="${SHARD_DIR}/pre_shard_*.txt"
 fi
 
 PRECISION_ARGS=()
@@ -445,6 +546,12 @@ echo "preprocessing_workers: $PREPROCESSING_NUM_WORKERS"
 echo "dataloader_workers: $DATALOADER_NUM_WORKERS"
 echo "streaming: $STREAMING_MODE"
 echo "streaming_reader: $STREAMING_READER"
+echo "auto_shard: $AUTO_SHARD_ENABLED"
+if [ "$AUTO_SHARD_ENABLED" = true ]; then
+  echo "shard_dir: $SHARD_DIR"
+  echo "shard_count: $SHARD_COUNT"
+  echo "shard_seed: $SHARD_SEED"
+fi
 echo "tf32: $TF32"
 echo "use_triton_flash_attn: $USE_TRITON_FLASH_ATTN"
 echo "python: $($PYTHON --version)"

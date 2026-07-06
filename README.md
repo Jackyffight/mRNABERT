@@ -220,12 +220,20 @@ Short exploratory run on the full file:
   --grad-accum 2
 ```
 
-This uses streaming by default because `--max-steps` is set. For local text
-training files on HDFS/FUSE, streaming defaults to the in-process `line-stride`
-reader, which sequentially scans each file and shards lines across DDP ranks and
-dataloader workers. You do not need to split or recombine `pre.txt` manually.
-Use `--streaming-reader byte-range` only on filesystems with fast random seek,
-or `--streaming-reader hf` to fall back to HuggingFace datasets streaming.
+This uses streaming by default because `--max-steps` is set. For `torchrun` on a
+single large local text file, the launcher also defaults to `--auto-shard`: it
+streams through `pre.txt` once, randomly writes one shard per process, logs
+`shard_progress` with bytes, lines, rate, elapsed time, and ETA, then trains with
+the `file-shard` reader. Shards are cached under
+`<output-root>/data_shards/<file>-<n>shards-seed<seed>/` and reused when the
+manifest still matches the source file. Use `--reshard` to force a rebuild,
+`--no-auto-shard` to disable this path, or `--shard-count`, `--shard-seed`, and
+`--shard-dir` to control it.
+
+The older streaming readers are still available for debugging: `line-stride`
+sequentially scans the source file in every rank, `byte-range` uses seek-based
+sharding and should only be used on filesystems with fast random seek, and `hf`
+falls back to HuggingFace datasets streaming.
 
 The default output workspace is:
 ```
