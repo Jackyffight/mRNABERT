@@ -505,6 +505,9 @@ esac
 RESUME_ARGS=()
 if [ -n "$RESUME" ]; then
   RESUME_ARGS=(--resume_from_checkpoint "$RESUME")
+  if [ "$STREAMING_MODE" = "true" ]; then
+    RESUME_ARGS+=(--ignore_data_skip true)
+  fi
 fi
 
 MAX_STEP_ARGS=()
@@ -557,6 +560,8 @@ echo "batch_size: $BATCH_SIZE"
 echo "grad_accum: $GRAD_ACCUM"
 echo "epochs: $EPOCHS"
 [ -n "$MAX_STEPS" ] && echo "max_steps: $MAX_STEPS"
+[ -n "$RESUME" ] && echo "resume: $RESUME"
+[ -n "$RESUME" ] && [ "$STREAMING_MODE" = "true" ] && echo "ignore_data_skip: true"
 echo "dtype: $DTYPE"
 echo "preprocessing_workers: $PREPROCESSING_NUM_WORKERS"
 echo "dataloader_workers: $DATALOADER_NUM_WORKERS"

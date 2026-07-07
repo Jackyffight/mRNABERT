@@ -241,6 +241,12 @@ while avoiding long ordered stretches from the original FASTA/pre.txt layout.
 Use `--streaming-shuffle-buffer 0` to disable it, or increase the value if host
 memory and storage throughput are comfortable.
 
+When resuming a streaming run with `--resume`, the launcher sets
+`--ignore_data_skip true`. Optimizer, scheduler, model weights, and global step
+are still restored, but the trainer does not try to replay tens of thousands of
+streaming batches just to recover an exact data cursor. This is the practical
+default for large streaming pretraining runs.
+
 The older streaming readers are still available for debugging: `line-stride`
 sequentially scans the source file in every rank, `byte-range` uses seek-based
 sharding and should only be used on filesystems with fast random seek, and `hf`
