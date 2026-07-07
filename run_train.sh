@@ -302,6 +302,9 @@ mkdir -p "$TRITON_CACHE_DIR"
 export NCCL_DEBUG=${MRNABERT_NCCL_DEBUG:-WARN}
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 export TRANSFORMERS_NO_ADVISORY_WARNINGS=${TRANSFORMERS_NO_ADVISORY_WARNINGS:-1}
+if [ -n "$RESUME" ]; then
+  export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=${TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD:-1}
+fi
 export HF_DATASETS_CACHE="$DATASET_CACHE_DIR"
 if [ -n "$HF_CACHE_DIR" ]; then
   export HF_HOME="$HF_CACHE_DIR"
@@ -562,6 +565,7 @@ echo "epochs: $EPOCHS"
 [ -n "$MAX_STEPS" ] && echo "max_steps: $MAX_STEPS"
 [ -n "$RESUME" ] && echo "resume: $RESUME"
 [ -n "$RESUME" ] && [ "$STREAMING_MODE" = "true" ] && echo "ignore_data_skip: true"
+[ -n "$RESUME" ] && echo "torch_force_no_weights_only_load: ${TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD:-}"
 echo "dtype: $DTYPE"
 echo "preprocessing_workers: $PREPROCESSING_NUM_WORKERS"
 echo "dataloader_workers: $DATALOADER_NUM_WORKERS"

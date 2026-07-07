@@ -245,7 +245,9 @@ When resuming a streaming run with `--resume`, the launcher sets
 `--ignore_data_skip true`. Optimizer, scheduler, model weights, and global step
 are still restored, but the trainer does not try to replay tens of thousands of
 streaming batches just to recover an exact data cursor. This is the practical
-default for large streaming pretraining runs.
+default for large streaming pretraining runs. The launcher also sets
+`TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1` for resume runs so PyTorch 2.6+ can load the
+old Transformers RNG state files produced by trusted local checkpoints.
 
 The older streaming readers are still available for debugging: `line-stride`
 sequentially scans the source file in every rank, `byte-range` uses seek-based
