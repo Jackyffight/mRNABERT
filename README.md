@@ -235,6 +235,12 @@ process reads its assigned shard directly. This avoids the default IterableDatas
 path where the main process becomes the only data reader and can bottleneck or
 stall the whole job.
 
+The `file-shard` path also enables a bounded per-rank shuffle buffer by default
+(`--streaming-shuffle-buffer 20000`). This keeps training streaming-friendly
+while avoiding long ordered stretches from the original FASTA/pre.txt layout.
+Use `--streaming-shuffle-buffer 0` to disable it, or increase the value if host
+memory and storage throughput are comfortable.
+
 The older streaming readers are still available for debugging: `line-stride`
 sequentially scans the source file in every rank, `byte-range` uses seek-based
 sharding and should only be used on filesystems with fast random seek, and `hf`

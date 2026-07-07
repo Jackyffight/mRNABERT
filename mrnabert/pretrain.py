@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import os
+import random
 import sys
 from dataclasses import asdict, dataclass, field
 from glob import glob
@@ -137,12 +138,22 @@ class DataTrainingArguments:
             "byte-range uses seek-based sharding; hf uses HuggingFace datasets streaming."
         },
     )
+    streaming_shuffle_buffer: int = field(
+        default=0,
+        metadata={"help": "Bounded per-rank line shuffle buffer for local text streaming. 0 disables shuffle."},
+    )
+    streaming_shuffle_seed: int = field(
+        default=42,
+        metadata={"help": "Base seed for local streaming shuffle buffers."},
+    )
 
     def __post_init__(self) -> None:
         if self.streaming:
             require_version("datasets>=2.0.0", "The streaming feature requires datasets>=2.0.0")
         if self.streaming_reader not in {"line-stride", "file-shard", "byte-range", "hf"}:
             raise ValueError("--streaming_reader must be line-stride, file-shard, byte-range, or hf.")
+        if self.streaming_shuffle_buffer < 0:
+            raise ValueError("--streaming_shuffle_buffer must be >= 0.")
         if self.dataset_name is None and self.train_file is None and self.validation_file is None:
             raise ValueError("Need either a dataset name or a train/validation file.")
         for value, label in ((self.train_file, "train_file"), (self.validation_file, "validation_file")):
@@ -193,6 +204,25 @@ def resolve_text_files(pattern: str) -> list[str]:
     return files
 
 
+def iter_bounded_shuffle(lines, buffer_size: int, seed: int):
+    if buffer_size <= 1:
+        yield from lines
+        return
+
+    rng = random.Random(seed)
+    buffer = []
+    for line in lines:
+        if len(buffer) < buffer_size:
+            buffer.append(line)
+            continue
+        index = rng.randrange(len(buffer))
+        yield buffer[index]
+        buffer[index] = line
+
+    rng.shuffle(buffer)
+    yield from buffer
+
+
 class ByteRangeTokenizedTextDataset(torch.utils.data.IterableDataset):
     """Read local text files by byte range across DDP ranks and dataloader workers."""
 
@@ -203,12 +233,16 @@ class ByteRangeTokenizedTextDataset(torch.utils.data.IterableDataset):
         max_seq_length: int,
         pad_to_max_length: bool,
         max_samples: Optional[int] = None,
+        shuffle_buffer: int = 0,
+        shuffle_seed: int = 42,
     ) -> None:
         self.files = list(files)
         self.tokenizer = tokenizer
         self.max_seq_length = max_seq_length
         self.pad_to_max_length = pad_to_max_length
         self.max_samples = max_samples
+        self.shuffle_buffer = shuffle_buffer
+        self.shuffle_seed = shuffle_seed
 
     @staticmethod
     def _iter_lines(path: str, start: int, end: int):
@@ -248,15 +282,19 @@ class ByteRangeTokenizedTextDataset(torch.utils.data.IterableDataset):
         num_partitions = max(1, world_size * num_workers)
         yielded = 0
 
-        for path in self.files:
-            size = os.path.getsize(path)
-            start = (size * partition_id) // num_partitions
-            end = (size * (partition_id + 1)) // num_partitions
-            for line in self._iter_lines(path, start, end):
-                if self.max_samples is not None and yielded >= self.max_samples:
-                    return
-                yielded += 1
-                yield self._tokenize(line)
+        def lines():
+            for path in self.files:
+                size = os.path.getsize(path)
+                start = (size * partition_id) // num_partitions
+                end = (size * (partition_id + 1)) // num_partitions
+                yield from self._iter_lines(path, start, end)
+
+        seed = self.shuffle_seed + partition_id
+        for line in iter_bounded_shuffle(lines(), self.shuffle_buffer, seed):
+            if self.max_samples is not None and yielded >= self.max_samples:
+                return
+            yielded += 1
+            yield self._tokenize(line)
 
 
 class LineStrideTokenizedTextDataset(torch.utils.data.IterableDataset):
@@ -269,12 +307,16 @@ class LineStrideTokenizedTextDataset(torch.utils.data.IterableDataset):
         max_seq_length: int,
         pad_to_max_length: bool,
         max_samples: Optional[int] = None,
+        shuffle_buffer: int = 0,
+        shuffle_seed: int = 42,
     ) -> None:
         self.files = list(files)
         self.tokenizer = tokenizer
         self.max_seq_length = max_seq_length
         self.pad_to_max_length = pad_to_max_length
         self.max_samples = max_samples
+        self.shuffle_buffer = shuffle_buffer
+        self.shuffle_seed = shuffle_seed
 
     def _tokenize(self, line: str) -> dict:
         padding = "max_length" if self.pad_to_max_length else False
@@ -295,18 +337,22 @@ class LineStrideTokenizedTextDataset(torch.utils.data.IterableDataset):
         num_partitions = max(1, world_size * num_workers)
         yielded = 0
 
-        for path in self.files:
-            with open(path, "rb") as handle:
-                for line_index, raw_line in enumerate(handle):
-                    if line_index % num_partitions != partition_id:
-                        continue
-                    line = raw_line.decode("utf-8", errors="ignore").strip()
-                    if not line:
-                        continue
-                    if self.max_samples is not None and yielded >= self.max_samples:
-                        return
-                    yielded += 1
-                    yield self._tokenize(line)
+        def lines():
+            for path in self.files:
+                with open(path, "rb") as handle:
+                    for line_index, raw_line in enumerate(handle):
+                        if line_index % num_partitions != partition_id:
+                            continue
+                        line = raw_line.decode("utf-8", errors="ignore").strip()
+                        if line:
+                            yield line
+
+        seed = self.shuffle_seed + partition_id
+        for line in iter_bounded_shuffle(lines(), self.shuffle_buffer, seed):
+            if self.max_samples is not None and yielded >= self.max_samples:
+                return
+            yielded += 1
+            yield self._tokenize(line)
 
 
 class FileShardTokenizedTextDataset(torch.utils.data.IterableDataset):
@@ -319,12 +365,16 @@ class FileShardTokenizedTextDataset(torch.utils.data.IterableDataset):
         max_seq_length: int,
         pad_to_max_length: bool,
         max_samples: Optional[int] = None,
+        shuffle_buffer: int = 0,
+        shuffle_seed: int = 42,
     ) -> None:
         self.files = list(files)
         self.tokenizer = tokenizer
         self.max_seq_length = max_seq_length
         self.pad_to_max_length = pad_to_max_length
         self.max_samples = max_samples
+        self.shuffle_buffer = shuffle_buffer
+        self.shuffle_seed = shuffle_seed
 
     def _tokenize(self, line: str) -> dict:
         padding = "max_length" if self.pad_to_max_length else False
@@ -341,22 +391,27 @@ class FileShardTokenizedTextDataset(torch.utils.data.IterableDataset):
         worker_info = torch.utils.data.get_worker_info()
         worker_id = worker_info.id if worker_info is not None else 0
         num_workers = worker_info.num_workers if worker_info is not None else 1
+        partition_id = rank * num_workers + worker_id
         yielded = 0
 
-        for file_index, path in enumerate(self.files):
-            if file_index % max(1, world_size) != rank:
-                continue
-            with open(path, "rb") as handle:
-                for line_index, raw_line in enumerate(handle):
-                    if line_index % num_workers != worker_id:
-                        continue
-                    line = raw_line.decode("utf-8", errors="ignore").strip()
-                    if not line:
-                        continue
-                    if self.max_samples is not None and yielded >= self.max_samples:
-                        return
-                    yielded += 1
-                    yield self._tokenize(line)
+        def lines():
+            for file_index, path in enumerate(self.files):
+                if file_index % max(1, world_size) != rank:
+                    continue
+                with open(path, "rb") as handle:
+                    for line_index, raw_line in enumerate(handle):
+                        if line_index % num_workers != worker_id:
+                            continue
+                        line = raw_line.decode("utf-8", errors="ignore").strip()
+                        if line:
+                            yield line
+
+        seed = self.shuffle_seed + partition_id
+        for line in iter_bounded_shuffle(lines(), self.shuffle_buffer, seed):
+            if self.max_samples is not None and yielded >= self.max_samples:
+                return
+            yielded += 1
+            yield self._tokenize(line)
 
 
 def setup_logging(training_args: TrainingArguments) -> None:
@@ -526,11 +581,12 @@ def build_local_text_streaming_datasets(tokenizer, data_args: DataTrainingArgume
     else:
         dataset_cls = LineStrideTokenizedTextDataset
     logger.info(
-        "Using %s streaming reader for %s train file(s), rank=%s, world_size=%s",
+        "Using %s streaming reader for %s train file(s), rank=%s, world_size=%s, shuffle_buffer=%s",
         data_args.streaming_reader,
         len(train_files),
         rank,
         world_size,
+        data_args.streaming_shuffle_buffer,
     )
     train_dataset = dataset_cls(
         files=train_files,
@@ -538,6 +594,8 @@ def build_local_text_streaming_datasets(tokenizer, data_args: DataTrainingArgume
         max_seq_length=max_seq_length,
         pad_to_max_length=data_args.pad_to_max_length,
         max_samples=data_args.max_train_samples,
+        shuffle_buffer=data_args.streaming_shuffle_buffer,
+        shuffle_seed=data_args.streaming_shuffle_seed,
     )
 
     eval_dataset = None
@@ -549,6 +607,8 @@ def build_local_text_streaming_datasets(tokenizer, data_args: DataTrainingArgume
             max_seq_length=max_seq_length,
             pad_to_max_length=data_args.pad_to_max_length,
             max_samples=data_args.max_eval_samples,
+            shuffle_buffer=0,
+            shuffle_seed=data_args.streaming_shuffle_seed,
         )
     return train_dataset, eval_dataset
 

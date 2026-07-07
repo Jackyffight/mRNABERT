@@ -46,6 +46,8 @@ NPROC_PER_NODE="${MRNABERT_NPROC_PER_NODE:-}"
 MASTER_PORT="${MRNABERT_MASTER_PORT:-}"
 STREAMING_MODE="auto"
 STREAMING_READER="${MRNABERT_STREAMING_READER:-line-stride}"
+STREAMING_SHUFFLE_BUFFER="${MRNABERT_STREAMING_SHUFFLE_BUFFER:-0}"
+STREAMING_SHUFFLE_SEED="${MRNABERT_STREAMING_SHUFFLE_SEED:-42}"
 AUTO_SHARD_MODE="${MRNABERT_AUTO_SHARD:-auto}"
 SHARD_DIR="${MRNABERT_SHARD_DIR:-}"
 SHARD_COUNT="${MRNABERT_SHARD_COUNT:-}"
@@ -60,6 +62,7 @@ LOGGING_STEPS_SET=false
 SAVE_STEPS_SET=false
 DATALOADER_NUM_WORKERS_SET=false
 STREAMING_READER_SET=false
+STREAMING_SHUFFLE_BUFFER_SET=false
 TRAIN_ARGS=()
 
 usage() {
@@ -106,6 +109,10 @@ Launcher args:
                               For torchrun, default is all visible GPUs.
   --streaming                 Stream data without Arrow/tokenized cache. Default when --max-steps is set.
   --streaming-reader <reader> line-stride, file-shard, byte-range, or hf. Default: line-stride.
+  --streaming-shuffle-buffer <n>
+                              Per-rank local streaming line shuffle buffer. Default: 20000 for file-shard.
+  --streaming-shuffle-seed <n>
+                              Streaming shuffle seed. Default: 42.
   --no-streaming              Force Arrow/tokenized cache creation.
   --auto-shard                Split one train file into random shard files before torchrun training.
                               Default: auto for torchrun + streaming + one txt file.
@@ -159,6 +166,8 @@ while [ $# -gt 0 ]; do
     --devices|--cuda-visible-devices|--cuda_visible_devices) CUDA_DEVICES="$2"; CUDA_DEVICES_SET=true; shift 2 ;;
     --streaming) STREAMING_MODE=true; shift ;;
     --streaming-reader|--streaming_reader) STREAMING_READER="$2"; STREAMING_READER_SET=true; shift 2 ;;
+    --streaming-shuffle-buffer|--streaming_shuffle_buffer) STREAMING_SHUFFLE_BUFFER="$2"; STREAMING_SHUFFLE_BUFFER_SET=true; shift 2 ;;
+    --streaming-shuffle-seed|--streaming_shuffle_seed) STREAMING_SHUFFLE_SEED="$2"; shift 2 ;;
     --no-streaming|--no_streaming) STREAMING_MODE=false; shift ;;
     --auto-shard|--auto_shard) AUTO_SHARD_MODE=true; shift ;;
     --no-auto-shard|--no_auto_shard) AUTO_SHARD_MODE=false; shift ;;
@@ -451,6 +460,10 @@ if [ "$AUTO_SHARD_ENABLED" = true ]; then
   fi
 fi
 
+if [ "$STREAMING_MODE" = "true" ] && [ "$STREAMING_READER" = "file-shard" ] && [ "$STREAMING_SHUFFLE_BUFFER_SET" = false ]; then
+  STREAMING_SHUFFLE_BUFFER=20000
+fi
+
 mkdir -p "$WORK_DATA" "$WORK_LOGS" "$OUTPUT_DIR" "$DATASET_CACHE_DIR"
 if [ -n "$HF_CACHE_DIR" ]; then
   mkdir -p "$HUGGINGFACE_HUB_CACHE" "$HF_MODULES_CACHE"
@@ -549,6 +562,8 @@ echo "preprocessing_workers: $PREPROCESSING_NUM_WORKERS"
 echo "dataloader_workers: $DATALOADER_NUM_WORKERS"
 echo "streaming: $STREAMING_MODE"
 echo "streaming_reader: $STREAMING_READER"
+echo "streaming_shuffle_buffer: $STREAMING_SHUFFLE_BUFFER"
+echo "streaming_shuffle_seed: $STREAMING_SHUFFLE_SEED"
 echo "auto_shard: $AUTO_SHARD_ENABLED"
 if [ "$AUTO_SHARD_ENABLED" = true ]; then
   echo "shard_dir: $SHARD_DIR"
@@ -589,6 +604,8 @@ TRAIN_CMD=(
   "${DDP_ARGS[@]}"
   "${STREAMING_ARGS[@]}"
   --streaming_reader "$STREAMING_READER"
+  --streaming_shuffle_buffer "$STREAMING_SHUFFLE_BUFFER"
+  --streaming_shuffle_seed "$STREAMING_SHUFFLE_SEED"
   --save_steps "$SAVE_STEPS"
   --save_total_limit "$SAVE_TOTAL_LIMIT"
   --logging_steps "$LOGGING_STEPS"
