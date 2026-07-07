@@ -3,21 +3,23 @@
 #
 # Usage:
 #   scripts/eval_one_checkpoint_nas.sh 100000
+#   scripts/eval_one_checkpoint_nas.sh 100000 2000
 
 set -euo pipefail
 
-if [ $# -gt 1 ]; then
-  echo "Usage: $0 [checkpoint_step]" >&2
+if [ $# -gt 2 ]; then
+  echo "Usage: $0 [checkpoint_step] [max_eval_samples]" >&2
   exit 1
 fi
 
 STEP="${1:-100000}"
+MAX_EVAL_SAMPLES="${2:-100000}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 CHECKPOINT="/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_runs/mrnabert-full-devbox-20260707024008/output/checkpoint-$STEP"
 VALIDATION_FILE="/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_data/eval/valid_100k.txt"
-OUTPUT_DIR="/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_runs/mrnabert-full-devbox-20260707024008/eval/checkpoint-$STEP-valid100k"
+OUTPUT_DIR="/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_runs/mrnabert-full-devbox-20260707024008/eval/checkpoint-$STEP-valid${MAX_EVAL_SAMPLES}"
 DATASET_CACHE_DIR="/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_runs/cache/datasets"
 
 if [ ! -d "$CHECKPOINT" ]; then
@@ -34,10 +36,9 @@ fi
 mkdir -p "$OUTPUT_DIR" "$DATASET_CACHE_DIR"
 
 cd "$REPO_ROOT"
-python -m torch.distributed.run \
-  --nnodes 1 \
-  --nproc_per_node 1 \
-  main.py pretrain \
+export CUDA_VISIBLE_DEVICES=0
+export NCCL_DEBUG=WARN
+python main.py pretrain \
   --do_eval \
   --init_mode pretrained \
   --model_name_or_path "$CHECKPOINT" \
@@ -47,15 +48,13 @@ python -m torch.distributed.run \
   --line_by_line \
   --streaming \
   --streaming_reader line-stride \
-  --max_eval_samples 100000 \
+  --max_eval_samples "$MAX_EVAL_SAMPLES" \
   --max_seq_length 1024 \
   --per_device_eval_batch_size 32 \
   --dataloader_num_workers 0 \
   --mlm_probability 0.15 \
   --bf16 \
   --tf32 true \
-  --ddp_backend nccl \
-  --ddp_find_unused_parameters false \
   --prediction_loss_only true \
   --overwrite_output_dir \
   --report_to none

@@ -9,6 +9,7 @@ Recommended order:
 ```bash
 scripts/sync_checkpoints_to_nas.sh
 scripts/make_validation_split_nas.sh
+scripts/eval_one_checkpoint_nas.sh 100000 2000
 scripts/eval_one_checkpoint_nas.sh 100000
 scripts/eval_checkpoints_nas.sh
 scripts/print_eval_results_nas.sh

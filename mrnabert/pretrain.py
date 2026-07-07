@@ -712,7 +712,7 @@ def build_trainer(
 
     compute_metrics = None
     preprocess_logits_for_metrics = None
-    if training_args.do_eval and not is_torch_tpu_available():
+    if training_args.do_eval and not training_args.prediction_loss_only and not is_torch_tpu_available():
         compute_metrics, preprocess_logits_for_metrics = build_metrics()
 
     trainer = Trainer(

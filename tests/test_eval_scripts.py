@@ -9,7 +9,8 @@ class EvalScriptTest(unittest.TestCase):
         self.assertIn("--do_eval", script)
         self.assertIn("--validation_file", script)
         self.assertNotIn("--train_file", script)
-        self.assertNotIn("CUDA_VISIBLE_DEVICES", script)
+        self.assertNotIn("torch.distributed.run", script)
+        self.assertNotIn("--ddp_backend", script)
 
 
 if __name__ == "__main__":
