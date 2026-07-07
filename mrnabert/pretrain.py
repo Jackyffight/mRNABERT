@@ -467,20 +467,19 @@ def shard_streaming_datasets(raw_datasets, data_args: DataTrainingArguments):
 
 
 def can_use_local_text_streaming(data_args: DataTrainingArguments) -> bool:
+    text_file = data_args.train_file or data_args.validation_file
     return (
         data_args.streaming
         and data_args.streaming_reader in {"line-stride", "file-shard", "byte-range"}
         and data_args.dataset_name is None
         and data_args.line_by_line
-        and data_args.train_file is not None
-        and _file_extension(data_args.train_file) == "text"
+        and text_file is not None
+        and _file_extension(text_file) == "text"
     )
 
 
 def build_local_text_streaming_datasets(tokenizer, data_args: DataTrainingArguments):
-    train_files = resolve_text_files(data_args.train_file or "")
     rank, world_size = get_distributed_rank_info()
-    streaming.validate_reader_partitions(data_args.streaming_reader, len(train_files), world_size)
     max_seq_length = resolve_max_seq_length(tokenizer, data_args)
     if data_args.streaming_reader == "byte-range":
         dataset_cls = ByteRangeTokenizedTextDataset
@@ -489,22 +488,27 @@ def build_local_text_streaming_datasets(tokenizer, data_args: DataTrainingArgume
     else:
         dataset_cls = LineStrideTokenizedTextDataset
     logger.info(
-        "Using %s streaming reader for %s train file(s), rank=%s, world_size=%s, shuffle_buffer=%s",
+        "Using %s streaming reader, rank=%s, world_size=%s, shuffle_buffer=%s",
         data_args.streaming_reader,
-        len(train_files),
         rank,
         world_size,
         data_args.streaming_shuffle_buffer,
     )
-    train_dataset = dataset_cls(
-        files=train_files,
-        tokenizer=tokenizer,
-        max_seq_length=max_seq_length,
-        pad_to_max_length=data_args.pad_to_max_length,
-        max_samples=data_args.max_train_samples,
-        shuffle_buffer=data_args.streaming_shuffle_buffer,
-        shuffle_seed=data_args.streaming_shuffle_seed,
-    )
+
+    train_dataset = None
+    if data_args.train_file is not None:
+        train_files = resolve_text_files(data_args.train_file)
+        streaming.validate_reader_partitions(data_args.streaming_reader, len(train_files), world_size)
+        logger.info("Using %s train file(s) for local streaming", len(train_files))
+        train_dataset = dataset_cls(
+            files=train_files,
+            tokenizer=tokenizer,
+            max_seq_length=max_seq_length,
+            pad_to_max_length=data_args.pad_to_max_length,
+            max_samples=data_args.max_train_samples,
+            shuffle_buffer=data_args.streaming_shuffle_buffer,
+            shuffle_seed=data_args.streaming_shuffle_seed,
+        )
 
     eval_dataset = None
     if data_args.validation_file is not None:
@@ -512,6 +516,7 @@ def build_local_text_streaming_datasets(tokenizer, data_args: DataTrainingArgume
         # Same guard as the train files: a file-shard eval with fewer validation
         # files than ranks would starve some ranks and hang the eval all-gather.
         streaming.validate_reader_partitions(data_args.streaming_reader, len(validation_files), world_size)
+        logger.info("Using %s validation file(s) for local streaming", len(validation_files))
         eval_dataset = dataset_cls(
             files=validation_files,
             tokenizer=tokenizer,

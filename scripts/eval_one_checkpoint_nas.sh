@@ -34,11 +34,13 @@ fi
 mkdir -p "$OUTPUT_DIR" "$DATASET_CACHE_DIR"
 
 cd "$REPO_ROOT"
-CUDA_VISIBLE_DEVICES=0 python main.py pretrain \
+python -m torch.distributed.run \
+  --nnodes 1 \
+  --nproc_per_node 1 \
+  main.py pretrain \
   --do_eval \
   --init_mode pretrained \
   --model_name_or_path "$CHECKPOINT" \
-  --train_file "$VALIDATION_FILE" \
   --validation_file "$VALIDATION_FILE" \
   --output_dir "$OUTPUT_DIR" \
   --dataset_cache_dir "$DATASET_CACHE_DIR" \
@@ -52,6 +54,8 @@ CUDA_VISIBLE_DEVICES=0 python main.py pretrain \
   --mlm_probability 0.15 \
   --bf16 \
   --tf32 true \
+  --ddp_backend nccl \
+  --ddp_find_unused_parameters false \
   --prediction_loss_only true \
   --overwrite_output_dir \
   --report_to none
