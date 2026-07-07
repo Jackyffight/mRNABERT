@@ -2,6 +2,12 @@
 
 Date: 2026-07-07
 
+> **Status: design essay (long form).** This is the thinking behind the canonical
+> target architecture in [`../ARCHITECTURE.md`](../ARCHITECTURE.md); the authoritative
+> plan and status live in [`../../ROADMAP.md`](../../ROADMAP.md). Only the mRNA
+> encoder (Phase 0) exists in code today — read the rest as intent, not delivered
+> capability.
+
 ## Executive Summary
 
 目标不是做一个“会说密码子优化”的小模型，而是做一个面向特定设计空间的闭环系统：
@@ -686,6 +692,7 @@ Do not start by training a monolithic end-to-end model. Start with an auditable 
 ## Source Notes
 
 - Biohub ESMFold2 / ESMC overview: https://biohub.ai/esm/protein/about
+  (ESMFold2 is Biohub's May 2026 release — ESMC + ESMFold2 + ESM Atlas — MIT-licensed.)
 - Biohub ESM repository: https://github.com/Biohub/esm
 - ProteinMPNN repository: https://github.com/dauparas/ProteinMPNN
 - ProteinMPNN paper: https://www.science.org/doi/10.1126/science.add2187

@@ -1,3 +1,12 @@
+# mRNABERT training dependencies.
+#
+# transformers/peft/accelerate are pinned to the versions the training + fine-tune
+# scripts were validated against. Keep these pins for a faithful reproduction run.
+# The torch-free core (mrnabert.sequence_codec, mrnabert.streaming) imports on any
+# modern Python, and mrnabert.pretrain guards the one API that later transformers
+# renamed (is_torch_tpu_available), so tooling/tests work outside the pin; but the
+# fine-tune scripts (regression.py / classification.py) still assume the pinned
+# TrainingArguments field names (e.g. evaluation_strategy) — bump deliberately.
 datasets
 evaluate
 einops

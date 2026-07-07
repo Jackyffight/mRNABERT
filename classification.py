@@ -15,7 +15,7 @@ from peft import LoraConfig, get_peft_model
 
 @dataclass
 class ModelArguments:
-    model_name_or_path: Optional[str] = field(default="YYLY6/mRNABERT")
+    model_name_or_path: Optional[str] = field(default="YYLY66/mRNABERT")
     use_lora: bool = field(default=False, metadata={"help": "whether to use LoRA"})
     lora_r: int = field(default=8, metadata={"help": "hidden dimension for LoRA"})
     lora_alpha: int = field(default=32, metadata={"help": "alpha for LoRA"})
@@ -46,6 +46,8 @@ class TrainingArguments(transformers.TrainingArguments):
     learning_rate: float = field(default=1e-4)
     save_total_limit: int = field(default=3)
     load_best_model_at_end: bool = field(default=True)
+    metric_for_best_model: str = field(default="matthews_correlation")
+    greater_is_better: bool = field(default=True)
     output_dir: str = field(default="output")
     find_unused_parameters: bool = field(default=False)
     checkpointing: bool = field(default=False)

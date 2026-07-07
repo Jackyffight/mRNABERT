@@ -458,9 +458,12 @@ if [ "$AUTO_SHARD_ENABLED" = true ]; then
   if [ "$STREAMING_READER_SET" = false ]; then
     STREAMING_READER="file-shard"
   fi
-  if [ "$DATALOADER_NUM_WORKERS_SET" = false ]; then
-    DATALOADER_NUM_WORKERS=0
-  fi
+  # Keep dataloader workers > 0 here. The file-shard reader is worker-aware: within a
+  # rank's shard it further splits lines by (line_index % num_workers) with a
+  # per-worker shuffle seed (covered by tests/test_streaming.py), so >0 workers do
+  # not duplicate or drop data. Forcing 0 serializes tokenization on the training
+  # process and starves the GPU (~8% MFU in the first 100k-step run); the default
+  # (4) overlaps tokenization with compute. Raise via --dataloader-workers if CPU allows.
 fi
 
 if [ "$STREAMING_MODE" = "true" ] && [ "$STREAMING_READER" = "file-shard" ] && [ "$STREAMING_SHUFFLE_BUFFER_SET" = false ]; then

@@ -2,6 +2,12 @@
 
 Date: 2026-07-06
 
+> **Status: design exploration, superseded.** This is the earlier of two design
+> essays. It is kept for provenance; the later
+> [`integrated-protein-mrna-reasoning-system.md`](integrated-protein-mrna-reasoning-system.md)
+> extends it. The canonical target architecture is [`../ARCHITECTURE.md`](../ARCHITECTURE.md)
+> and the authoritative plan is [`../../ROADMAP.md`](../../ROADMAP.md).
+
 ## Executive Summary
 
 单独把 mRNABERT 做成“密码子优化模型”，很容易被通用大模型和现有规则工具挤压。更有竞争力的定位是把它放进一个分层设计系统：
@@ -311,5 +317,6 @@ That positioning is technically stronger and more defensible.
 
 - Biohub ESM repository: https://github.com/Biohub/esm
 - Biohub ESMFold2 overview: https://biohub.ai/esm/protein/about
+  (ESMFold2 is Biohub's May 2026 release — ESMC + ESMFold2 + ESM Atlas — MIT-licensed.)
 - ProteinMPNN repository: https://github.com/dauparas/ProteinMPNN
 - ProteinMPNN paper: https://www.science.org/doi/10.1126/science.add2187

@@ -28,7 +28,7 @@ class ModelArguments:
     lora_r: int = field(default=32, metadata={"help": "hidden dimension for LoRA"})
     lora_alpha: int = field(default=64, metadata={"help": "alpha for LoRA"})
     lora_dropout: float = field(default=0.05, metadata={"help": "dropout rate for LoRA"})
-    lora_target_modules: str = field(default="q,v,wo", metadata={"help": "where to perform LoRA"})
+    lora_target_modules: str = field(default="query,value", metadata={"help": "Comma-separated module names to adapt. These are BERT attention names (BertForSequenceClassification exposes query/key/value); do not use T5 names like q/v/wo."})
 
 @dataclass
 class DataArguments:
@@ -55,6 +55,8 @@ class TrainingArguments(transformers.TrainingArguments):
     lr_scheduler_type: str = field(default="cosine_with_restarts")
     save_total_limit: int = field(default=3)
     load_best_model_at_end: bool = field(default=True)
+    metric_for_best_model: str = field(default="spearman_corr")
+    greater_is_better: bool = field(default=True)
     output_dir: str = field(default="output_gena")
     find_unused_parameters: bool = field(default=False)
     checkpointing: bool = field(default=False)

@@ -29,6 +29,18 @@ class SequenceCodecTest(unittest.TestCase):
         encoded = encode_mrna_sequence("AACCGG")
         self.assertEqual(encoded, "A A C C G G")
 
+    def test_find_longest_cds_returns_none_without_start_codon(self):
+        self.assertIsNone(find_longest_cds("AAACCCGGGTTT"))
+
+    def test_find_longest_cds_breaks_ties_by_earliest_start(self):
+        # Two equal-length in-frame ORFs; the earlier one must win (deterministic).
+        self.assertEqual(find_longest_cds("ATGTAAATGTAA"), CDSRegion(start=0, end=6))
+
+    def test_encode_normalizes_rna_and_lowercase(self):
+        # U->T + uppercasing happens before CDS finding, so RNA/lowercase input
+        # tokenizes identically to its DNA-uppercase form.
+        self.assertEqual(encode_mrna_sequence("cccaugaaauaagg"), "C C C ATG AAA TAA G G")
+
     def test_split_complete_sequence_uses_bracketed_cds(self):
         encoded = split_sequence_by_option("AA[ATGCCCTAA]TT", "complete")
         self.assertEqual(encoded, "A A ATG CCC TAA T T")

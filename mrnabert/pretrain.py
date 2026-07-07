@@ -7,7 +7,6 @@ import json
 import logging
 import math
 import os
-import random
 import sys
 from dataclasses import asdict, dataclass, field
 from glob import glob
@@ -30,12 +29,21 @@ from transformers import (
     Trainer,
     TrainerCallback,
     TrainingArguments as HFTrainingArguments,
-    is_torch_tpu_available,
     set_seed,
 )
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils.versions import require_version
 
+try:  # transformers>=4.44 renamed this to is_torch_xla_available and dropped the old alias
+    from transformers import is_torch_tpu_available
+except ImportError:  # pragma: no cover - depends on installed transformers version
+    try:
+        from transformers import is_torch_xla_available as is_torch_tpu_available
+    except ImportError:
+        def is_torch_tpu_available(*_args, **_kwargs):  # type: ignore[misc]
+            return False
+
+from . import streaming
 from .modeling import ModelRuntimeConfig, load_mlm_model_and_tokenizer
 
 
@@ -188,6 +196,35 @@ class TrainingSummaryCallback(TrainerCallback):
             world_size,
         )
 
+        # Log the *effective* LR at train start. On resume the LR is driven by the
+        # restored optimizer/scheduler state and the recomputed schedule (new
+        # max_steps/warmup), not by the configured --learning_rate, so print the
+        # real value to remove the resume-LR ambiguity. The per-step `learning_rate`
+        # in the Trainer logs then tracks the actual trajectory.
+        lr_scheduler = kwargs.get("lr_scheduler")
+        optimizer = kwargs.get("optimizer")
+        effective_lr = None
+        if lr_scheduler is not None and hasattr(lr_scheduler, "get_last_lr"):
+            try:
+                effective_lr = lr_scheduler.get_last_lr()[0]
+            except Exception:  # pragma: no cover - scheduler may be uninitialized
+                effective_lr = None
+        if effective_lr is None and optimizer is not None:
+            try:
+                effective_lr = optimizer.param_groups[0]["lr"]
+            except Exception:  # pragma: no cover
+                effective_lr = None
+        logger.info(
+            "LR/schedule at train start: effective_lr=%s configured_lr=%s scheduler=%s "
+            "warmup_steps=%s max_steps=%s global_step=%s",
+            effective_lr,
+            getattr(args, "learning_rate", None),
+            getattr(args, "lr_scheduler_type", None),
+            getattr(args, "warmup_steps", None),
+            getattr(args, "max_steps", None),
+            getattr(state, "global_step", None),
+        )
+
 
 def get_distributed_rank_info() -> tuple[int, int]:
     if torch.distributed.is_available() and torch.distributed.is_initialized():
@@ -204,101 +241,18 @@ def resolve_text_files(pattern: str) -> list[str]:
     return files
 
 
-def iter_bounded_shuffle(lines, buffer_size: int, seed: int):
-    if buffer_size <= 1:
-        yield from lines
-        return
+class _StreamingTokenizedTextDataset(torch.utils.data.IterableDataset):
+    """Base for local-text streaming readers.
 
-    rng = random.Random(seed)
-    buffer = []
-    for line in lines:
-        if len(buffer) < buffer_size:
-            buffer.append(line)
-            continue
-        index = rng.randrange(len(buffer))
-        yield buffer[index]
-        buffer[index] = line
+    The sharding, bounded shuffle, and sample cap live in torch-free helpers in
+    ``mrnabert.streaming`` (unit-testable without torch); each subclass only names
+    which reader it is. ``max_samples`` is a GLOBAL cap: it is divided across the
+    rank x dataloader-worker partitions so the total examples consumed is
+    ~= max_samples regardless of world size, matching the non-streaming
+    ``.select`` semantics rather than the old per-partition multiplication.
+    """
 
-    rng.shuffle(buffer)
-    yield from buffer
-
-
-class ByteRangeTokenizedTextDataset(torch.utils.data.IterableDataset):
-    """Read local text files by byte range across DDP ranks and dataloader workers."""
-
-    def __init__(
-        self,
-        files: Sequence[str],
-        tokenizer,
-        max_seq_length: int,
-        pad_to_max_length: bool,
-        max_samples: Optional[int] = None,
-        shuffle_buffer: int = 0,
-        shuffle_seed: int = 42,
-    ) -> None:
-        self.files = list(files)
-        self.tokenizer = tokenizer
-        self.max_seq_length = max_seq_length
-        self.pad_to_max_length = pad_to_max_length
-        self.max_samples = max_samples
-        self.shuffle_buffer = shuffle_buffer
-        self.shuffle_seed = shuffle_seed
-
-    @staticmethod
-    def _iter_lines(path: str, start: int, end: int):
-        if end <= start:
-            return
-        with open(path, "rb") as handle:
-            if start > 0:
-                handle.seek(start)
-                handle.readline()
-            else:
-                handle.seek(0)
-
-            while handle.tell() < end:
-                raw_line = handle.readline()
-                if not raw_line:
-                    break
-                line = raw_line.decode("utf-8", errors="ignore").strip()
-                if line:
-                    yield line
-
-    def _tokenize(self, line: str) -> dict:
-        padding = "max_length" if self.pad_to_max_length else False
-        return self.tokenizer(
-            line,
-            padding=padding,
-            truncation=True,
-            max_length=self.max_seq_length,
-            return_special_tokens_mask=True,
-        )
-
-    def __iter__(self):
-        rank, world_size = get_distributed_rank_info()
-        worker_info = torch.utils.data.get_worker_info()
-        worker_id = worker_info.id if worker_info is not None else 0
-        num_workers = worker_info.num_workers if worker_info is not None else 1
-        partition_id = rank * num_workers + worker_id
-        num_partitions = max(1, world_size * num_workers)
-        yielded = 0
-
-        def lines():
-            for path in self.files:
-                size = os.path.getsize(path)
-                start = (size * partition_id) // num_partitions
-                end = (size * (partition_id + 1)) // num_partitions
-                yield from self._iter_lines(path, start, end)
-
-        seed = self.shuffle_seed + partition_id
-        for line in iter_bounded_shuffle(lines(), self.shuffle_buffer, seed):
-            if self.max_samples is not None and yielded >= self.max_samples:
-                return
-            yielded += 1
-            yield self._tokenize(line)
-
-
-class LineStrideTokenizedTextDataset(torch.utils.data.IterableDataset):
-    """Read local text files sequentially and shard lines across ranks/workers."""
+    reader_name: str = ""
 
     def __init__(
         self,
@@ -333,85 +287,38 @@ class LineStrideTokenizedTextDataset(torch.utils.data.IterableDataset):
         worker_info = torch.utils.data.get_worker_info()
         worker_id = worker_info.id if worker_info is not None else 0
         num_workers = worker_info.num_workers if worker_info is not None else 1
-        partition_id = rank * num_workers + worker_id
-        num_partitions = max(1, world_size * num_workers)
-        yielded = 0
 
-        def lines():
-            for path in self.files:
-                with open(path, "rb") as handle:
-                    for line_index, raw_line in enumerate(handle):
-                        if line_index % num_partitions != partition_id:
-                            continue
-                        line = raw_line.decode("utf-8", errors="ignore").strip()
-                        if line:
-                            yield line
-
-        seed = self.shuffle_seed + partition_id
-        for line in iter_bounded_shuffle(lines(), self.shuffle_buffer, seed):
-            if self.max_samples is not None and yielded >= self.max_samples:
-                return
-            yielded += 1
-            yield self._tokenize(line)
-
-
-class FileShardTokenizedTextDataset(torch.utils.data.IterableDataset):
-    """Read rank-assigned local text shard files sequentially."""
-
-    def __init__(
-        self,
-        files: Sequence[str],
-        tokenizer,
-        max_seq_length: int,
-        pad_to_max_length: bool,
-        max_samples: Optional[int] = None,
-        shuffle_buffer: int = 0,
-        shuffle_seed: int = 42,
-    ) -> None:
-        self.files = list(files)
-        self.tokenizer = tokenizer
-        self.max_seq_length = max_seq_length
-        self.pad_to_max_length = pad_to_max_length
-        self.max_samples = max_samples
-        self.shuffle_buffer = shuffle_buffer
-        self.shuffle_seed = shuffle_seed
-
-    def _tokenize(self, line: str) -> dict:
-        padding = "max_length" if self.pad_to_max_length else False
-        return self.tokenizer(
-            line,
-            padding=padding,
-            truncation=True,
-            max_length=self.max_seq_length,
-            return_special_tokens_mask=True,
+        partition_id, num_partitions = streaming.partition_id_and_count(rank, world_size, worker_id, num_workers)
+        cap = streaming.per_partition_cap(self.max_samples, num_partitions)
+        raw_lines = streaming.iter_reader_lines(
+            self.reader_name, self.files, rank, world_size, worker_id, num_workers
         )
 
-    def __iter__(self):
-        rank, world_size = get_distributed_rank_info()
-        worker_info = torch.utils.data.get_worker_info()
-        worker_id = worker_info.id if worker_info is not None else 0
-        num_workers = worker_info.num_workers if worker_info is not None else 1
-        partition_id = rank * num_workers + worker_id
-        yielded = 0
-
-        def lines():
-            for file_index, path in enumerate(self.files):
-                if file_index % max(1, world_size) != rank:
-                    continue
-                with open(path, "rb") as handle:
-                    for line_index, raw_line in enumerate(handle):
-                        if line_index % num_workers != worker_id:
-                            continue
-                        line = raw_line.decode("utf-8", errors="ignore").strip()
-                        if line:
-                            yield line
-
         seed = self.shuffle_seed + partition_id
-        for line in iter_bounded_shuffle(lines(), self.shuffle_buffer, seed):
-            if self.max_samples is not None and yielded >= self.max_samples:
+        yielded = 0
+        for line in streaming.iter_bounded_shuffle(raw_lines, self.shuffle_buffer, seed):
+            if cap is not None and yielded >= cap:
                 return
             yielded += 1
             yield self._tokenize(line)
+
+
+class LineStrideTokenizedTextDataset(_StreamingTokenizedTextDataset):
+    """Every rank scans each file, keeping lines by (line_index % num_partitions)."""
+
+    reader_name = "line-stride"
+
+
+class FileShardTokenizedTextDataset(_StreamingTokenizedTextDataset):
+    """Whole files assigned by rank, then lines within a file by dataloader worker."""
+
+    reader_name = "file-shard"
+
+
+class ByteRangeTokenizedTextDataset(_StreamingTokenizedTextDataset):
+    """Each partition reads a contiguous seek-based byte range of every file."""
+
+    reader_name = "byte-range"
 
 
 def setup_logging(training_args: TrainingArguments) -> None:
@@ -573,6 +480,7 @@ def can_use_local_text_streaming(data_args: DataTrainingArguments) -> bool:
 def build_local_text_streaming_datasets(tokenizer, data_args: DataTrainingArguments):
     train_files = resolve_text_files(data_args.train_file or "")
     rank, world_size = get_distributed_rank_info()
+    streaming.validate_reader_partitions(data_args.streaming_reader, len(train_files), world_size)
     max_seq_length = resolve_max_seq_length(tokenizer, data_args)
     if data_args.streaming_reader == "byte-range":
         dataset_cls = ByteRangeTokenizedTextDataset
@@ -601,6 +509,9 @@ def build_local_text_streaming_datasets(tokenizer, data_args: DataTrainingArgume
     eval_dataset = None
     if data_args.validation_file is not None:
         validation_files = resolve_text_files(data_args.validation_file)
+        # Same guard as the train files: a file-shard eval with fewer validation
+        # files than ranks would starve some ranks and hang the eval all-gather.
+        streaming.validate_reader_partitions(data_args.streaming_reader, len(validation_files), world_size)
         eval_dataset = dataset_cls(
             files=validation_files,
             tokenizer=tokenizer,

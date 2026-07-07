@@ -1,369 +1,181 @@
 # mRNABERT
 
-This repository includes the official implementation of [mRNABERT: advancing mRNA sequence design with a universal language model and comprehensive dataset](https://www.nature.com/articles/s41467-025-65340-8). We provide pre-trained model, examples of pre-training and fine-tuning, and pre-trained datasets.
+**A codon-aware mRNA language model, and the mRNA-regulation layer of a protein-to-mRNA design system.**
 
-## 📢 Update
+Release: `v0.1.0` — encoder foundation (Phase 0). · Stage: research / bench.
 
-**We have released all downstream datasets on Zenodo** 
+mRNABERT is a BERT-style masked-language-model encoder for mRNA and CDS sequences.
+It tokenizes untranslated regions as single bases and coding regions as codons, so
+the model reasons in the same units biology does. This repository ships the encoder
+and its training/fine-tuning stack today; it is the first built piece of a larger,
+mostly-planned system that turns a target protein into manufacturable, constraint-
+satisfying mRNA. What is built and what is planned is stated plainly below — do not
+read the roadmap as delivered capability.
 
-You can access and download the datasets [here](https://zenodo.org/records/17786045).
+---
 
-To reproduce our results, please follow the instructions in the **[Fine-tune with pre-trained model](#fine-tuning)** section.
+## Project status (read this first)
 
-> ⚠️ **Note on Hyperparameters:**
-> When fine-tuning, please make sure to adjust parameters such as `model_max_length`, `batch_size`, `epoch`, and `eval_steps` according to the specific dataset you are using.
+| Layer | What | Status |
+|---|---|---|
+| **Phase 0 — mRNA encoder** | codon-aware tokenizer, MLM pretraining (single- and multi-GPU streaming), fine-tuning heads | **Built & hardened** (this repo) |
+| Phase 1 — tool pipeline | ESMFold2 / ProteinMPNN wrappers, translation-preserving mRNA candidate generator, rule baseline | Planned |
+| Phase 2 — reward & reranker | supervised/pairwise mRNA scoring, Pareto reranker | Planned |
+| Phase 3 — reasoning traces | tool-augmented design policy trained from run traces | Planned |
+| Phase 4 — active learning | wet-lab queue, assay ingestion, reward retraining | Planned |
+| Phase 5 — end-to-end policy | learned design policy with selective expert calls | Planned |
 
-## Contents
+The full plan is in [`ROADMAP.md`](ROADMAP.md); the target architecture is in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). **Only Phase 0 exists in code.**
 
-- [Introduction](#introduction)
-- [Create Environment with Conda](#create-environment-with-conda)
-- [Pre-trained Model and Datasets](#pre-trained-model-and-datasets)
-- [Pre-Training](#pre-training)
-- [Fine-tuning](#fine-tuning)
-- [Reports](#reports)
-- [Citation](#citation)
-- [Contact](#contact)
+## What is ours, what we build on
 
-## Introduction
+- **Architecture and published weights** come from the paper *mRNABERT: advancing
+  mRNA sequence design with a universal language model and comprehensive dataset*
+  (Xiong et al., *Nature Communications* 2025), whose modeling framework derives
+  from DNABERT-2. The public checkpoint is `YYLY66/mRNABERT` on Hugging Face and the
+  74-token codon vocabulary is theirs.
+- **Ours** is the production training layer around it: a hardened, unit-tested DDP
+  streaming data plane; a single-source-of-truth sequence codec; run-manifest
+  lineage; and the protein-to-mRNA design-system roadmap and architecture. We can
+  train an encoder from scratch on our own corpus (the default) or continue from the
+  published weights as a baseline.
 
-mRNABERT is a robust language model pre-trained on over 18 million high-quality mRNA sequences, incorporating contrastive learning to integrate the semantic features of amino acids.
+## Repository layout
 
-![mRNABERT](figures/mRNABERT.png)
+| Path | What |
+|---|---|
+| `main.py` | CLI: `pretrain` and `preprocess` subcommands |
+| `mrnabert/sequence_codec.py` | FASTA parsing, longest-ORF CDS detection, codon/UTR tokenization (torch-free, the single source of truth) |
+| `mrnabert/streaming.py` | torch-free DDP shard / shuffle / cap helpers (unit-tested without a GPU stack) |
+| `mrnabert/modeling.py` | masked-LM model + tokenizer loading (scratch vs pretrained) |
+| `mrnabert/pretrain.py` | stage-1 MLM `Trainer` orchestration |
+| `run_train.sh` | multi-GPU launcher (single-node DDP via `torchrun`, auto-sharding) |
+| `regression.py`, `classification.py` | fine-tuning heads (optional LoRA) |
+| `data_process/` | FASTA/CSV preprocessing (thin wrappers over the codec) |
+| `assets/mrnabert-base/` | local BERT config + tokenizer + vocab used for scratch init |
+| `sample_data/` | tiny templates: `pre.txt` (pretrain) and `fine-tune/mRFP/*.csv` |
+| `tests/` | codec, streaming, preprocessing-parity, and loader tests |
+| `docs/` | architecture and design notes |
 
-## Create Environment with Conda
+## Install
 
-    # create and activate a virtual python environment
-    conda create -n mrnabert python=3.8
-    conda activate mrnabert
-    
-    # install required packages. PyTorch is intentionally not pinned here;
-    # use the CUDA/PyTorch runtime provided by your training machine.
-    pip install -r requirements.txt
+Requires Python 3.8+ and a CUDA/PyTorch runtime matched to your machine (PyTorch is
+intentionally not pinned). `transformers`, `peft`, and `accelerate` are pinned to the
+versions the training and fine-tune scripts were validated against; the rest are
+unpinned:
 
-Furthermore, to streamline the setup process, we have prepared a pre-configured Conda environment containing all mRNABERT dependencies at [Zenodo](https://zenodo.org/records/15051237). You can easily download and extract it into your Conda environments directory, and it will be ready to use immediately.
-
-    mkdir -C /path/to//miniconda3/envs/mrnabert
-    tar -xzvf /path/to/mrnabert.tar.gz -C /path/to/miniconda3/envs/mrnabert
-    conda activate mrnabert
-
-
-## Pre-trained Model and Datasets
-
-The pre-trained model is available at [Huggingface](https://huggingface.co/YYLY66/mRNABERT) as `YYLY66/mRNABERT`. 
-
-The mRNA datasets are available on [Zenodo](https://zenodo.org/records/12516160), featuring more than 36 million comprehensive mRNA or CDS sequences from various species.
-
-
-
-**Notably, the data needs to be preprocessed.** We use [ORFfinder from NCBI](https://www.ncbi.nlm.nih.gov/orffinder) to predict the CDS regions of the mRNA. Then, please preprocess the data in different ways: use single-letter separation for the UTR regions and three-character separation for the CDS regions. We have provided custom functions and sample data before preprocessing in `data_process`.
-
-
-### Access Pre-trained Models
-You can download the pre-trained models from [Huggingface](https://huggingface.co/YYLY66/mRNABERT), or load the model directly：
-
-```python
-import torch
-from transformers import AutoTokenizer, AutoModel
-from transformers.models.bert.configuration_bert import BertConfig
-
-config = BertConfig.from_pretrained("YYLY66/mRNABERT")
-tokenizer = AutoTokenizer.from_pretrained("YYLY66/mRNABERT")
-model = AutoModel.from_pretrained("YYLY66/mRNABERT", trust_remote_code=True, config=config)
+```bash
+pip install -r requirements.txt
 ```
 
-Extract the embeddings of mRNA sequences:
+The torch-free core (`mrnabert.sequence_codec`, `mrnabert.streaming`) and the test
+suite for it run under any `python3` with no ML dependencies installed.
 
-```python
-seq = ["A T C G G A GGG CCC TTT", 
-       "A T C G", 
-       "TTT CCC GAC ATG"]  #Separate the sequences with spaces.
+## Quickstart
 
-encoding = tokenizer.batch_encode_plus(seq, add_special_tokens=True, padding='longest', return_tensors="pt")
+```bash
+# Unit tests — codec, streaming invariants, preprocessing parity (no torch needed):
+python -m unittest discover -s tests
 
-input_ids = encoding['input_ids']
-attention_mask = encoding['attention_mask'] 
+# Preprocess a directory of FASTA files into pretraining text (streaming):
+python main.py preprocess --raw-dir raw --output-dir data/pretrain --workers 32
 
-output = model(input_ids=input_ids, attention_mask=attention_mask)
-last_hidden_state = output[0]
-
-attention_mask = attention_mask.unsqueeze(-1).expand_as(last_hidden_state)  # Shape : [batch_size, seq_length, hidden_size]
-
-# Sum embeddings along the batch dimension
-sum_embeddings = torch.sum(last_hidden_state * attention_mask, dim=1)  
-
-# Also sum the masks along the batch dimension
-sum_masks = attention_mask.sum(1)  
-
-# Compute mean embedding.
-mean_embedding = sum_embeddings / sum_masks  #Shape:[batch_size, hidden_size]  
-
-```
-
-The extracted embeddings can be used for contrastive learning pretraining or as a feature extractor for protein-related downstream tasks.
-
-
-
-## Pre-Training
-### Data processing
-Please see the template data at `/sample_data/pre.txt`, you should process your data into the same format as it. The maintained preprocessing path is streaming and can process a directory of FASTA files:
-
-```
-python main.py preprocess \
-  --raw-dir raw \
-  --output-dir data/pretrain \
-  --workers 32 \
-  --chunksize 256 \
-  --progress-interval 30
-```
-
-This writes `data/pretrain/pre.txt` by default. It keeps the original repository heuristic: UTR is split into single bases, and the longest in-frame CDS is split into codons.
-
-The original single-file command is still available:
-
-for example:
-```
-python data_process/process_pretrain_data.py --input_file "data_process/pre-train/pre_input.fasta" --output_file "sample_data/pre.txt"  
-```
-### Pretraining stage 1
-```
+# Pretrain the MLM encoder from scratch (the default) on the local config + vocab:
 python main.py pretrain \
-  --output_dir=output/pre/mRNABERT- \
-  --model_name_or_path=assets/mrnabert-base \
-  --init_mode=scratch \
-  --do_train \
-  --learning_rate=5e-5 \
-  --num_train_epochs=10 \
-  --gradient_accumulation_steps=4 \
-  --train_file=/sample_data/pre.txt \
-  --fp16 \
-  --save_steps=1000 \
-  --logging_steps=500 \
-  --eval_steps=500 \
-  --warmup_steps=2000 \
-  --mlm_probability=0.15 \
-  --line_by_line \
-  --per_device_train_batch_size=32
-
-```
-
-`run_mlm.py` is kept as a compatibility wrapper for older commands. New code should call `python main.py pretrain`.
-
-The training entrypoint is split into deeper modules:
-
-- `mrnabert.sequence_codec`: FASTA parsing, ORF detection, and mRNABERT token spacing.
-- `mrnabert.modeling`: model/tokenizer loading and attention backend selection.
-- `mrnabert.pretrain`: dataset loading, tokenization, Trainer construction, manifests, and metrics.
-
-By default, pretraining is a from-scratch run using the local
-`assets/mrnabert-base` config and vocabulary. It does not load
-`YYLY66/mRNABERT` checkpoint weights. Use pretrained mode only for explicit
-baseline or continuation runs:
-
-```
-python main.py pretrain \
-  --model_name_or_path YYLY66/mRNABERT \
-  --init_mode pretrained \
+  --output_dir output/pre/run- \
+  --model_name_or_path assets/mrnabert-base \
+  --init_mode scratch \
+  --do_train --line_by_line --fp16 \
   --train_file sample_data/pre.txt \
-  --do_train \
-  --attention_backend remote-safe
+  --per_device_train_batch_size 32 --gradient_accumulation_steps 4
+
+# Multi-GPU single-node. --max-steps enables streaming, which auto-shards pre.txt into
+# one shard per process (without it the run falls back to Arrow tokenization, unsuitable for a large corpus):
+./run_train.sh --env devbox --train-file /path/pre.txt --launcher torchrun --devices 0,1,2 --max-steps 100000
+
+# Build a leakage-free validation split (hash-based; train from the complement for a clean holdout):
+python data_process/make_validation_split.py \
+  --input /path/pre.txt --val-out valid.txt --train-out train_holdout.txt --val-fraction 0.01 --seed 42
+
+# Evaluate a checkpoint on the fixed validation file (MLM loss + perplexity; select by this, not train loss):
+python main.py pretrain --do_eval --init_mode pretrained \
+  --model_name_or_path /path/output/checkpoint-100000 \
+  --validation_file valid.txt --output_dir /tmp/eval-ckpt-100000
+
+# Continue from the published checkpoint instead of scratch (baseline runs):
+python main.py pretrain --model_name_or_path YYLY66/mRNABERT --init_mode pretrained \
+  --attention_backend remote-safe --train_file sample_data/pre.txt --do_train
+
+# Fine-tune (regression or classification; add --use_lora true for LoRA):
+python regression.py     --model_name_or_path YYLY66/mRNABERT --data_path sample_data/fine-tune/mRFP --model_max_length 250 ...
+python classification.py --model_name_or_path YYLY66/mRNABERT --data_path <dir>              --model_max_length 250 ...
 ```
 
-### Neptune/Merlin launcher
-For Neptune/Merlin workers, use `run_train.sh` so environment checks, run
-workspace creation, GPU detection, and the `python main.py pretrain` command are
-handled in one place. The launcher intentionally uses `python` directly, matching
-the default cluster entrypoint style used by `neptune_chat`.
+Fine-tuning hyperparameters (`model_max_length`, `batch_size`, `num_train_epochs`,
+`eval_steps`) are dataset-specific — tune them per dataset.
 
-Direct `python` launch defaults to the first visible GPU, avoiding implicit
-PyTorch `DataParallel`. Use `--launcher torchrun --devices 0,1,2` for single-node
-DDP on three GPUs.
+## How sequences are tokenized
 
-Large training files do not live in GPU memory. GPU memory is mainly determined
-by model size, sequence length, batch size, precision, activations, gradients,
-and optimizer state. The large-file risk is disk cache: HuggingFace datasets
-materializes Arrow/tokenized cache. The launcher therefore defaults
-`--dataset-cache-dir` to `<output-root>/cache/datasets`, which is intended to be
-an HDFS-mounted training path instead of `~/.cache/huggingface`. Exploratory
-runs with `--max-steps` default to `--streaming`, which skips Arrow/tokenized
-cache creation. For cached preprocessing, use `--no-streaming` and explicitly
-choose `--preprocessing-workers`. `--hf-cache-dir` is only needed for explicit
-`--init-mode pretrained` baseline runs.
+One whitespace-separated mRNA per line: **UTR → single bases, CDS → codons**, after
+normalizing each sequence (uppercase, `U → T`). The CDS is approximated as the
+longest in-frame ORF (`ATG … in-frame stop`) — a deliberately narrow heuristic;
+prefer curated RefSeq/GENCODE coordinates when you have them. The vocabulary is
+exactly 74 tokens: 5 special + `A T C G N` + 64 codons.
 
-Smoke test:
-```
-./run_train.sh \
-  --env devbox \
-  --smoke \
-  --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt
-```
+All four entry points — `main.py preprocess`, `data_process/process_pretrain_data.py`,
+`data_process/process_finetune_data.py`, and fine-tuning input — go through
+`mrnabert.sequence_codec`, so no two preprocessing paths can drift.
 
-Full stage-1 pretraining:
-```
-./run_train.sh \
-  --env devbox \
-  --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt \
-  --launcher torchrun \
-  --devices 0,1,2 \
-  --batch-size 32 \
-  --grad-accum 4
-```
+## Training internals worth knowing
 
-Short exploratory run on the full file:
-```
-./run_train.sh \
-  --env devbox \
-  --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt \
-  --launcher torchrun \
-  --devices 0,1,2 \
-  --max-steps 1000 \
-  --batch-size 16 \
-  --grad-accum 2
-```
+- **`init_mode` defaults to `scratch`**: it initializes weights randomly from the
+  local `assets/mrnabert-base` config. It does **not** load `YYLY66/mRNABERT`. Use
+  `--init_mode pretrained` for explicit baseline/continuation runs.
+- **Streaming DDP**: three readers select via `--streaming_reader` — `line-stride`
+  (default), `file-shard` (rank-assigned shard files, what `run_train.sh --auto-shard`
+  produces), and `byte-range` (seek-based). All shard the corpus with no overlap or
+  drop; the invariants are unit-tested in `tests/test_streaming.py`. A `file-shard`
+  run with fewer shard files than ranks now fails fast instead of deadlocking.
+- **`--max_train_samples` is a global cap** under streaming: it is divided across
+  the rank×worker partitions so the total consumed is ~= the number you asked for,
+  matching the non-streaming behavior.
+- Every pretraining run writes `run_manifest.json` (args, tokenizer, library versions)
+  for lineage, and logs the effective LR at train start (on resume the real LR comes
+  from restored optimizer/scheduler state, not the configured `--learning_rate`).
+- **Throughput:** keep `--dataloader-workers > 0` (default 4). The streaming readers
+  are worker-aware, so extra workers overlap CPU tokenization with GPU compute; a run
+  with 0 workers is CPU-bound and wastes most of the GPU.
 
-This uses streaming by default because `--max-steps` is set. For `torchrun` on a
-single large local text file, the launcher also defaults to `--auto-shard`: it
-streams through `pre.txt` once, randomly writes one shard per process, logs
-`shard_progress` with bytes, lines, rate, elapsed time, and ETA, then trains with
-the `file-shard` reader. Shards are cached under
-`<output-root>/data_shards/<file>-<n>shards-seed<seed>/` and reused when the
-manifest still matches the source file. Use `--reshard` to force a rebuild,
-`--no-auto-shard` to disable this path, or `--shard-count`, `--shard-seed`, and
-`--shard-dir` to control it.
+## Data and weights
 
-For streaming DDP, the launcher also sets `--dispatch_batches false` so each
-process reads its assigned shard directly. This avoids the default IterableDataset
-path where the main process becomes the only data reader and can bottleneck or
-stall the whole job.
+- Pretrained encoder: [`YYLY66/mRNABERT`](https://huggingface.co/YYLY66/mRNABERT) on
+  Hugging Face.
+- mRNA corpora and downstream datasets: Zenodo records
+  [12516160](https://zenodo.org/records/12516160) (36M+ mRNA/CDS sequences) and
+  [17786045](https://zenodo.org/records/17786045) (downstream fine-tuning sets).
+  Pretraining input needs CDS prediction (e.g. NCBI ORFfinder) before the codon
+  split; `sample_data/` holds only small templates.
 
-The `file-shard` path also enables a bounded per-rank shuffle buffer by default
-(`--streaming-shuffle-buffer 20000`). This keeps training streaming-friendly
-while avoiding long ordered stretches from the original FASTA/pre.txt layout.
-Use `--streaming-shuffle-buffer 0` to disable it, or increase the value if host
-memory and storage throughput are comfortable.
+## Safety
 
-When resuming a streaming run with `--resume`, the launcher sets
-`--ignore_data_skip true`. Optimizer, scheduler, model weights, and global step
-are still restored, but the trainer does not try to replay tens of thousands of
-streaming batches just to recover an exact data cursor. This is the practical
-default for large streaming pretraining runs. The launcher also sets
-`TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1` for resume runs so PyTorch 2.6+ can load the
-old Transformers RNG state files produced by trusted local checkpoints.
+Codon and mRNA optimization is dual-use. The design system in the roadmap is built
+around a safety-and-feasibility gate (restricted-family screening, deny/review flows,
+provenance logging) as a hard product requirement, not a bypass of general-model
+refusals. The encoder in this repo is a representation model; the gate lands with the
+generation/optimization phases. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-The older streaming readers are still available for debugging: `line-stride`
-sequentially scans the source file in every rank, `byte-range` uses seek-based
-sharding and should only be used on filesystems with fast random seek, and `hf`
-falls back to HuggingFace datasets streaming.
+## License and citation
 
-The default output workspace is:
-```
-/mnt/hdfs/byte_neptune_ai/mrna/train/runs/mrnabert-<mode>-<env>-<timestamp>/
-```
+Built on the mRNABERT model and the DNABERT-2 framework. If you use this work,
+please cite the original paper:
 
-By default the launcher initializes a standard BERT masked-LM model from
-`assets/mrnabert-base`. To compare against the public mRNABERT checkpoint, run
-an explicit pretrained baseline:
-```
-./run_train.sh \
-  --env devbox \
-  --train-file /mnt/hdfs/byte_neptune_ai/mrna/pre.txt \
-  --init-mode pretrained \
-  --model YYLY66/mRNABERT
-```
-
-Use `./run_train.sh --help` for all launcher options. Unknown arguments are
-passed through to `python main.py pretrain`.
-
-### Pretraining stage 2
-We used the [OpenAI-CLIP](https://github.com/moein-shariatnia/OpenAI-CLIP) for contrastive learning.You can modify the code using the embedding extraction method mentioned above and reproduce the model training.
-
-
-## Fine-tuning
-### Data processing
-Please see the template data at `/sample_data/fine-tune/mRFP` and generate `3 csv files` from your dataset into the same format as it. Each file needs to have two columns with the header row labeled as `sequence` and `label`. Please use `process_finetune_data` for split.
-
-for example:
-```
-python data_process/process_finetune_data.py  --input_dir "data_process/fine-tune/mRFP"  --output_dir "sample_data/fine-tune/mRFP" --split_option "codon"     
-```
- You can specify different split option based on the types of data: `utr` for UTR sequences, `cds` for CDS sequences, and `complete` for complete mRNA sequences. NOTE,please use '[' and ']' to mark CDS if you choose `complete` option.
-
-### Fine-tune with pre-trained model
-Then, you are able to finetune mRNABERT with the following code:
-
-```
-#For regression tasks
-
-export DATA_PATH=/sample_data/fine-tune/mRFP
-python regression.py \
-    --model_name_or_path=YYLY66/mRNABERT \
-    --data_path ${DATA_PATH} \
-    --run_name mRNABERT_${DATA_PATH} \
-    --model_max_length 250 \  #set as the number of tokens
-    --per_device_train_batch_size 16 \
-    --per_device_eval_batch_size 8 \
-    --gradient_accumulation_steps 1 \
-    --learning_rate 5e-5 \
-    --num_train_epochs 50 \
-    --save_steps 10 \
-    --output_dir output/${DATA_PATH} \
-    --evaluation_strategy steps \
-    --eval_steps 10 \
-    --warmup_steps 10 \
-    --logging_steps 10 \
-    --overwrite_output_dir True \
-    --log_level info \
-    --find_unused_parameters False     
-```
-```
-#For classification tasks
-
-export DATA_PATH=$path/to/data/folder
-python classification.py \
-    --model_name_or_path=YYLY66/mRNABERT \
-    --data_path ${DATA_PATH} \
-    --run_name mRNABERT_${DATA_PATH} \
-    --model_max_length 250 \  #set as the number of tokens
-    --per_device_train_batch_size 16 \
-    --per_device_eval_batch_size 8 \
-    --gradient_accumulation_steps 1 \
-    --learning_rate 5e-5 \
-    --num_train_epochs 50 \
-    --save_steps 10 \
-    --output_dir output/${DATA_PATH} \
-    --evaluation_strategy steps \
-    --eval_steps 10 \
-    --warmup_steps 10 \
-    --logging_steps 10 \
-    --overwrite_output_dir True \
-    --log_level info \
-    --find_unused_parameters False       
-```
-You need to choose different `batch sizes` and `epochs` based on the dataset to achieve optimal results. Incidentally, you can also use this code to test other benchmark models through HuggingFace.
-
-
-## Reports
-
-- [Protein-to-mRNA design pipeline report](docs/reports/protein-mrna-design-pipeline.md)
-
-
-## Citation
-
-If you find the models useful in your research, please cite our paper:
-
-```
+```bibtex
 @article{xiong2025mrnabert,
   title={mRNABERT: advancing mRNA sequence design with a universal language model and comprehensive dataset},
   author={Xiong, Ying and Wang, Aowen and Kang, Yu and Shen, Chao and Hsieh, Chang-Yu and Hou, Tingjun},
   journal={Nature Communications},
-  volume={16},
-  number={1},
-  pages={10371},
-  year={2025},
-  publisher={Nature Publishing Group UK London},
+  volume={16}, number={1}, pages={10371}, year={2025},
+  publisher={Nature Publishing Group UK London}
 }
 ```
-
-The model of this code builds on the [DNABERT-2](https://arxiv.org/abs/2306.15006) modeling framework. We use [transformers](https://github.com/huggingface/transformers/tree/main/examples/pytorch/language-modeling) and [OpenAI-CLIP](https://github.com/moein-shariatnia/OpenAI-CLIP) framework to train our mRNA language models and [MultiMolecule](https://github.com/DLS5-Omics/multimolecule) for testing and comparing various benchmark models. We really appreciate these excellent works!
-
-## Contact
-If you have any question, please feel free to email us (xiongying@zju.edu.cn).

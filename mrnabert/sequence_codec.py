@@ -43,26 +43,41 @@ def find_longest_cds(
     start_codon: str = "ATG",
     stop_codons: Sequence[str] = STOP_CODONS,
 ) -> CDSRegion | None:
-    """Find the longest in-frame ORF.
+    """Return the CDS approximated as the longest in-frame ORF (ATG..in-frame stop).
 
-    This intentionally preserves the original repository's heuristic: scan every
-    ATG and keep the longest ATG...stop region found in that frame.
+    This is a heuristic, and a deliberately narrow one. The true coding sequence
+    is defined by annotation and start-site selection (Kozak context / ribosome
+    scanning) and is frequently *not* the longest ORF: upstream ORFs, weak-context
+    upstream AUGs, and annotated CDS shorter than an incidental downstream ORF all
+    break the assumption, so this injects some label noise into the UTR/CDS
+    boundary signal. Prefer curated RefSeq/GENCODE CDS coordinates when they are
+    available; this fallback is for when they are not.
+
+    Implementation: a single left-to-right pass per reading frame (O(n) total).
+    Within a frame an ORF opens at the first start codon following the previous
+    in-frame stop and closes at the next in-frame stop. Selection is deterministic
+    — the longest ORF wins, ties broken by earliest start — matching the previous
+    quadratic "scan every ATG" implementation byte-for-byte on the encoded output.
     """
 
-    start_index = mrna_sequence.find(start_codon)
-    longest: CDSRegion | None = None
+    stop_set = set(stop_codons)
+    length = len(mrna_sequence)
+    regions: list[CDSRegion] = []
 
-    while start_index != -1:
-        for end_index in range(start_index + len(start_codon), len(mrna_sequence) - 2, 3):
-            codon = mrna_sequence[end_index : end_index + 3]
-            if codon in stop_codons:
-                region = CDSRegion(start=start_index, end=end_index + 3)
-                if longest is None or region.length > longest.length:
-                    longest = region
-                break
-        start_index = mrna_sequence.find(start_codon, start_index + 1)
+    for frame in range(3):
+        orf_start: int | None = None
+        for index in range(frame, length - 2, 3):
+            codon = mrna_sequence[index : index + 3]
+            if orf_start is None:
+                if codon == start_codon:
+                    orf_start = index
+            elif codon in stop_set:
+                regions.append(CDSRegion(start=orf_start, end=index + 3))
+                orf_start = None
 
-    return longest
+    if not regions:
+        return None
+    return max(regions, key=lambda region: (region.length, -region.start))
 
 
 def encode_mrna_sequence(sequence: str, cds_region: CDSRegion | None = None) -> str:
