@@ -16,6 +16,9 @@ scripts/print_eval_results_nas.sh
 scripts/continue_train_nas.sh 150000 100000
 ```
 
+`continue_train_nas.sh` uses the current measured throughput sweet spot:
+3 GPUs, per-device batch 32, file-shard streaming, and 4 dataloader workers.
+
 Throughput checks:
 
 ```bash

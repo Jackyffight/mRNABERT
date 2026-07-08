@@ -54,6 +54,6 @@ cd "$REPO_ROOT"
   --save-steps 5000 \
   --save-total-limit 5 \
   --lr 3e-5 \
-  --dataloader-workers 0 \
+  --dataloader-workers 4 \
   --run-name "$RUN_NAME" \
   --resume "$RESUME_CHECKPOINT"
