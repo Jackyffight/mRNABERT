@@ -19,6 +19,9 @@ scripts/continue_train_nas.sh 150000 100000
 Throughput checks:
 
 ```bash
+scripts/benchmark_throughput_nas.sh smoke
+scripts/benchmark_throughput_nas.sh quick
+scripts/print_throughput_benchmark_nas.sh /mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_runs/benchmarks/<benchmark-dir>
 scripts/throughput_workers4_nas.sh
 scripts/throughput_workers0_nas.sh
 ```
