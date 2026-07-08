@@ -4,7 +4,7 @@ This is the authoritative plan. The design essays under `docs/reports/` are the
 thinking behind it; where they and this file disagree, **this file wins**, and
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) is the canonical target architecture.
 
-Last updated: 2026-07-07.
+Last updated: 2026-07-08.
 
 ## Thesis
 
@@ -96,6 +96,19 @@ blockers: validation loss dashboards over the checkpoint series; a cached
 (non-streaming) tokenized dataset path for small corpora; checkpoint-lineage tags;
 a corpus near-duplicate pass.
 
+Current training stance after the 150k run and throughput sweep:
+
+- Keep the formal baseline at `max_seq_length=1024`; do not switch production
+  pretraining to 512 merely for speed. A 512 run is useful only as a diagnostic
+  ablation for attention cost and context-length sensitivity.
+- Use the measured NAS/DDP sweet spot for continuation runs: 3 GPUs, per-device
+  batch 32, file-shard streaming, bounded shuffle, and 4 dataloader workers. The
+  GPU `dmon` trace showed high SM utilization, so the next large speedups are likely
+  model-kernel/architecture work rather than NAS read tuning.
+- Track ModernBERT-style encoder upgrades and long-sequence Transformer variants as
+  architecture iteration candidates, but keep them behind the current 1024-BERT MLM
+  baseline until they beat it on the same validation set.
+
 ### Phase 1 — Tool pipeline and schemas
 
 - Define the typed **design state** and the four auditable tables (design-state,
@@ -175,6 +188,26 @@ scope to the slice above and expand as the gates clear.
 | Biosecurity / dual use | Product & legal risk | Safety-feasibility gate before any optimization phase |
 | Doc-vs-code gap misread as delivered | Overclaim to stakeholders | This roadmap and the README label built vs planned explicitly |
 | General LLMs improve | Single-shot optimization commoditized | Compete on constraints, batch hit rate, auditability, and feedback loop |
+| Architecture churn before baseline | Unclear wins and lost comparability | Freeze the current 1024 BERT baseline; test ModernBERT/long-sequence variants only as measured PoCs |
+
+## Architecture iteration backlog
+
+These are not Phase 0 blockers. They are follow-on model-family experiments once the
+current 1024-context BERT baseline has a reliable validation curve.
+
+1. **ModernBERT-style encoder PoC.** Preserve the MLM objective and mRNA tokenizer
+   first, but test a more modern encoder block: efficient fused attention where
+   available, pre-norm stability, modern feed-forward variants, and longer-context
+   position handling. Success means same validation set, same context length, higher
+   throughput or lower validation loss at equal compute.
+2. **Long-sequence Transformer PoC.** Test local/global or sparse attention variants
+   for mRNA records where 1024 context remains limiting. This is a model-family
+   change, not a drop-in speed flag; compare against the 1024 BERT baseline on
+   protein-preserving and downstream ranking metrics before adopting it.
+3. **Do not treat 512 context as the target.** A 512 run can locate the attention
+   bottleneck and provide an ablation, but it may remove biologically useful long
+   context. It should not replace the 1024 baseline unless validation and downstream
+   task metrics prove the tradeoff is acceptable.
 
 ## Positioning
 

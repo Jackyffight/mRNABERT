@@ -5,7 +5,7 @@ anchors. This is the **target**; only the mRNA encoder (Phase 0) exists in code 
 — see [`../ROADMAP.md`](../ROADMAP.md) for status and sequencing. The long-form
 design essays that this distills are under [`reports/`](reports/).
 
-Last updated: 2026-07-07.
+Last updated: 2026-07-08.
 
 ## Design goals
 
@@ -156,6 +156,27 @@ auditable, governable system — not bypassing general-model refusals.
 5. Optimize through Pareto ranking, not one hidden scalar.
 6. Exact protein preservation is a hard check.
 7. Safety gates precede production optimization.
+8. The current 1024-context BERT MLM is the baseline. ModernBERT-style encoders and
+   long-sequence Transformers are future measured PoCs, not replacements until they
+   beat the baseline on the same validation and downstream metrics.
+
+## Future encoder families
+
+The immediate training path keeps the current 1024-token BERT encoder because it is
+now measurable and comparable. Two model-family iterations are explicitly on the
+backlog:
+
+- **ModernBERT-style encoder:** retain the MLM/tokenizer setup while testing a more
+  efficient modern encoder block and attention kernel. The goal is equal or better
+  validation loss at higher throughput, without changing the biological context
+  length target.
+- **Long-sequence Transformer:** test sparse/local/global attention variants only if
+  1024 context proves limiting for downstream mRNA regulation tasks. This is a
+  scientific tradeoff, not only a speed optimization, and must be benchmarked
+  against exact protein preservation and wet-lab-linked ranking metrics.
+
+A 512-token run is allowed as an ablation to diagnose attention cost, but it is not
+the default product training setting.
 
 ## Open questions
 
