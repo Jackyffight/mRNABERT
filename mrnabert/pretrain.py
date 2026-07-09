@@ -154,6 +154,13 @@ class DataTrainingArguments:
         default=42,
         metadata={"help": "Base seed for local streaming shuffle buffers."},
     )
+    streaming_resume_skip_samples: int = field(
+        default=0,
+        metadata={
+            "help": "Global raw-example count to skip before local streaming training. "
+            "The launcher derives this from checkpoint global_step on streaming resume."
+        },
+    )
 
     def __post_init__(self) -> None:
         if self.streaming:
@@ -162,6 +169,8 @@ class DataTrainingArguments:
             raise ValueError("--streaming_reader must be line-stride, file-shard, byte-range, or hf.")
         if self.streaming_shuffle_buffer < 0:
             raise ValueError("--streaming_shuffle_buffer must be >= 0.")
+        if self.streaming_resume_skip_samples < 0:
+            raise ValueError("--streaming_resume_skip_samples must be >= 0.")
         if self.dataset_name is None and self.train_file is None and self.validation_file is None:
             raise ValueError("Need either a dataset name or a train/validation file.")
         for value, label in ((self.train_file, "train_file"), (self.validation_file, "validation_file")):
@@ -263,6 +272,8 @@ class _StreamingTokenizedTextDataset(torch.utils.data.IterableDataset):
         max_samples: Optional[int] = None,
         shuffle_buffer: int = 0,
         shuffle_seed: int = 42,
+        resume_skip_samples: int = 0,
+        repeat: bool = False,
     ) -> None:
         self.files = list(files)
         self.tokenizer = tokenizer
@@ -271,6 +282,8 @@ class _StreamingTokenizedTextDataset(torch.utils.data.IterableDataset):
         self.max_samples = max_samples
         self.shuffle_buffer = shuffle_buffer
         self.shuffle_seed = shuffle_seed
+        self.resume_skip_samples = resume_skip_samples
+        self.repeat = repeat
 
     def _tokenize(self, line: str) -> dict:
         padding = "max_length" if self.pad_to_max_length else False
@@ -290,17 +303,32 @@ class _StreamingTokenizedTextDataset(torch.utils.data.IterableDataset):
 
         partition_id, num_partitions = streaming.partition_id_and_count(rank, world_size, worker_id, num_workers)
         cap = streaming.per_partition_cap(self.max_samples, num_partitions)
-        raw_lines = streaming.iter_reader_lines(
-            self.reader_name, self.files, rank, world_size, worker_id, num_workers
-        )
+        skip_remaining = streaming.partition_skip(self.resume_skip_samples, partition_id, num_partitions)
 
-        seed = self.shuffle_seed + partition_id
         yielded = 0
-        for line in streaming.iter_bounded_shuffle(raw_lines, self.shuffle_buffer, seed):
-            if cap is not None and yielded >= cap:
+        stream_epoch = 0
+        while True:
+            raw_lines = streaming.iter_reader_lines(
+                self.reader_name, self.files, rank, world_size, worker_id, num_workers
+            )
+            seed = self.shuffle_seed + partition_id + (stream_epoch * num_partitions)
+            emitted = False
+            for line in streaming.iter_bounded_shuffle(raw_lines, self.shuffle_buffer, seed):
+                if skip_remaining > 0:
+                    skip_remaining -= 1
+                    continue
+                if cap is not None and yielded >= cap:
+                    return
+                emitted = True
+                yielded += 1
+                yield self._tokenize(line)
+
+            if skip_remaining > 0 and self.repeat:
+                stream_epoch += 1
+                continue
+            if cap is not None or not self.repeat or not emitted:
                 return
-            yielded += 1
-            yield self._tokenize(line)
+            stream_epoch += 1
 
 
 class LineStrideTokenizedTextDataset(_StreamingTokenizedTextDataset):
@@ -500,6 +528,11 @@ def build_local_text_streaming_datasets(tokenizer, data_args: DataTrainingArgume
         train_files = resolve_text_files(data_args.train_file)
         streaming.validate_reader_partitions(data_args.streaming_reader, len(train_files), world_size)
         logger.info("Using %s train file(s) for local streaming", len(train_files))
+        if data_args.streaming_resume_skip_samples:
+            logger.info(
+                "Skipping %s global raw training examples for streaming resume",
+                data_args.streaming_resume_skip_samples,
+            )
         train_dataset = dataset_cls(
             files=train_files,
             tokenizer=tokenizer,
@@ -508,6 +541,8 @@ def build_local_text_streaming_datasets(tokenizer, data_args: DataTrainingArgume
             max_samples=data_args.max_train_samples,
             shuffle_buffer=data_args.streaming_shuffle_buffer,
             shuffle_seed=data_args.streaming_shuffle_seed,
+            resume_skip_samples=data_args.streaming_resume_skip_samples,
+            repeat=data_args.max_train_samples is None,
         )
 
     eval_dataset = None
@@ -525,6 +560,8 @@ def build_local_text_streaming_datasets(tokenizer, data_args: DataTrainingArgume
             max_samples=data_args.max_eval_samples,
             shuffle_buffer=0,
             shuffle_seed=data_args.streaming_shuffle_seed,
+            resume_skip_samples=0,
+            repeat=False,
         )
     return train_dataset, eval_dataset
 

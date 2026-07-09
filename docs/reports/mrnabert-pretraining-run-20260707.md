@@ -129,7 +129,7 @@ Important launcher behavior:
 - one large text file is auto-sharded for multi-GPU streaming
 - `file-shard` assigns shard files to ranks
 - `dispatch_batches=false` prevents one rank from becoming the data bottleneck
-- streaming resume sets `ignore_data_skip=true`
+- streaming resume uses `ignore_data_skip=true` plus a local raw-example skip offset
 - resume exports `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1` for PyTorch 2.6+ checkpoint RNG compatibility
 
 ## Completed Commands
@@ -189,6 +189,9 @@ Expected launcher summary for the resume command:
 ```text
 resume: /mnt/hdfs/byte_neptune_ai/mrna/train/runs/mrnabert-full-devbox-20260707024008/output/checkpoint-50000
 ignore_data_skip: true
+streaming_resume_global_step: 50000
+streaming_resume_world_size: 3
+streaming_resume_skip_samples: 4800000
 torch_force_no_weights_only_load: 1
 streaming_reader: file-shard
 streaming_shuffle_buffer: 20000
@@ -368,13 +371,30 @@ Use `--reshard` only when the input file changed or a new shard count/seed is de
 
 ### Resume Streaming Runs Without Data Replay
 
-For streaming datasets, exact data cursor replay is not worth the operational cost. The launcher intentionally uses:
+Earlier runs used:
 
 ```text
 --ignore_data_skip true
 ```
 
-This resumes model, optimizer, scheduler, and global step, but does not replay the first N streaming batches. That is acceptable for this large randomized corpus.
+by itself. That resumes model, optimizer, scheduler, and global step, but it also
+restarts the local streaming iterator from the beginning. For fixed shards and
+fixed shuffle seeds, each resume segment can therefore replay the same shard
+prefix. Do not interpret historical `global_step * effective_batch` as unique
+corpus coverage for those segments.
+
+The launcher now keeps `--ignore_data_skip true` only to avoid HuggingFace
+Trainer's slow batch-level replay, and instead passes a raw streaming offset:
+
+```text
+--streaming_resume_skip_samples <checkpoint_global_step * effective_batch>
+```
+
+This skip is applied inside the local streaming dataset after bounded shuffle and
+before tokenization, so future resumes advance the data stream without GPU-side
+batch replay. For legacy checkpoints that were already trained with replay, pass
+`--streaming-resume-skip-samples` explicitly if you want to use an estimated true
+data cursor rather than the checkpoint global step.
 
 ### Trust Local Batch Loss, Not Resumed Aggregate Loss
 

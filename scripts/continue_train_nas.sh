@@ -5,20 +5,23 @@
 #   scripts/continue_train_nas.sh
 #   scripts/continue_train_nas.sh 150000
 #   scripts/continue_train_nas.sh 200000 150000
+#   scripts/continue_train_nas.sh 350000 300000 6240000
 #
 # Arguments:
 #   1. target global step, default 150000
 #   2. resume checkpoint step, default 100000
+#   3. optional streaming resume raw-example cursor override
 
 set -euo pipefail
 
-if [ $# -gt 2 ]; then
-  echo "Usage: $0 [target_step] [resume_step]" >&2
+if [ $# -gt 3 ]; then
+  echo "Usage: $0 [target_step] [resume_step] [streaming_resume_skip_samples]" >&2
   exit 1
 fi
 
 TARGET_STEP="${1:-150000}"
 RESUME_STEP="${2:-100000}"
+STREAMING_RESUME_SKIP_SAMPLES="${3:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -39,6 +42,11 @@ if [ ! -d "$RESUME_CHECKPOINT" ]; then
 fi
 
 cd "$REPO_ROOT"
+EXTRA_ARGS=()
+if [ -n "$STREAMING_RESUME_SKIP_SAMPLES" ]; then
+  EXTRA_ARGS+=(--streaming-resume-skip-samples "$STREAMING_RESUME_SKIP_SAMPLES")
+fi
+
 ./run_train.sh \
   --env devbox \
   --train-file "$TRAIN_FILE" \
@@ -56,4 +64,5 @@ cd "$REPO_ROOT"
   --lr 3e-5 \
   --dataloader-workers 4 \
   --run-name "$RUN_NAME" \
-  --resume "$RESUME_CHECKPOINT"
+  --resume "$RESUME_CHECKPOINT" \
+  "${EXTRA_ARGS[@]}"

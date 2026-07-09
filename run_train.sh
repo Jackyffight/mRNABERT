@@ -48,6 +48,7 @@ STREAMING_MODE="auto"
 STREAMING_READER="${MRNABERT_STREAMING_READER:-line-stride}"
 STREAMING_SHUFFLE_BUFFER="${MRNABERT_STREAMING_SHUFFLE_BUFFER:-0}"
 STREAMING_SHUFFLE_SEED="${MRNABERT_STREAMING_SHUFFLE_SEED:-42}"
+STREAMING_RESUME_SKIP_SAMPLES="${MRNABERT_STREAMING_RESUME_SKIP_SAMPLES:-}"
 AUTO_SHARD_MODE="${MRNABERT_AUTO_SHARD:-auto}"
 SHARD_DIR="${MRNABERT_SHARD_DIR:-}"
 SHARD_COUNT="${MRNABERT_SHARD_COUNT:-}"
@@ -63,6 +64,7 @@ SAVE_STEPS_SET=false
 DATALOADER_NUM_WORKERS_SET=false
 STREAMING_READER_SET=false
 STREAMING_SHUFFLE_BUFFER_SET=false
+STREAMING_RESUME_SKIP_SAMPLES_SET=false
 TRAIN_ARGS=()
 
 usage() {
@@ -113,6 +115,9 @@ Launcher args:
                               Per-rank local streaming line shuffle buffer. Default: 20000 for file-shard.
   --streaming-shuffle-seed <n>
                               Streaming shuffle seed. Default: 42.
+  --streaming-resume-skip-samples <n>
+                              Override global raw examples skipped on streaming resume.
+                              Default: checkpoint global_step * effective batch.
   --no-streaming              Force Arrow/tokenized cache creation.
   --auto-shard                Split one train file into random shard files before torchrun training.
                               Default: auto for torchrun + streaming + one txt file.
@@ -168,6 +173,7 @@ while [ $# -gt 0 ]; do
     --streaming-reader|--streaming_reader) STREAMING_READER="$2"; STREAMING_READER_SET=true; shift 2 ;;
     --streaming-shuffle-buffer|--streaming_shuffle_buffer) STREAMING_SHUFFLE_BUFFER="$2"; STREAMING_SHUFFLE_BUFFER_SET=true; shift 2 ;;
     --streaming-shuffle-seed|--streaming_shuffle_seed) STREAMING_SHUFFLE_SEED="$2"; shift 2 ;;
+    --streaming-resume-skip-samples|--streaming_resume_skip_samples) STREAMING_RESUME_SKIP_SAMPLES="$2"; STREAMING_RESUME_SKIP_SAMPLES_SET=true; shift 2 ;;
     --no-streaming|--no_streaming) STREAMING_MODE=false; shift ;;
     --auto-shard|--auto_shard) AUTO_SHARD_MODE=true; shift ;;
     --no-auto-shard|--no_auto_shard) AUTO_SHARD_MODE=false; shift ;;
@@ -509,10 +515,52 @@ case "$DTYPE" in
 esac
 
 RESUME_ARGS=()
+STREAMING_RESUME_GLOBAL_STEP=""
+STREAMING_RESUME_WORLD_SIZE=""
 if [ -n "$RESUME" ]; then
   RESUME_ARGS=(--resume_from_checkpoint "$RESUME")
   if [ "$STREAMING_MODE" = "true" ]; then
-    RESUME_ARGS+=(--ignore_data_skip true)
+    STREAMING_RESUME_GLOBAL_STEP=$("$PYTHON" - "$RESUME" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+checkpoint = Path(sys.argv[1])
+state_file = checkpoint / "trainer_state.json"
+global_step = None
+if state_file.exists():
+    try:
+        global_step = int(json.loads(state_file.read_text()).get("global_step") or 0)
+    except Exception as exc:
+        raise SystemExit(f"Could not parse checkpoint trainer_state.json: {state_file}: {exc}")
+if global_step is None:
+    match = re.search(r"checkpoint-(\d+)$", checkpoint.name)
+    global_step = int(match.group(1)) if match else 0
+print(global_step)
+PY
+)
+    if [ "$LAUNCHER" = "torchrun" ]; then
+      STREAMING_RESUME_WORLD_SIZE="$NPROC_PER_NODE"
+    else
+      STREAMING_RESUME_WORLD_SIZE=1
+    fi
+    if [ "$STREAMING_RESUME_SKIP_SAMPLES_SET" = false ]; then
+      STREAMING_RESUME_SKIP_SAMPLES=$("$PYTHON" - "$STREAMING_RESUME_GLOBAL_STEP" "$BATCH_SIZE" "$GRAD_ACCUM" "$STREAMING_RESUME_WORLD_SIZE" <<'PY'
+import sys
+
+global_step = int(sys.argv[1])
+batch_size = int(sys.argv[2])
+grad_accum = int(sys.argv[3])
+world_size = int(sys.argv[4])
+print(global_step * batch_size * grad_accum * world_size)
+PY
+)
+    fi
+    RESUME_ARGS+=(
+      --ignore_data_skip true
+      --streaming_resume_skip_samples "$STREAMING_RESUME_SKIP_SAMPLES"
+    )
   fi
 fi
 
@@ -568,6 +616,9 @@ echo "epochs: $EPOCHS"
 [ -n "$MAX_STEPS" ] && echo "max_steps: $MAX_STEPS"
 [ -n "$RESUME" ] && echo "resume: $RESUME"
 [ -n "$RESUME" ] && [ "$STREAMING_MODE" = "true" ] && echo "ignore_data_skip: true"
+[ -n "$RESUME" ] && [ "$STREAMING_MODE" = "true" ] && echo "streaming_resume_global_step: $STREAMING_RESUME_GLOBAL_STEP"
+[ -n "$RESUME" ] && [ "$STREAMING_MODE" = "true" ] && echo "streaming_resume_world_size: $STREAMING_RESUME_WORLD_SIZE"
+[ -n "$RESUME" ] && [ "$STREAMING_MODE" = "true" ] && echo "streaming_resume_skip_samples: $STREAMING_RESUME_SKIP_SAMPLES"
 [ -n "$RESUME" ] && echo "torch_force_no_weights_only_load: ${TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD:-}"
 echo "dtype: $DTYPE"
 echo "preprocessing_workers: $PREPROCESSING_NUM_WORKERS"

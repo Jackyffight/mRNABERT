@@ -49,6 +49,23 @@ def per_partition_cap(max_samples: Optional[int], num_partitions: int) -> Option
     return -(-max_samples // partitions)
 
 
+def partition_skip(skip_samples: Optional[int], partition_id: int, num_partitions: int) -> int:
+    """Split a GLOBAL resume skip budget across partitions exactly.
+
+    ``skip_samples`` is counted in global training examples, i.e.
+    ``global_step * per_device_batch * grad_accum * world_size``. Each rank x
+    dataloader-worker partition should skip its share before yielding new lines.
+    The first ``skip_samples % num_partitions`` partitions skip one extra sample
+    so the sum across partitions is exactly the global skip budget.
+    """
+    if skip_samples is None or skip_samples <= 0:
+        return 0
+    partitions = max(1, num_partitions)
+    base = skip_samples // partitions
+    remainder = skip_samples % partitions
+    return base + (1 if partition_id < remainder else 0)
+
+
 def iter_bounded_shuffle(lines: Iterable[str], buffer_size: int, seed: int) -> Iterator[str]:
     """Windowed shuffle: emit from a bounded reservoir so streaming stays O(buffer)."""
     if buffer_size <= 1:

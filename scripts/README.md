@@ -18,6 +18,16 @@ scripts/continue_train_nas.sh 150000 100000
 
 `continue_train_nas.sh` uses the current measured throughput sweet spot:
 3 GPUs, per-device batch 32, file-shard streaming, and 4 dataloader workers.
+On streaming resume, `run_train.sh` keeps Trainer's slow data replay disabled but
+passes a raw-example offset into the local streaming dataset. The launcher prints
+`streaming_resume_skip_samples`; for example, resuming from checkpoint 300000 with
+batch 32 on 3 GPUs should print `28800000`.
+
+For legacy checkpoints produced before the streaming resume fix, the checkpoint
+global step may overstate unique corpus coverage because previous resume segments
+replayed shard prefixes. Use `--streaming-resume-skip-samples <estimated_cursor>`
+on `run_train.sh` only when intentionally correcting that historical cursor, or
+pass it as the third argument to `continue_train_nas.sh`.
 
 Throughput checks:
 

@@ -98,6 +98,13 @@ class PartitionMathTest(unittest.TestCase):
         self.assertEqual(streaming.per_partition_cap(8, 4), 2)
         self.assertEqual(streaming.per_partition_cap(1, 8), 1)
 
+    def test_partition_skip_distributes_global_budget_exactly(self):
+        self.assertEqual([streaming.partition_skip(10, i, 4) for i in range(4)], [3, 3, 2, 2])
+        self.assertEqual(sum(streaming.partition_skip(10, i, 4) for i in range(4)), 10)
+        self.assertEqual([streaming.partition_skip(8, i, 4) for i in range(4)], [2, 2, 2, 2])
+        self.assertEqual([streaming.partition_skip(1, i, 4) for i in range(4)], [1, 0, 0, 0])
+        self.assertEqual([streaming.partition_skip(0, i, 4) for i in range(4)], [0, 0, 0, 0])
+
 
 class BoundedShuffleTest(unittest.TestCase):
     def test_passthrough_when_buffer_disabled(self):
@@ -112,6 +119,18 @@ class BoundedShuffleTest(unittest.TestCase):
         self.assertEqual(sorted(out1, key=int), sorted(data, key=int))  # no drop/dup
         self.assertEqual(out1, out2)                                     # deterministic per seed
         self.assertNotEqual(out1, data)                                  # actually reordered
+
+    def test_resume_skip_happens_after_shuffle(self):
+        data = [str(i) for i in range(200)]
+        full = list(streaming.iter_bounded_shuffle(iter(data), 16, 7))
+        skipped = []
+        skip = 37
+        for line in streaming.iter_bounded_shuffle(iter(data), 16, 7):
+            if skip > 0:
+                skip -= 1
+                continue
+            skipped.append(line)
+        self.assertEqual(skipped, full[37:])
 
 
 class ValidateReaderPartitionsTest(unittest.TestCase):
