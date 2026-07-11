@@ -211,3 +211,11 @@ seed matched the internal model.
 - Scan mRFP exact CDS and translated-protein identity against the pretraining corpus,
   then add a second-protein or multi-protein benchmark.
 - Build the clean 2026 temporal holdout and begin wet-lab-linked candidate testing.
+
+The first two controlled follow-ups are implemented as reusable NAS scripts:
+
+```bash
+scripts/run_mrfp_lr_sweep_nas.sh 600000
+scripts/run_mrfp_frozen_probe_nas.sh 600000
+scripts/print_mrfp_results_nas.sh
+```

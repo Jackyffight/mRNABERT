@@ -32,6 +32,10 @@ class ModelArguments:
         default=True,
         metadata={"help": "Bypass the public checkpoint's legacy Triton attention when dropout is zero."},
     )
+    freeze_encoder: bool = field(
+        default=False,
+        metadata={"help": "Freeze embeddings/Transformer layers while training the pooler and head."},
+    )
     use_lora: bool = field(default=False, metadata={"help": "whether to use LoRA"})
     lora_r: int = field(default=32, metadata={"help": "hidden dimension for LoRA"})
     lora_alpha: int = field(default=64, metadata={"help": "alpha for LoRA"})
@@ -187,6 +191,18 @@ def train():
             trust_remote_code=True,
             config=config
         )
+
+    if model_args.freeze_encoder:
+        encoder = model.base_model
+        for parameter in encoder.parameters():
+            parameter.requires_grad = False
+        pooler = getattr(encoder, "pooler", None)
+        if pooler is not None:
+            for parameter in pooler.parameters():
+                parameter.requires_grad = True
+        trainable = sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
+        total = sum(parameter.numel() for parameter in model.parameters())
+        logging.info("Frozen encoder probe: trainable=%s total=%s", trainable, total)
 
     if model_args.use_lora:
         lora_config = LoraConfig(

@@ -37,6 +37,26 @@ class EvalScriptTest(unittest.TestCase):
         self.assertIn('run_model "internal-checkpoint-$STEP"', script)
         self.assertIn('run_model "public-YYLY66-$MODEL_REVISION"', script)
         self.assertIn('run_model "random-init-internal-architecture" "$INTERNAL_MODEL" scratch', script)
+        self.assertIn('--freeze_encoder "$FREEZE_ENCODER"', script)
+        self.assertIn('--learning_rate "$LEARNING_RATE"', script)
+
+    def test_mrfp_sweeps_use_equal_learned_model_budget(self):
+        lr_sweep = Path("scripts/run_mrfp_lr_sweep_nas.sh").read_text(encoding="utf-8")
+        frozen = Path("scripts/run_mrfp_frozen_probe_nas.sh").read_text(encoding="utf-8")
+
+        self.assertIn("2e-5 5e-5", lr_sweep)
+        self.assertIn("full", lr_sweep)
+        self.assertIn("learned", lr_sweep)
+        self.assertIn("1e-4 3e-4 1e-3", frozen)
+        self.assertIn("frozen", frozen)
+        self.assertIn("learned", frozen)
+
+    def test_frozen_probe_keeps_pooler_trainable(self):
+        source = Path("regression.py").read_text(encoding="utf-8")
+
+        self.assertIn("for parameter in encoder.parameters()", source)
+        self.assertIn('pooler = getattr(encoder, "pooler", None)', source)
+        self.assertIn("parameter.requires_grad = True", source)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,8 @@ scripts/run_mrfp_baseline_nas.sh 42 600000
 scripts/run_mrfp_baseline_nas.sh 73 600000
 scripts/print_eval_results_nas.sh
 scripts/print_mrfp_results_nas.sh
+scripts/run_mrfp_lr_sweep_nas.sh 600000
+scripts/run_mrfp_frozen_probe_nas.sh 600000
 ```
 
 `continue_train_nas.sh` uses the current measured throughput sweet spot:
@@ -50,6 +52,13 @@ original training corpus, so use it only as a quick diagnostic. The mRFP scripts
 are the first task-level comparison and should be run over multiple seeds. They
 remove exact cross-split leakage and compare the internal model, public model, and
 a same-architecture random initialization.
+
+After the first three-seed result, `run_mrfp_lr_sweep_nas.sh` gives both learned
+encoders the same missing full-fine-tuning LR trials (`2e-5`, `5e-5`; the original
+`1e-4` results are retained). `run_mrfp_frozen_probe_nas.sh` freezes embeddings and
+Transformer blocks while training the newly initialized pooler and regression head
+at `1e-4`, `3e-4`, and `1e-3`. Result names encode mode and LR, and the summarizer
+labels legacy results as `full-lr1e-4`.
 
 Throughput checks:
 

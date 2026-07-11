@@ -17,6 +17,17 @@ METRICS = (
     "eval_mse_loss",
 )
 RUN_PATTERN = re.compile(r"^(?P<model>.+)-seed(?P<seed>\d+)$")
+LEGACY_MODEL_PREFIXES = (
+    "internal-checkpoint-",
+    "public-YYLY66-",
+    "random-init-internal-architecture",
+)
+
+
+def normalize_model_name(model: str) -> str:
+    if model.startswith(LEGACY_MODEL_PREFIXES) and not re.search(r"-(?:full|frozen)-lr", model):
+        return f"{model}-full-lr1e-4"
+    return model
 
 
 def load_results(root: Path) -> list[dict]:
@@ -33,7 +44,7 @@ def load_results(root: Path) -> list[dict]:
             raise ValueError(f"Missing metrics in {path}: {', '.join(missing)}")
         rows.append(
             {
-                "model": match.group("model"),
+                "model": normalize_model_name(match.group("model")),
                 "seed": int(match.group("seed")),
                 **{metric: float(metrics[metric]) for metric in METRICS},
             }

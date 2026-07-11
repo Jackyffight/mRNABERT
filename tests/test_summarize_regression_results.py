@@ -50,6 +50,14 @@ class SummarizeRegressionResultsTest(unittest.TestCase):
         self.assertAlmostEqual(summaries[0]["eval_spearman_corr_mean"], 0.2)
         self.assertEqual(summaries[0]["eval_spearman_corr_std"], 0.0)
 
+    def test_legacy_baseline_name_is_labeled_as_full_finetune_1e4(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._write(root, "internal-checkpoint-600000-seed42", 0.8)
+            rows = load_results(root)
+
+        self.assertEqual(rows[0]["model"], "internal-checkpoint-600000-full-lr1e-4")
+
 
 if __name__ == "__main__":
     unittest.main()
