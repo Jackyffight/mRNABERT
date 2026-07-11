@@ -20,16 +20,30 @@ scripts/run_mrfp_frozen_probe_nas.sh 600000
 
 `continue_train_nas.sh` uses the current measured throughput sweet spot:
 3 GPUs, per-device batch 32, file-shard streaming, and 4 dataloader workers.
+The worker count is per DDP rank, so this configuration creates 12
+`pt_data_worker` processes in total.
 On streaming resume, `run_train.sh` keeps Trainer's slow data replay disabled and
 uses `streaming_state.json` from the checkpoint as the authoritative raw-example
 cursor. Every new checkpoint records cursor, global step, corpus pass/offset, and
 the stable shard-manifest identity. Reader/shuffle/rank/worker topology is also
 checked, and an incompatible resume fails fast.
 
-Resume is cursor-correct but not constant-time. The reader scans and discards raw
-lines until it reconstructs the bounded-shuffle cursor; this happens before
-tokenization and GPU training. A large cursor can therefore spend several minutes
-at 0% while NAS is busy. Those scanned records are not trained again.
+The continuation script defaults to `fast-seek`: it preserves the logical cursor
+but seeks each file shard directly to `corpus_offset / corpus_samples`, initializes
+the bounded shuffle there, and starts tokenization without replaying the prefix.
+Because records have variable byte lengths, the physical sample position is an
+approximation; the logical cursor and corpus lineage remain cumulative. This is the
+operational mode for long GPU runs.
+
+`exact-replay` reconstructs the original bounded-shuffle stream by scanning and
+discarding all records before the cursor. With 3 ranks and 4 workers, all 12 workers
+scan their shard prefixes and can remain in uninterruptible I/O sleep (`D` in
+`top`) while GPUs sit at 0%. Use it only when exact stream-order reconstruction is
+more important than startup time:
+
+```bash
+scripts/continue_train_nas.sh 700000 600000 exact-replay
+```
 
 `checkpoint-600000` predates checkpoint-level cursor persistence. Bootstrap it once
 with `scripts/bootstrap_streaming_state_nas.sh 600000 57600000` before any future

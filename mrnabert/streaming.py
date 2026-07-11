@@ -104,24 +104,39 @@ def iter_line_stride_lines(files: Sequence[str], partition_id: int, num_partitio
 
 
 def iter_file_shard_lines(
-    files: Sequence[str], rank: int, world_size: int, worker_id: int, num_workers: int
+    files: Sequence[str],
+    rank: int,
+    world_size: int,
+    worker_id: int,
+    num_workers: int,
+    start_fraction: float = 0.0,
 ) -> Iterator[str]:
-    """Assign whole files by rank, then lines within a rank's file by dataloader worker."""
+    """Assign files by rank and lines by worker, optionally seeking into each file.
+
+    ``start_fraction`` is used by approximate fast resume. Each worker seeks to
+    the same byte fraction and then keeps its modulo-assigned lines, so the first
+    batch does not require replaying the file prefix. The byte fraction is only
+    an approximation for variable-length records, but worker partitions remain
+    disjoint and collectively cover the file tail exactly once.
+    """
+    if not 0.0 <= start_fraction < 1.0:
+        raise ValueError("start_fraction must be in [0.0, 1.0)")
     world = max(1, world_size)
     workers = max(1, num_workers)
     for file_index, path in enumerate(files):
         if file_index % world != rank:
             continue
-        with open(path, "rb") as handle:
-            for line_index, raw_line in enumerate(handle):
-                if line_index % workers != worker_id:
-                    continue
-                line = _decode_line(raw_line)
-                if line is not None:
-                    yield line
+        size = os.path.getsize(path)
+        start = int(size * start_fraction)
+        for line_index, raw_line in enumerate(_iter_byte_range_raw_lines(path, start, size)):
+            if line_index % workers != worker_id:
+                continue
+            line = _decode_line(raw_line)
+            if line is not None:
+                yield line
 
 
-def _iter_byte_range_file(path: str, start: int, end: int) -> Iterator[str]:
+def _iter_byte_range_raw_lines(path: str, start: int, end: int) -> Iterator[bytes]:
     if end <= start:
         return
     with open(path, "rb") as handle:
@@ -142,9 +157,14 @@ def _iter_byte_range_file(path: str, start: int, end: int) -> Iterator[str]:
             raw_line = handle.readline()
             if not raw_line:
                 break
-            line = _decode_line(raw_line)
-            if line is not None:
-                yield line
+            yield raw_line
+
+
+def _iter_byte_range_file(path: str, start: int, end: int) -> Iterator[str]:
+    for raw_line in _iter_byte_range_raw_lines(path, start, end):
+        line = _decode_line(raw_line)
+        if line is not None:
+            yield line
 
 
 def iter_byte_range_lines(files: Sequence[str], partition_id: int, num_partitions: int) -> Iterator[str]:
@@ -163,13 +183,23 @@ def iter_reader_lines(
     world_size: int,
     worker_id: int,
     num_workers: int,
+    start_fraction: float = 0.0,
 ) -> Iterator[str]:
     """Dispatch to the reader named by ``reader``, yielding this partition's raw lines."""
     partition_id, num_partitions = partition_id_and_count(rank, world_size, worker_id, num_workers)
+    if start_fraction and reader != "file-shard":
+        raise ValueError("start_fraction is only supported by the file-shard reader")
     if reader == "line-stride":
         return iter_line_stride_lines(files, partition_id, num_partitions)
     if reader == "file-shard":
-        return iter_file_shard_lines(files, rank, world_size, worker_id, num_workers)
+        return iter_file_shard_lines(
+            files,
+            rank,
+            world_size,
+            worker_id,
+            num_workers,
+            start_fraction=start_fraction,
+        )
     if reader == "byte-range":
         return iter_byte_range_lines(files, partition_id, num_partitions)
     raise ValueError(f"Unknown local streaming reader: {reader!r}; expected one of {LOCAL_STREAMING_READERS}")

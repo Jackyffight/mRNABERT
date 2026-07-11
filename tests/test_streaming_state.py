@@ -151,6 +151,19 @@ class StreamingStatePersistenceTest(unittest.TestCase):
             self.assertEqual(state.corpus_pass, 1)
             self.assertEqual(state.corpus_offset, 20)
 
+    def test_state_records_fast_seek_resume_mode(self):
+        state = streaming_state.build_checkpoint_state(
+            global_step=10,
+            resume_global_step=5,
+            resume_sample_cursor=20,
+            effective_batch=4,
+            streaming_reader="file-shard",
+            shuffle_seed=42,
+            resume_mode="fast-seek",
+        )
+        self.assertEqual(state.next_sample_cursor, 40)
+        self.assertEqual(state.resume_mode, "fast-seek")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -162,6 +162,13 @@ class DataTrainingArguments:
             "A checkpoint streaming_state.json takes precedence over the legacy global-step fallback."
         },
     )
+    streaming_resume_mode: str = field(
+        default="exact-replay",
+        metadata={
+            "help": "Streaming resume strategy: exact-replay reconstructs the bounded shuffle by scanning "
+            "the prefix; fast-seek seeks file shards to the approximate corpus byte offset."
+        },
+    )
     streaming_resume_global_step: int = field(default=0)
     streaming_resume_cursor_source: str = field(default="fresh")
     streaming_shard_manifest: Optional[str] = field(
@@ -178,6 +185,8 @@ class DataTrainingArguments:
             raise ValueError("--streaming_shuffle_buffer must be >= 0.")
         if self.streaming_resume_skip_samples is not None and self.streaming_resume_skip_samples < 0:
             raise ValueError("--streaming_resume_skip_samples must be >= 0.")
+        if self.streaming_resume_mode not in {"exact-replay", "fast-seek"}:
+            raise ValueError("--streaming_resume_mode must be exact-replay or fast-seek.")
         if self.streaming_resume_global_step < 0:
             raise ValueError("--streaming_resume_global_step must be >= 0.")
         if self.dataset_name is None and self.train_file is None and self.validation_file is None:
@@ -251,6 +260,7 @@ class StreamingStateCallback(TrainerCallback):
         self.resume_global_step = data_args.streaming_resume_global_step
         self.resume_sample_cursor = int(data_args.streaming_resume_skip_samples or 0)
         self.resume_cursor_source = data_args.streaming_resume_cursor_source
+        self.resume_mode = data_args.streaming_resume_mode
         self.streaming_reader = data_args.streaming_reader
         self.shuffle_buffer = data_args.streaming_shuffle_buffer
         self.shuffle_seed = data_args.streaming_shuffle_seed
@@ -277,6 +287,7 @@ class StreamingStateCallback(TrainerCallback):
             dataloader_num_workers=args.dataloader_num_workers,
             shard_manifest_path=self.shard_manifest_path,
             resume_cursor_source=self.resume_cursor_source,
+            resume_mode=self.resume_mode,
         )
         path = streaming_state.write_checkpoint_state(directory, checkpoint_state)
         logger.info(
@@ -332,6 +343,8 @@ class _StreamingTokenizedTextDataset(torch.utils.data.IterableDataset):
         shuffle_buffer: int = 0,
         shuffle_seed: int = 42,
         resume_skip_samples: int = 0,
+        resume_start_fraction: float = 0.0,
+        resume_stream_epoch: int = 0,
         repeat: bool = False,
     ) -> None:
         self.files = list(files)
@@ -342,6 +355,8 @@ class _StreamingTokenizedTextDataset(torch.utils.data.IterableDataset):
         self.shuffle_buffer = shuffle_buffer
         self.shuffle_seed = shuffle_seed
         self.resume_skip_samples = resume_skip_samples
+        self.resume_start_fraction = resume_start_fraction
+        self.resume_stream_epoch = resume_stream_epoch
         self.repeat = repeat
 
     def _tokenize(self, line: str) -> dict:
@@ -365,29 +380,42 @@ class _StreamingTokenizedTextDataset(torch.utils.data.IterableDataset):
         skip_remaining = streaming.partition_skip(self.resume_skip_samples, partition_id, num_partitions)
 
         yielded = 0
-        stream_epoch = 0
+        stream_epoch = self.resume_stream_epoch
+        start_fraction = self.resume_start_fraction
         while True:
             raw_lines = streaming.iter_reader_lines(
-                self.reader_name, self.files, rank, world_size, worker_id, num_workers
+                self.reader_name,
+                self.files,
+                rank,
+                world_size,
+                worker_id,
+                num_workers,
+                start_fraction=start_fraction,
             )
             seed = self.shuffle_seed + partition_id + (stream_epoch * num_partitions)
-            emitted = False
+            saw_lines = False
             for line in streaming.iter_bounded_shuffle(raw_lines, self.shuffle_buffer, seed):
+                saw_lines = True
                 if skip_remaining > 0:
                     skip_remaining -= 1
                     continue
                 if cap is not None and yielded >= cap:
                     return
-                emitted = True
                 yielded += 1
                 yield self._tokenize(line)
 
             if skip_remaining > 0 and self.repeat:
                 stream_epoch += 1
                 continue
-            if cap is not None or not self.repeat or not emitted:
+            if cap is not None or not self.repeat:
+                return
+            # A fast-seek pivot can land after the last complete line in a small
+            # partition. Continue from the next full pass instead of exhausting
+            # that worker and starving a DDP rank.
+            if not saw_lines and start_fraction == 0.0:
                 return
             stream_epoch += 1
+            start_fraction = 0.0
 
 
 class LineStrideTokenizedTextDataset(_StreamingTokenizedTextDataset):
@@ -587,10 +615,37 @@ def build_local_text_streaming_datasets(tokenizer, data_args: DataTrainingArgume
         train_files = resolve_text_files(data_args.train_file)
         streaming.validate_reader_partitions(data_args.streaming_reader, len(train_files), world_size)
         logger.info("Using %s train file(s) for local streaming", len(train_files))
-        if data_args.streaming_resume_skip_samples:
+        logical_resume_cursor = int(data_args.streaming_resume_skip_samples or 0)
+        physical_resume_skip = logical_resume_cursor
+        resume_start_fraction = 0.0
+        resume_stream_epoch = 0
+        if logical_resume_cursor and data_args.streaming_resume_mode == "fast-seek":
+            if data_args.streaming_reader != "file-shard":
+                raise ValueError("--streaming_resume_mode fast-seek requires --streaming_reader file-shard.")
+            manifest_path = Path(data_args.streaming_shard_manifest) if data_args.streaming_shard_manifest else None
+            corpus_samples = streaming_state.load_corpus_samples(manifest_path)
+            if not corpus_samples:
+                raise ValueError(
+                    "--streaming_resume_mode fast-seek requires a shard manifest with total_lines."
+                )
+            corpus_offset = logical_resume_cursor % corpus_samples
+            resume_stream_epoch = logical_resume_cursor // corpus_samples
+            resume_start_fraction = corpus_offset / corpus_samples
+            physical_resume_skip = 0
+            logger.warning(
+                "Fast-seek streaming resume: logical_cursor=%s corpus_pass=%s corpus_offset=%s/%s "
+                "start_fraction=%.6f. This avoids prefix replay; variable-length records make the "
+                "physical position approximate.",
+                logical_resume_cursor,
+                resume_stream_epoch,
+                corpus_offset,
+                corpus_samples,
+                resume_start_fraction,
+            )
+        elif logical_resume_cursor:
             logger.info(
                 "Skipping %s global raw training examples for streaming resume",
-                data_args.streaming_resume_skip_samples,
+                logical_resume_cursor,
             )
         train_dataset = dataset_cls(
             files=train_files,
@@ -600,7 +655,9 @@ def build_local_text_streaming_datasets(tokenizer, data_args: DataTrainingArgume
             max_samples=data_args.max_train_samples,
             shuffle_buffer=data_args.streaming_shuffle_buffer,
             shuffle_seed=data_args.streaming_shuffle_seed,
-            resume_skip_samples=int(data_args.streaming_resume_skip_samples or 0),
+            resume_skip_samples=physical_resume_skip,
+            resume_start_fraction=resume_start_fraction,
+            resume_stream_epoch=resume_stream_epoch,
             repeat=data_args.max_train_samples is None,
         )
 

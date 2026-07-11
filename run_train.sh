@@ -49,6 +49,7 @@ STREAMING_READER="${MRNABERT_STREAMING_READER:-line-stride}"
 STREAMING_SHUFFLE_BUFFER="${MRNABERT_STREAMING_SHUFFLE_BUFFER:-0}"
 STREAMING_SHUFFLE_SEED="${MRNABERT_STREAMING_SHUFFLE_SEED:-42}"
 STREAMING_RESUME_SKIP_SAMPLES="${MRNABERT_STREAMING_RESUME_SKIP_SAMPLES:-}"
+STREAMING_RESUME_MODE="exact-replay"
 AUTO_SHARD_MODE="${MRNABERT_AUTO_SHARD:-auto}"
 SHARD_DIR="${MRNABERT_SHARD_DIR:-}"
 SHARD_COUNT="${MRNABERT_SHARD_COUNT:-}"
@@ -118,6 +119,8 @@ Launcher args:
   --streaming-resume-skip-samples <n>
                               Override global raw examples skipped on streaming resume.
                               Default: checkpoint global_step * effective batch.
+  --streaming-resume-mode <mode>
+                              exact-replay or fast-seek. Default: exact-replay.
   --no-streaming              Force Arrow/tokenized cache creation.
   --auto-shard                Split one train file into random shard files before torchrun training.
                               Default: auto for torchrun + streaming + one txt file.
@@ -174,6 +177,7 @@ while [ $# -gt 0 ]; do
     --streaming-shuffle-buffer|--streaming_shuffle_buffer) STREAMING_SHUFFLE_BUFFER="$2"; STREAMING_SHUFFLE_BUFFER_SET=true; shift 2 ;;
     --streaming-shuffle-seed|--streaming_shuffle_seed) STREAMING_SHUFFLE_SEED="$2"; shift 2 ;;
     --streaming-resume-skip-samples|--streaming_resume_skip_samples) STREAMING_RESUME_SKIP_SAMPLES="$2"; STREAMING_RESUME_SKIP_SAMPLES_SET=true; shift 2 ;;
+    --streaming-resume-mode|--streaming_resume_mode) STREAMING_RESUME_MODE="$2"; shift 2 ;;
     --no-streaming|--no_streaming) STREAMING_MODE=false; shift ;;
     --auto-shard|--auto_shard) AUTO_SHARD_MODE=true; shift ;;
     --no-auto-shard|--no_auto_shard) AUTO_SHARD_MODE=false; shift ;;
@@ -209,6 +213,10 @@ if [ "$LAUNCHER" != "direct" ] && [ "$LAUNCHER" != "torchrun" ]; then
 fi
 if [ "$STREAMING_READER" != "line-stride" ] && [ "$STREAMING_READER" != "file-shard" ] && [ "$STREAMING_READER" != "byte-range" ] && [ "$STREAMING_READER" != "hf" ]; then
   echo "Error: --streaming-reader must be line-stride, file-shard, byte-range, or hf."
+  exit 1
+fi
+if [ "$STREAMING_RESUME_MODE" != "exact-replay" ] && [ "$STREAMING_RESUME_MODE" != "fast-seek" ]; then
+  echo "Error: --streaming-resume-mode must be exact-replay or fast-seek."
   exit 1
 fi
 if [ "$AUTO_SHARD_MODE" != "auto" ] && [ "$AUTO_SHARD_MODE" != "true" ] && [ "$AUTO_SHARD_MODE" != "false" ]; then
@@ -475,6 +483,10 @@ fi
 if [ "$STREAMING_MODE" = "true" ] && [ "$STREAMING_READER" = "file-shard" ] && [ "$STREAMING_SHUFFLE_BUFFER_SET" = false ]; then
   STREAMING_SHUFFLE_BUFFER=20000
 fi
+if [ "$STREAMING_RESUME_MODE" = "fast-seek" ] && [ "$STREAMING_READER" != "file-shard" ]; then
+  echo "Error: --streaming-resume-mode fast-seek requires --streaming-reader file-shard."
+  exit 1
+fi
 
 mkdir -p "$WORK_DATA" "$WORK_LOGS" "$OUTPUT_DIR" "$DATASET_CACHE_DIR"
 if [ -n "$HF_CACHE_DIR" ]; then
@@ -620,11 +632,17 @@ echo "epochs: $EPOCHS"
 [ -n "$RESUME" ] && echo "torch_force_no_weights_only_load: ${TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD:-}"
 echo "dtype: $DTYPE"
 echo "preprocessing_workers: $PREPROCESSING_NUM_WORKERS"
-echo "dataloader_workers: $DATALOADER_NUM_WORKERS"
+echo "dataloader_workers_per_rank: $DATALOADER_NUM_WORKERS"
+if [ "$LAUNCHER" = "torchrun" ]; then
+  echo "dataloader_workers_total: $((DATALOADER_NUM_WORKERS * NPROC_PER_NODE))"
+else
+  echo "dataloader_workers_total: $DATALOADER_NUM_WORKERS"
+fi
 echo "streaming: $STREAMING_MODE"
 echo "streaming_reader: $STREAMING_READER"
 echo "streaming_shuffle_buffer: $STREAMING_SHUFFLE_BUFFER"
 echo "streaming_shuffle_seed: $STREAMING_SHUFFLE_SEED"
+[ -n "$RESUME" ] && [ "$STREAMING_MODE" = "true" ] && echo "streaming_resume_mode: $STREAMING_RESUME_MODE"
 echo "auto_shard: $AUTO_SHARD_ENABLED"
 if [ "$AUTO_SHARD_ENABLED" = true ]; then
   echo "shard_dir: $SHARD_DIR"
@@ -667,6 +685,7 @@ TRAIN_CMD=(
   --streaming_reader "$STREAMING_READER"
   --streaming_shuffle_buffer "$STREAMING_SHUFFLE_BUFFER"
   --streaming_shuffle_seed "$STREAMING_SHUFFLE_SEED"
+  --streaming_resume_mode "$STREAMING_RESUME_MODE"
   --save_steps "$SAVE_STEPS"
   --save_total_limit "$SAVE_TOTAL_LIMIT"
   --logging_steps "$LOGGING_STEPS"

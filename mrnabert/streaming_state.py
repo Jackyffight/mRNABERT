@@ -37,6 +37,7 @@ class StreamingCheckpointState:
     corpus_pass: Optional[int]
     corpus_offset: Optional[int]
     created_at_utc: str
+    resume_mode: str = "exact-replay"
 
 
 @dataclass(frozen=True)
@@ -111,6 +112,7 @@ def build_checkpoint_state(
     dataloader_num_workers: int = 0,
     shard_manifest_path: Optional[str] = None,
     resume_cursor_source: str = "fresh",
+    resume_mode: str = "exact-replay",
 ) -> StreamingCheckpointState:
     manifest = Path(shard_manifest_path).resolve() if shard_manifest_path else None
     manifest_hash = shard_manifest_sha256(manifest) if manifest is not None and manifest.exists() else None
@@ -143,6 +145,7 @@ def build_checkpoint_state(
         corpus_pass=corpus_pass,
         corpus_offset=corpus_offset,
         created_at_utc=datetime.now(timezone.utc).isoformat(),
+        resume_mode=resume_mode,
     )
 
 

@@ -6,22 +6,34 @@
 #   scripts/continue_train_nas.sh 150000
 #   scripts/continue_train_nas.sh 200000 150000
 #   scripts/continue_train_nas.sh 350000 300000 6240000
+#   scripts/continue_train_nas.sh 700000 600000 fast-seek
+#   scripts/continue_train_nas.sh 700000 600000 exact-replay
 #
 # Arguments:
 #   1. target global step, default 150000
 #   2. resume checkpoint step, default 100000
-#   3. optional streaming resume raw-example cursor override
+#   3. optional streaming resume raw-example cursor override, or resume mode
+#   4. optional resume mode: fast-seek (default) or exact-replay
 
 set -euo pipefail
 
-if [ $# -gt 3 ]; then
-  echo "Usage: $0 [target_step] [resume_step] [streaming_resume_skip_samples]" >&2
+if [ $# -gt 4 ]; then
+  echo "Usage: $0 [target_step] [resume_step] [streaming_resume_skip_samples|resume_mode] [resume_mode]" >&2
   exit 1
 fi
 
 TARGET_STEP="${1:-150000}"
 RESUME_STEP="${2:-100000}"
 STREAMING_RESUME_SKIP_SAMPLES="${3:-}"
+STREAMING_RESUME_MODE="${4:-fast-seek}"
+if [ "$STREAMING_RESUME_SKIP_SAMPLES" = "fast-seek" ] || [ "$STREAMING_RESUME_SKIP_SAMPLES" = "exact-replay" ]; then
+  STREAMING_RESUME_MODE="$STREAMING_RESUME_SKIP_SAMPLES"
+  STREAMING_RESUME_SKIP_SAMPLES=""
+fi
+if [ "$STREAMING_RESUME_MODE" != "fast-seek" ] && [ "$STREAMING_RESUME_MODE" != "exact-replay" ]; then
+  echo "Resume mode must be fast-seek or exact-replay, got: $STREAMING_RESUME_MODE" >&2
+  exit 1
+fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -63,6 +75,7 @@ fi
   --save-total-limit 5 \
   --lr 3e-5 \
   --dataloader-workers 4 \
+  --streaming-resume-mode "$STREAMING_RESUME_MODE" \
   --run-name "$RUN_NAME" \
   --resume "$RESUME_CHECKPOINT" \
   "${EXTRA_ARGS[@]}"

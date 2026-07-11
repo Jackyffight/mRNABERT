@@ -81,6 +81,30 @@ class ShardCoverageTest(unittest.TestCase):
                 got = _collect_all_partitions(reader, paths, 4, 3)
                 self.assertEqual(len(got), len(expected), msg=f"reader={reader} produced duplicates")
 
+    def test_file_shard_fast_seek_starts_near_cursor_without_prefix_replay(self):
+        # Fixed-width rows make the byte fraction an exact line boundary. Across
+        # all workers, fast seek must cover the tail once without reading the
+        # prefix that the checkpoint cursor has already consumed.
+        lines = [f"row{i:04d}" for i in range(40)]
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_files(tmp, {"shard.txt": lines})
+            got = []
+            for worker in range(4):
+                got.extend(
+                    streaming.iter_reader_lines(
+                        "file-shard",
+                        paths,
+                        rank=0,
+                        world_size=1,
+                        worker_id=worker,
+                        num_workers=4,
+                        start_fraction=0.5,
+                    )
+                )
+
+        self.assertEqual(sorted(got), sorted(lines[20:]))
+        self.assertFalse(set(got) & set(lines[:20]))
+
 
 class PartitionMathTest(unittest.TestCase):
     def test_partition_id_and_count(self):
