@@ -36,31 +36,31 @@ description of the system.
 
 ## Immediate next step (post-600k pretraining run)
 
-The scratch run has now reached global step 600000 on 3×A100. The existing proxy
-validation curve improved through checkpoint 480000 (`eval_loss=2.3140`), but that
-validation file was split from the same corpus after training had already begun, so
-it cannot establish clean generalization. Pause blind continuation at 600k and make
-the model comparable in this order:
+The scratch run reached global step 600000 on 3×A100 and now has persistent streaming
+lineage. On the leaked MLM proxy, the public checkpoint wins clearly (`2.0461` vs
+`2.2949`). On the exact-de-duplicated mRFP task, the internal checkpoint produces
+stable transferable signal across three seeds (Spearman `0.837 +/- 0.019`, Pearson
+`0.888 +/- 0.014`, R2 `0.769 +/- 0.020`), while the public model is highly
+seed-sensitive and random initialization collapses. See the
+[full baseline report](docs/reports/baseline-experiment-20260711.md). Freeze 600k and
+proceed in this order:
 
-1. **Bootstrap checkpoint-level streaming lineage.** Add `streaming_state.json` to
-   the legacy 600k checkpoint, then require every future checkpoint to persist its
-   logical raw-example cursor, corpus pass/offset, and shard-manifest identity.
-2. **Run the pinned public-model comparison.** Compare checkpoint 600k with
-   `YYLY66/mRNABERT` revision `a1eb7df...` on the same MLM proxy set. Treat this only
-   as a diagnostic: the public model was trained on a cleaned subset of the same
-   public corpus and its model card also describes amino-acid contrastive learning,
-   while our scratch run is standard MLM.
-3. **Run a task-level comparison.** Fine-tune the internal encoder, pinned public
-   encoder, and a same-architecture random initialization on a de-leaked mRFP split
-   over at least three seeds, then report Spearman/Pearson/R2/MSE. Add CAI, GC, and
-   codon-frequency baselines before claiming useful codon-design signal.
+1. **Resolve fine-tuning stability.** Give internal and public encoders the same
+   learning-rate search budget and run a frozen-encoder linear probe. The public
+   model's best seed matched the internal model, so average performance under one
+   recipe is not enough to claim intrinsic superiority.
+2. **Establish the honest feature floor.** Add GC, CAI, 64-codon-frequency, and
+   k-mer regression baselines. The Transformer must beat these before we claim
+   useful learned codon-design signal.
+3. **Audit pretraining leakage and cross-protein transfer.** Search mRFP CDS/protein
+   identities against the 36M corpus and add a second-protein or multi-protein task.
 4. **Build a genuinely clean holdout.** Expand the annotation-first 2026 RefSeq
    corpus, exact- and near-deduplicate it against the 36M training source, and keep a
    date/species-stratified external set. Re-evaluate retained internal checkpoints
    and the public model there.
-5. **Then decide continue vs pivot.** Continue pretraining only if clean MLM and/or
-   downstream results still improve with checkpoint age. Otherwise freeze the best
-   encoder and move to Phase 1 (candidate generation + rule baseline).
+5. **Move toward product evidence.** Use checkpoint 600k as the current encoder in
+   Phase 1 candidate-ranking experiments, but reserve product claims for cross-
+   protein and wet-lab-linked results.
 
 Data hygiene to fold in before trusting eval numbers: a **near-duplicate pass** over
 the multi-species corpus (orthologs/paralogs inflate apparent learning), and always
@@ -85,16 +85,14 @@ advantages before then.
 
 ## Phases
 
-### Phase 0 — mRNA encoder — DONE
+### Phase 0 — mRNA encoder — IMPLEMENTED; VALIDATION OPEN
 
-First full-corpus run complete (100k steps); tooling for the next step is in place:
-the hash-based validation split (`data_process/make_validation_split.py`), effective-
-LR-at-start logging, and the dataloader-throughput fix. Remaining polish, not
-blockers: validation loss dashboards over the checkpoint series; a cached
-(non-streaming) tokenized dataset path for small corpora; checkpoint-lineage tags;
-a corpus near-duplicate pass.
+The scratch run reached 600k steps; checkpoint-level streaming cursor and shard/
+reader topology are now persisted and validated. The internal encoder has a strong
+three-seed mRFP result, but cross-protein and pretraining-leakage checks remain Phase
+0 exit evidence rather than optional polish.
 
-Current training stance after the 150k run and throughput sweep:
+Current training stance after the 600k run and baseline comparison:
 
 - Keep the formal baseline at `max_seq_length=1024`; do not switch production
   pretraining to 512 merely for speed. A 512 run is useful only as a diagnostic
@@ -106,6 +104,8 @@ Current training stance after the 150k run and throughput sweep:
 - Track ModernBERT-style encoder upgrades and long-sequence Transformer variants as
   architecture iteration candidates, but keep them behind the current 1024-BERT MLM
   baseline until they beat it on the same validation set.
+- Do not continue blind pretraining from 600k. First complete the mRFP optimization
+  sweep, frozen linear probe, feature baselines, and cross-protein/leakage checks.
 
 ### Phase 1 — Tool pipeline and schemas
 
