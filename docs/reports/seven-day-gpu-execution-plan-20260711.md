@@ -37,11 +37,14 @@ fusion-task outcomes.
 
 ### ProteinMPNN
 
-- The official `v_48_020` checkpoint is available as the unchanged baseline.
-- The current evaluator has only a 16-structure CPU pilot result, not a complete GPU
-  baseline.
+- The official `v_48_020` checkpoint is available as the unchanged baseline. Its
+  local file is 6,681,301 bytes with SHA-256
+  `c9cb4a671d79604111231f8dbfc7c590e06f1197453b7a6854ac6661a642f5bd`.
 - The post-2021 ProteinMPNN v1 dataset contains 46,619 records and passed semantic
   validation with zero exact-sequence and zero PDB split leaks.
+- Its train/validation/test record counts are 45,732/426/461.
+- The expanded upstream `pdb_2021aug02` small-file dataset is retained only as a
+  local legacy source. It is not used by this sprint or copied to remote storage.
 - The training launcher is single-GPU. Multi-GPU DDP is not a prerequisite because
   independent configurations and seeds can run one per V100.
 - The current implementation changes must be reviewed, tested with full
@@ -114,8 +117,9 @@ Engineering and data tasks:
 
 GPU tasks:
 
-1. Evaluate official ProteinMPNN weights on complete 2021 validation/test and 2026
-   validation/test splits.
+1. Evaluate official ProteinMPNN weights on the complete 2026 validation and test
+   splits. The fixed official model may be evaluated once on test as the baseline;
+   continued checkpoints are selected on validation before one final test run.
 2. Benchmark ProteinMPNN token budgets and loader settings separately on A100 and
    V100.
 3. Benchmark the structure predictor on representative fusion lengths and record
@@ -150,17 +154,16 @@ Run short single-seed ProteinMPNN pilots first:
 
 | ID | Initialization | Training data | Purpose |
 |---|---|---|---|
-| P0 | Official checkpoint, no training | None | Fixed published baseline |
-| P1 | Official checkpoint | Post-2021 v1 only | Measure new-data gain and forgetting risk |
-| P2 | Official checkpoint | New data plus 25% upstream replay | Primary anti-forgetting candidate |
-| P3 | Official checkpoint | New data plus 50% upstream replay | Replay-ratio control |
+| P0 | Official checkpoint, no training | None | Fixed baseline on 2026 held-out data |
+| P1 | Official checkpoint | 2026 v1 train | Primary continuation pilot |
+| P2 | Official checkpoint | 2026 v1 train | Independent seeds for the selected P1 recipe |
+| S0 | Random initialization | 2026 v1 train | Optional pretraining-value control |
 
-A multi-source sampler or an equivalent reproducible mixed index is required before
-P2/P3. Do not approximate replay manually between epochs.
-
-Select one or two continuation configurations using 2021 and 2026 held-out metrics,
-then run three seeds. A from-scratch reproduction may use spare V100 capacity, but
-does not displace continuation or structure-label jobs.
+Select the P1 checkpoint and stopping point using only 2026 validation metrics, then
+run three seeds and evaluate the retained model once on test. A from-scratch control
+may use spare V100 capacity, but does not displace continuation or structure-label
+jobs. The sprint does not copy or expand the upstream 2021 dataset remotely and does
+not claim that old-distribution forgetting has been measured.
 
 At the same time, run the first large, diverse fold/refold wave on all A100 workers.
 The candidate count is determined from measured throughput:
@@ -169,9 +172,9 @@ The candidate count is determined from measured throughput:
 daily candidate capacity = A100 workers * 86400 / mean seconds per candidate
 ```
 
-Gate 3: a continued ProteinMPNN model advances only if it improves 2026 held-out
-performance without material regression on the 2021 baseline and improves or
-preserves fusion-task refold outcomes. Validation NLL alone is not sufficient.
+Gate 3: a continued ProteinMPNN model advances only if it improves 2026 validation
+performance over the fixed official model and improves or preserves fusion-task
+refold outcomes. Validation NLL alone is not sufficient.
 
 ### Day 4-6: Surrogate Ranking and Active Selection
 
@@ -235,6 +238,9 @@ labels.
 The sprint must not repeat the earlier checkpoint quota failure.
 
 - Use NAS/local high-throughput storage for live reads and writes.
+- Never copy or train from the expanded million-small-file `pdb_2021aug02` layout on
+  remote storage. Remote datasets must use validated tar shards or another bounded-
+  file-count random-access format.
 - Preflight free space and quota before every scale-up gate.
 - Write candidate outputs in atomic, restartable shards of approximately 500-1000
   candidates with manifests and checksums.
@@ -249,7 +255,7 @@ The sprint must not repeat the earlier checkpoint quota failure.
 The seven-day window is successful when it leaves:
 
 1. a pinned ProteinMPNN code revision and validated v1 dataset identity;
-2. complete official ProteinMPNN baseline results on old and new held-out data;
+2. complete official ProteinMPNN baseline results on 2026 validation/test data;
 3. at least one three-seed continued-training comparison, if the pilots pass;
 4. a resumable multi-GPU fold/refold queue with measured cost per candidate;
 5. a versioned fusion candidate dataset with constraints, structures, labels, and
@@ -261,6 +267,8 @@ The seven-day window is successful when it leaves:
 ## Explicit Non-Goals
 
 - Do not blindly add another large mRNABERT continuation run.
+- Do not sync the expanded upstream ProteinMPNN small-file dataset to remote storage.
+- Do not build an upstream replay dataset during this seven-day sprint.
 - Do not train ESMFold2 from scratch.
 - Do not prioritize ProteinMPNN DDP over independent V100 experiments.
 - Do not launch generic fusion generation without target constraints.

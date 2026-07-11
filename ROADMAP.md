@@ -39,11 +39,11 @@ description of the system.
 The current short-term execution priority is the approximately seven-day free-GPU
 window documented in the
 [fusion-protein GPU execution plan](docs/reports/seven-day-gpu-execution-plan-20260711.md).
-The sprint prioritizes reusable fold/refold labels, ProteinMPNN old/new-data
-comparisons, a constrained fusion-candidate loop, and a fast surrogate ranker. It
-does not justify blind mRNABERT continuation. The scientific Phase 0 validation work
-below remains required, but short mRNA evaluations should not displace the more
-expensive structure-label opportunity during this window.
+The sprint prioritizes reusable fold/refold labels, an official-vs-2026-continuation
+ProteinMPNN comparison, a constrained fusion-candidate loop, and a fast surrogate
+ranker. It does not justify blind mRNABERT continuation. The scientific Phase 0
+validation work below remains required, but short mRNA evaluations should not
+displace the more expensive structure-label opportunity during this window.
 
 ## Immediate next step (post-600k pretraining run)
 
