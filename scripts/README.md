@@ -58,7 +58,10 @@ encoders the same missing full-fine-tuning LR trials (`2e-5`, `5e-5`; the origin
 `1e-4` results are retained). `run_mrfp_frozen_probe_nas.sh` freezes embeddings and
 Transformer blocks while training the newly initialized pooler and regression head
 at `1e-4`, `3e-4`, and `1e-3`. Result names encode mode and LR, and the summarizer
-labels legacy results as `full-lr1e-4`.
+labels legacy results as `full-lr1e-4`. The summary prints each run's best dev
+Spearman separately from test metrics. Select recipes using dev results; the test
+values from the completed LR sweep have already been inspected and are exploratory,
+not an untouched confirmatory comparison.
 
 Throughput checks:
 

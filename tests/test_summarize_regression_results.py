@@ -58,6 +58,23 @@ class SummarizeRegressionResultsTest(unittest.TestCase):
 
         self.assertEqual(rows[0]["model"], "internal-checkpoint-600000-full-lr1e-4")
 
+    def test_reads_best_dev_metric_from_latest_checkpoint_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            run = "internal-seed42"
+            self._write(root, run, 0.8)
+            for step, best_metric in ((20, 0.5), (40, 0.7)):
+                path = root / run / f"checkpoint-{step}" / "trainer_state.json"
+                path.parent.mkdir(parents=True)
+                path.write_text(
+                    json.dumps({"global_step": step, "best_metric": best_metric}),
+                    encoding="utf-8",
+                )
+
+            rows = load_results(root)
+
+        self.assertEqual(rows[0]["dev_best_spearman"], 0.7)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -131,21 +131,31 @@ family.
 
 ### mRFP synonymous-codon expression prediction
 
-The table reports held-out test metrics after exact cross-split de-duplication under
-one fixed full-fine-tuning recipe. Values are mean +/- sample standard deviation over
-seeds 13, 42, and 73.
+The table reports held-out test metrics after exact cross-split de-duplication and an
+equal learning-rate grid. Values are mean +/- sample standard deviation over seeds
+13, 42, and 73.
 
-| Model | Spearman | Pearson | R2 | MSE |
-|---|---:|---:|---:|---:|
-| Internal checkpoint 600000 | **0.837 +/- 0.019** | **0.888 +/- 0.014** | **0.769 +/- 0.020** | **0.128 +/- 0.011** |
-| Public `YYLY66/mRNABERT` | 0.524 +/- 0.365 | 0.439 +/- 0.428 | 0.263 +/- 0.454 | 0.410 +/- 0.253 |
-| Same-architecture random initialization | NaN | NaN | -12.850 +/- 3.079 | 7.705 +/- 1.713 |
+| Model | LR | Spearman | Pearson | R2 | MSE |
+|---|---:|---:|---:|---:|---:|
+| Internal checkpoint 600000 | `2e-5` | 0.8645 +/- 0.0050 | 0.8971 +/- 0.0151 | 0.7559 +/- 0.0513 | 0.1358 +/- 0.0285 |
+| Internal checkpoint 600000 | `5e-5` | 0.8648 +/- 0.0073 | 0.8973 +/- 0.0041 | 0.7605 +/- 0.0142 | 0.1332 +/- 0.0079 |
+| Internal checkpoint 600000 | `1e-4` | 0.8372 +/- 0.0195 | 0.8882 +/- 0.0140 | 0.7690 +/- 0.0204 | 0.1285 +/- 0.0114 |
+| Public `YYLY66/mRNABERT` | `2e-5` | 0.8703 +/- 0.0122 | 0.9022 +/- 0.0150 | 0.8054 +/- 0.0279 | 0.1082 +/- 0.0155 |
+| Public `YYLY66/mRNABERT` | `5e-5` | 0.8652 +/- 0.0066 | 0.8991 +/- 0.0106 | 0.7911 +/- 0.0258 | 0.1162 +/- 0.0144 |
+| Public `YYLY66/mRNABERT` | `1e-4` | 0.5238 +/- 0.3647 | 0.4389 +/- 0.4281 | 0.2634 +/- 0.4540 | 0.4098 +/- 0.2526 |
+| Same-architecture random initialization | `1e-4` | NaN | NaN | -12.8498 +/- 3.0793 | 7.7046 +/- 1.7130 |
 
-Internal per-seed Spearman was 0.824, 0.860, and 0.827. The public model was highly
-seed-sensitive at 0.129, 0.593, and 0.849. Its best run matched the internal range
-and slightly improved some absolute-error metrics, so this experiment does not show
-that the public representation has a lower capability ceiling. It shows that the
-internal checkpoint is materially more stable under this fixed optimization recipe.
+The equal-budget sweep changes the initial interpretation. At `2e-5` and `5e-5`,
+the public model is stable and matches or slightly exceeds the internal model. The
+best observed rank-correlation means differ by only 0.0055, which is not evidence of
+a meaningful ranking advantage with three seeds. The public model has the stronger
+calibrated regression result (R2 0.805 and MSE 0.108 at `2e-5`). The internal model
+is less sensitive to learning rate, while the public checkpoint is damaged by the
+`1e-4` full-fine-tuning setting.
+
+This LR sweep is exploratory because test metrics were inspected at every setting.
+The summarizer now reports each run's best dev Spearman; any formal model/LR choice
+must be made from dev results before treating test metrics as confirmatory.
 
 The random model produced near-constant predictions, making rank correlations
 undefined and strongly negative R2. Under this training budget, the supervised head
@@ -159,8 +169,9 @@ sequence representations.
    86.5M-parameter encoder learning the small downstream set.
 2. Proxy MLM loss and downstream utility rank the models differently. We must not
    optimize or select the product encoder using MLM loss alone.
-3. Public-model instability requires an equal-budget learning-rate sweep and a
-   frozen-encoder linear probe before claiming intrinsic representation superiority.
+3. The equal-budget LR sweep does not support intrinsic superiority for the internal
+   representation. A frozen-encoder probe is still needed to isolate representation
+   quality from full-fine-tuning behavior.
 4. mRFP is a single-protein synonymous library. It directly tests codon-expression
    relationships within one protein, not transfer across target proteins.
 5. Exact train/dev/test duplicates were removed, but pretraining-to-downstream and
@@ -173,37 +184,36 @@ The following wording is supported for a business plan or technical presentation
 > We trained an 86.5M-parameter codon-aware Transformer from random initialization
 > using a corpus containing approximately 36.25 million mRNA records, creating
 > internally owned model weights and a reproducible training asset. On the public
-> mRFP synonymous-
-> codon expression benchmark, after exact split de-duplication, the model achieved
-> test Spearman 0.837 +/- 0.019, Pearson 0.888 +/- 0.014, and R2 0.769 +/- 0.020 over
-> three random seeds. Under the same fixed fine-tuning protocol, it showed a higher
-> average score and substantially better stability than the pinned public mRNABERT
-> baseline, while a same-architecture random initialization failed to learn a useful
-> ranking signal. These results are initial evidence that the pretrained weights
-> capture transferable codon-expression relationships. Cross-protein, temporal
-> external-set, and wet-lab validation are in progress.
+> mRFP synonymous-codon expression benchmark, after exact split de-duplication, the
+> model reached test Spearman 0.865 +/- 0.007 over three seeds at its best observed
+> lower-LR setting. Under an equal learning-rate search budget, its ranking result was
+> competitive with the pinned public mRNABERT baseline (0.870 +/- 0.012), while a
+> same-architecture random initialization failed to learn a useful ranking signal.
+> These exploratory results are initial evidence that the internally trained weights
+> capture transferable codon-expression relationships at a level comparable to the
+> public checkpoint on this task. Cross-protein, temporal external-set, and wet-lab
+> validation are in progress.
 
 Required footnote:
 
 ```text
 Public single-protein mRFP synonymous-codon dataset; cleaned split sizes
-train/dev/test = 1018/219/219; full fine-tuning with seeds 13/42/73; no wet-lab or
-cross-protein validation yet; pretraining-to-downstream near-duplicate leakage has
-not yet been excluded.
+train/dev/test = 1018/219/219; full fine-tuning with seeds 13/42/73 and an exploratory
+LR grid; test metrics were inspected across LR settings; no wet-lab or cross-protein
+validation yet; pretraining-to-downstream near-duplicate leakage has not been
+excluded.
 ```
 
 Do not claim that this experiment demonstrates an original Transformer architecture,
 general superiority over the public model, improved wet-lab expression, cross-target
 generalization, or a proprietary-data moat. The architecture is BERT-derived, the
-pretraining corpus and benchmark are primarily public, and the public baseline's best
-seed matched the internal model.
+pretraining corpus and benchmark are primarily public, and the tuned public baseline
+matches the internal model on rank correlation while retaining better R2/MSE.
 
 ## Decision and next experiments
 
 - Freeze checkpoint 600000 as the current internal candidate; do not add blind
   pretraining steps based only on the leaked proxy curve.
-- Give the internal and public models an equal learning-rate search budget at
-  `2e-5`, `5e-5`, and `1e-4`, then repeat multiple seeds.
 - Run a frozen-encoder linear probe to separate representation quality from
   full-fine-tuning optimization stability.
 - Add GC, CAI, 64-codon-frequency, and simple k-mer regression baselines. A learned

@@ -16,6 +16,7 @@ METRICS = (
     "eval_r2_score",
     "eval_mse_loss",
 )
+SUMMARY_METRICS = ("dev_best_spearman",) + METRICS
 RUN_PATTERN = re.compile(r"^(?P<model>.+)-seed(?P<seed>\d+)$")
 LEGACY_MODEL_PREFIXES = (
     "internal-checkpoint-",
@@ -28,6 +29,20 @@ def normalize_model_name(model: str) -> str:
     if model.startswith(LEGACY_MODEL_PREFIXES) and not re.search(r"-(?:full|frozen)-lr", model):
         return f"{model}-full-lr1e-4"
     return model
+
+
+def load_best_dev_spearman(run_root: Path) -> float:
+    latest_step = -1
+    best_metric = math.nan
+    for path in run_root.glob("checkpoint-*/trainer_state.json"):
+        with path.open("r", encoding="utf-8") as handle:
+            state = json.load(handle)
+        global_step = int(state.get("global_step") or 0)
+        value = state.get("best_metric")
+        if global_step >= latest_step and value is not None:
+            latest_step = global_step
+            best_metric = float(value)
+    return best_metric
 
 
 def load_results(root: Path) -> list[dict]:
@@ -46,6 +61,7 @@ def load_results(root: Path) -> list[dict]:
             {
                 "model": normalize_model_name(match.group("model")),
                 "seed": int(match.group("seed")),
+                "dev_best_spearman": load_best_dev_spearman(root / run_dir),
                 **{metric: float(metrics[metric]) for metric in METRICS},
             }
         )
@@ -60,7 +76,7 @@ def summarize(rows: list[dict]) -> list[dict]:
     summaries = []
     for model, model_rows in sorted(grouped.items()):
         summary = {"model": model, "seeds": len(model_rows)}
-        for metric in METRICS:
+        for metric in SUMMARY_METRICS:
             values = [row[metric] for row in model_rows]
             finite_values = [value for value in values if math.isfinite(value)]
             summary[f"{metric}_valid"] = len(finite_values)
@@ -82,13 +98,14 @@ def _format(value: float) -> str:
 
 def print_report(rows: list[dict], summaries: list[dict]) -> None:
     print("per_seed")
-    print("model\tseed\tspearman\tpearson\tr2\tmse")
+    print("model\tseed\tdev_best_spearman\ttest_spearman\ttest_pearson\ttest_r2\ttest_mse")
     for row in rows:
         print(
             "\t".join(
                 (
                     row["model"],
                     str(row["seed"]),
+                    _format(row["dev_best_spearman"]),
                     _format(row["eval_spearman_corr"]),
                     _format(row["eval_pearson_corr"]),
                     _format(row["eval_r2_score"]),
@@ -100,6 +117,7 @@ def print_report(rows: list[dict], summaries: list[dict]) -> None:
     print("\naggregate")
     print(
         "model\tseeds\t"
+        "dev_spearman_valid\tdev_spearman_mean\tdev_spearman_std\t"
         "spearman_valid\tspearman_mean\tspearman_std\t"
         "pearson_valid\tpearson_mean\tpearson_std\t"
         "r2_valid\tr2_mean\tr2_std\t"
@@ -111,6 +129,9 @@ def print_report(rows: list[dict], summaries: list[dict]) -> None:
                 (
                     row["model"],
                     str(row["seeds"]),
+                    f'{row["dev_best_spearman_valid"]}/{row["seeds"]}',
+                    _format(row["dev_best_spearman_mean"]),
+                    _format(row["dev_best_spearman_std"]),
                     f'{row["eval_spearman_corr_valid"]}/{row["seeds"]}',
                     _format(row["eval_spearman_corr_mean"]),
                     _format(row["eval_spearman_corr_std"]),

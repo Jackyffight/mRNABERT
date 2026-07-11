@@ -38,17 +38,20 @@ description of the system.
 
 The scratch run reached global step 600000 on 3×A100 and now has persistent streaming
 lineage. On the leaked MLM proxy, the public checkpoint wins clearly (`2.0461` vs
-`2.2949`). On the exact-de-duplicated mRFP task, the internal checkpoint produces
-stable transferable signal across three seeds (Spearman `0.837 +/- 0.019`, Pearson
-`0.888 +/- 0.014`, R2 `0.769 +/- 0.020`), while the public model is highly
-seed-sensitive and random initialization collapses. See the
+`2.2949`). On the exact-de-duplicated mRFP task, an equal learning-rate sweep shows
+that the internal and public checkpoints have comparable ranking performance at
+their best lower-LR settings (Spearman `0.865 +/- 0.007` vs `0.870 +/- 0.012`). The
+public checkpoint has better calibrated regression (`R2 0.805`, `MSE 0.108`), while
+the internal checkpoint is less sensitive to the tested learning rate and random
+initialization collapses. The sweep is exploratory because test metrics were
+inspected at every LR. See the
 [full baseline report](docs/reports/baseline-experiment-20260711.md). Freeze 600k and
 proceed in this order:
 
-1. **Resolve fine-tuning stability.** Give internal and public encoders the same
-   learning-rate search budget and run a frozen-encoder linear probe. The public
-   model's best seed matched the internal model, so average performance under one
-   recipe is not enough to claim intrinsic superiority.
+1. **Make model selection confirmatory.** Use dev metrics, not the already inspected
+   test metrics, to choose LR/model; then confirm once on a new untouched split or
+   external set. Run the frozen-encoder linear probe to isolate representation
+   quality from full-fine-tuning optimization behavior.
 2. **Establish the honest feature floor.** Add GC, CAI, 64-codon-frequency, and
    k-mer regression baselines. The Transformer must beat these before we claim
    useful learned codon-design signal.
@@ -88,9 +91,10 @@ advantages before then.
 ### Phase 0 — mRNA encoder — IMPLEMENTED; VALIDATION OPEN
 
 The scratch run reached 600k steps; checkpoint-level streaming cursor and shard/
-reader topology are now persisted and validated. The internal encoder has a strong
-three-seed mRFP result, but cross-protein and pretraining-leakage checks remain Phase
-0 exit evidence rather than optional polish.
+reader topology are now persisted and validated. The internal encoder has a
+competitive three-seed mRFP result, but the tuned public checkpoint is at least as
+strong on this single-protein task. Cross-protein, pretraining-leakage, and clean
+model-selection checks remain Phase 0 exit evidence rather than optional polish.
 
 Current training stance after the 600k run and baseline comparison:
 
@@ -104,8 +108,9 @@ Current training stance after the 600k run and baseline comparison:
 - Track ModernBERT-style encoder upgrades and long-sequence Transformer variants as
   architecture iteration candidates, but keep them behind the current 1024-BERT MLM
   baseline until they beat it on the same validation set.
-- Do not continue blind pretraining from 600k. First complete the mRFP optimization
-  sweep, frozen linear probe, feature baselines, and cross-protein/leakage checks.
+- Do not continue blind pretraining from 600k. First use dev-selected recipes, run
+  the frozen linear probe, add feature baselines, and complete cross-protein/leakage
+  checks.
 
 ### Phase 1 — Tool pipeline and schemas
 
