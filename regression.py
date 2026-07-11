@@ -24,6 +24,14 @@ from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
 @dataclass
 class ModelArguments:
     model_name_or_path: Optional[str] = field(default='YYLY66/mRNABERT')
+    init_mode: str = field(
+        default="pretrained",
+        metadata={"help": "Initialize the encoder from pretrained weights or from scratch."},
+    )
+    remote_safe_attention: bool = field(
+        default=True,
+        metadata={"help": "Bypass the public checkpoint's legacy Triton attention when dropout is zero."},
+    )
     use_lora: bool = field(default=False, metadata={"help": "whether to use LoRA"})
     lora_r: int = field(default=32, metadata={"help": "hidden dimension for LoRA"})
     lora_alpha: int = field(default=64, metadata={"help": "alpha for LoRA"})
@@ -152,13 +160,33 @@ def train():
     """Train the model."""
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    if model_args.init_mode not in {"pretrained", "scratch"}:
+        raise ValueError("--init_mode must be pretrained or scratch")
+    transformers.set_seed(training_args.seed)
     config = BertConfig.from_pretrained(model_args.model_name_or_path, num_labels=1,)
-    model = transformers.AutoModelForSequenceClassification.from_pretrained(
-        model_args.model_name_or_path,
-        cache_dir=training_args.cache_dir,
-        trust_remote_code=True,
-        config=config
-    )
+    auto_map = getattr(config, "auto_map", None) or {}
+    if (
+        model_args.remote_safe_attention
+        and auto_map
+        and getattr(config, "attention_probs_dropout_prob", None) == 0
+    ):
+        logging.warning(
+            "Using remote-safe attention for the public checkpoint: "
+            "attention_probs_dropout_prob=1e-12"
+        )
+        config.attention_probs_dropout_prob = 1e-12
+    if model_args.init_mode == "scratch":
+        model = transformers.AutoModelForSequenceClassification.from_config(
+            config,
+            trust_remote_code=True,
+        )
+    else:
+        model = transformers.AutoModelForSequenceClassification.from_pretrained(
+            model_args.model_name_or_path,
+            cache_dir=training_args.cache_dir,
+            trust_remote_code=True,
+            config=config
+        )
 
     if model_args.use_lora:
         lora_config = LoraConfig(

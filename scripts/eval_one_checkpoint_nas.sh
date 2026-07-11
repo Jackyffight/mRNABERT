@@ -4,22 +4,28 @@
 # Usage:
 #   scripts/eval_one_checkpoint_nas.sh 100000
 #   scripts/eval_one_checkpoint_nas.sh 100000 2000
+#   scripts/eval_one_checkpoint_nas.sh 600000 100000 42
 
 set -euo pipefail
 
-if [ $# -gt 2 ]; then
-  echo "Usage: $0 [checkpoint_step] [max_eval_samples]" >&2
+if [ $# -gt 3 ]; then
+  echo "Usage: $0 [checkpoint_step] [max_eval_samples] [seed]" >&2
   exit 1
 fi
 
 STEP="${1:-100000}"
 MAX_EVAL_SAMPLES="${2:-100000}"
+SEED="${3:-42}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 CHECKPOINT="/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_runs/mrnabert-full-devbox-20260707024008/output/checkpoint-$STEP"
 VALIDATION_FILE="/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_data/eval/valid_100k.txt"
-OUTPUT_DIR="/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_runs/mrnabert-full-devbox-20260707024008/eval/checkpoint-$STEP-valid${MAX_EVAL_SAMPLES}"
+SEED_SUFFIX=""
+if [ "$SEED" != "42" ]; then
+  SEED_SUFFIX="-seed${SEED}"
+fi
+OUTPUT_DIR="/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_runs/mrnabert-full-devbox-20260707024008/eval/checkpoint-$STEP-valid${MAX_EVAL_SAMPLES}${SEED_SUFFIX}"
 DATASET_CACHE_DIR="/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_runs/cache/datasets"
 
 if [ ! -d "$CHECKPOINT" ]; then
@@ -53,6 +59,7 @@ python main.py pretrain \
   --per_device_eval_batch_size 32 \
   --dataloader_num_workers 0 \
   --mlm_probability 0.15 \
+  --seed "$SEED" \
   --bf16 \
   --tf32 true \
   --prediction_loss_only true \

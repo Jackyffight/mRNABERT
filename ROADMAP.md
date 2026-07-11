@@ -4,7 +4,7 @@ This is the authoritative plan. The design essays under `docs/reports/` are the
 thinking behind it; where they and this file disagree, **this file wins**, and
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) is the canonical target architecture.
 
-Last updated: 2026-07-08.
+Last updated: 2026-07-11.
 
 ## Thesis
 
@@ -34,35 +34,33 @@ wrappers, no mRNA candidate generator, no reward model, no reasoner, and none of
 data tables materialized. Treat the phases below as a plan to execute, not a
 description of the system.
 
-## Immediate next step (post-100k pretraining run)
+## Immediate next step (post-600k pretraining run)
 
-The first full-corpus scratch run reached global step 100000 (~26.5% of one pass over
-36.2M records) on 3×A100 with the file-shard streaming path
-([run record](docs/reports/mrnabert-pretraining-run-20260707.md)). It is an
-infrastructure milestone, not a converged model. The correct next step is **not**
-another blind long run — it is to make model quality measurable, in this order:
+The scratch run has now reached global step 600000 on 3×A100. The existing proxy
+validation curve improved through checkpoint 480000 (`eval_loss=2.3140`), but that
+validation file was split from the same corpus after training had already begun, so
+it cannot establish clean generalization. Pause blind continuation at 600k and make
+the model comparable in this order:
 
-1. **Re-measure throughput (fixed, verify the win).** That run trained with
-   `dataloader_num_workers=0` and hit ~8% A100 MFU — it was CPU-tokenization bound,
-   not compute bound. The launcher no longer forces workers to 0 (defaults to 4), so
-   a short re-measure should show materially higher throughput. Getting throughput up
-   matters more than any LR tweak, because at 26.5% of an epoch the model is data-
-   starved, not schedule-limited: **finishing an epoch beats lowering the LR.**
-2. **Build a fixed, leakage-free validation set.** Use
-   `data_process/make_validation_split.py` to hash-split off 50k–200k records; for a
-   clean holdout, *train from the emitted `--train-out` complement*, not the original
-   `pre.txt`. (Evaluating the existing checkpoint against this split is only a proxy —
-   it was trained on the full corpus, so a fraction of val was already seen.)
-3. **Evaluate retained checkpoints on that fixed file** (`--do_eval` without
-   `--do_train`, `--init_mode pretrained --model_name_or_path <checkpoint>`), report
-   MLM eval loss + perplexity, and select the next base checkpoint by **validation
-   loss, not train loss**. (The run's aggregate `train_loss` and
-   `train_samples_per_second` are both resume-distorted; ignore them. Confirm the
-   actual resumed LR from the new `LR/schedule at train start` log line rather than
-   assuming the configured `--learning_rate` held.)
-4. **Then decide continue vs pivot.** If validation still improves, continue from the
-   best checkpoint at a low LR toward one full epoch; if it plateaus, stop pretraining
-   and move to Phase 1 (candidate generation + rule baseline).
+1. **Bootstrap checkpoint-level streaming lineage.** Add `streaming_state.json` to
+   the legacy 600k checkpoint, then require every future checkpoint to persist its
+   logical raw-example cursor, corpus pass/offset, and shard-manifest identity.
+2. **Run the pinned public-model comparison.** Compare checkpoint 600k with
+   `YYLY66/mRNABERT` revision `a1eb7df...` on the same MLM proxy set. Treat this only
+   as a diagnostic: the public model was trained on a cleaned subset of the same
+   public corpus and its model card also describes amino-acid contrastive learning,
+   while our scratch run is standard MLM.
+3. **Run a task-level comparison.** Fine-tune the internal encoder, pinned public
+   encoder, and a same-architecture random initialization on a de-leaked mRFP split
+   over at least three seeds, then report Spearman/Pearson/R2/MSE. Add CAI, GC, and
+   codon-frequency baselines before claiming useful codon-design signal.
+4. **Build a genuinely clean holdout.** Expand the annotation-first 2026 RefSeq
+   corpus, exact- and near-deduplicate it against the 36M training source, and keep a
+   date/species-stratified external set. Re-evaluate retained internal checkpoints
+   and the public model there.
+5. **Then decide continue vs pivot.** Continue pretraining only if clean MLM and/or
+   downstream results still improve with checkpoint age. Otherwise freeze the best
+   encoder and move to Phase 1 (candidate generation + rule baseline).
 
 Data hygiene to fold in before trusting eval numbers: a **near-duplicate pass** over
 the multi-species corpus (orthologs/paralogs inflate apparent learning), and always

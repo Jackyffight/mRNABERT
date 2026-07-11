@@ -44,6 +44,7 @@ except ImportError:  # pragma: no cover - depends on installed transformers vers
             return False
 
 from . import streaming
+from . import streaming_state
 from .modeling import ModelRuntimeConfig, load_mlm_model_and_tokenizer
 
 
@@ -154,12 +155,18 @@ class DataTrainingArguments:
         default=42,
         metadata={"help": "Base seed for local streaming shuffle buffers."},
     )
-    streaming_resume_skip_samples: int = field(
-        default=0,
+    streaming_resume_skip_samples: Optional[int] = field(
+        default=None,
         metadata={
             "help": "Global raw-example count to skip before local streaming training. "
-            "The launcher derives this from checkpoint global_step on streaming resume."
+            "A checkpoint streaming_state.json takes precedence over the legacy global-step fallback."
         },
+    )
+    streaming_resume_global_step: int = field(default=0)
+    streaming_resume_cursor_source: str = field(default="fresh")
+    streaming_shard_manifest: Optional[str] = field(
+        default=None,
+        metadata={"help": "Shard manifest used to verify corpus identity across resumes."},
     )
 
     def __post_init__(self) -> None:
@@ -169,8 +176,10 @@ class DataTrainingArguments:
             raise ValueError("--streaming_reader must be line-stride, file-shard, byte-range, or hf.")
         if self.streaming_shuffle_buffer < 0:
             raise ValueError("--streaming_shuffle_buffer must be >= 0.")
-        if self.streaming_resume_skip_samples < 0:
+        if self.streaming_resume_skip_samples is not None and self.streaming_resume_skip_samples < 0:
             raise ValueError("--streaming_resume_skip_samples must be >= 0.")
+        if self.streaming_resume_global_step < 0:
+            raise ValueError("--streaming_resume_global_step must be >= 0.")
         if self.dataset_name is None and self.train_file is None and self.validation_file is None:
             raise ValueError("Need either a dataset name or a train/validation file.")
         for value, label in ((self.train_file, "train_file"), (self.validation_file, "validation_file")):
@@ -233,6 +242,56 @@ class TrainingSummaryCallback(TrainerCallback):
             getattr(args, "max_steps", None),
             getattr(state, "global_step", None),
         )
+
+
+class StreamingStateCallback(TrainerCallback):
+    """Persist the logical raw-example cursor beside every Trainer checkpoint."""
+
+    def __init__(self, data_args: DataTrainingArguments) -> None:
+        self.resume_global_step = data_args.streaming_resume_global_step
+        self.resume_sample_cursor = int(data_args.streaming_resume_skip_samples or 0)
+        self.resume_cursor_source = data_args.streaming_resume_cursor_source
+        self.streaming_reader = data_args.streaming_reader
+        self.shuffle_buffer = data_args.streaming_shuffle_buffer
+        self.shuffle_seed = data_args.streaming_shuffle_seed
+        self.shard_manifest_path = data_args.streaming_shard_manifest
+
+    def _write(self, args, state, directory: Path) -> None:
+        if not getattr(state, "is_world_process_zero", True):
+            return
+        world_size = max(1, getattr(args, "world_size", 1))
+        batch_size = streaming_state.effective_batch_size(
+            args.per_device_train_batch_size,
+            args.gradient_accumulation_steps,
+            world_size,
+        )
+        checkpoint_state = streaming_state.build_checkpoint_state(
+            global_step=int(state.global_step),
+            resume_global_step=self.resume_global_step,
+            resume_sample_cursor=self.resume_sample_cursor,
+            effective_batch=batch_size,
+            streaming_reader=self.streaming_reader,
+            shuffle_buffer=self.shuffle_buffer,
+            shuffle_seed=self.shuffle_seed,
+            world_size=world_size,
+            dataloader_num_workers=args.dataloader_num_workers,
+            shard_manifest_path=self.shard_manifest_path,
+            resume_cursor_source=self.resume_cursor_source,
+        )
+        path = streaming_state.write_checkpoint_state(directory, checkpoint_state)
+        logger.info(
+            "Saved streaming cursor state to %s: cursor=%s corpus_pass=%s corpus_offset=%s",
+            path,
+            checkpoint_state.next_sample_cursor,
+            checkpoint_state.corpus_pass,
+            checkpoint_state.corpus_offset,
+        )
+
+    def on_save(self, args, state, control, **kwargs):  # noqa: D401
+        self._write(args, state, Path(args.output_dir) / f"checkpoint-{state.global_step}")
+
+    def on_train_end(self, args, state, control, **kwargs):  # noqa: D401
+        self._write(args, state, Path(args.output_dir))
 
 
 def get_distributed_rank_info() -> tuple[int, int]:
@@ -541,7 +600,7 @@ def build_local_text_streaming_datasets(tokenizer, data_args: DataTrainingArgume
             max_samples=data_args.max_train_samples,
             shuffle_buffer=data_args.streaming_shuffle_buffer,
             shuffle_seed=data_args.streaming_shuffle_seed,
-            resume_skip_samples=data_args.streaming_resume_skip_samples,
+            resume_skip_samples=int(data_args.streaming_resume_skip_samples or 0),
             repeat=data_args.max_train_samples is None,
         )
 
@@ -722,6 +781,48 @@ def write_run_manifest(
         json.dump(manifest, handle, indent=2, sort_keys=True)
 
 
+def prepare_streaming_resume_state(
+    data_args: DataTrainingArguments,
+    training_args: TrainingArguments,
+    checkpoint: Optional[str],
+) -> None:
+    if not training_args.do_train or not can_use_local_text_streaming(data_args):
+        return
+
+    if checkpoint is None:
+        data_args.streaming_resume_skip_samples = int(data_args.streaming_resume_skip_samples or 0)
+        data_args.streaming_resume_global_step = 0
+        data_args.streaming_resume_cursor_source = "fresh"
+        return
+
+    effective_batch = streaming_state.effective_batch_size(
+        training_args.per_device_train_batch_size,
+        training_args.gradient_accumulation_steps,
+        max(1, training_args.world_size),
+    )
+    resolved = streaming_state.resolve_resume_state(
+        checkpoint=Path(checkpoint),
+        fallback_effective_batch=effective_batch,
+        override_sample_cursor=data_args.streaming_resume_skip_samples,
+        current_shard_manifest_path=data_args.streaming_shard_manifest,
+        current_streaming_reader=data_args.streaming_reader,
+        current_shuffle_buffer=data_args.streaming_shuffle_buffer,
+        current_shuffle_seed=data_args.streaming_shuffle_seed,
+        current_world_size=max(1, training_args.world_size),
+        current_dataloader_num_workers=training_args.dataloader_num_workers,
+    )
+    data_args.streaming_resume_global_step = resolved.global_step
+    data_args.streaming_resume_skip_samples = resolved.next_sample_cursor
+    if data_args.streaming_resume_cursor_source == "fresh":
+        data_args.streaming_resume_cursor_source = resolved.source
+    logger.info(
+        "Resolved streaming resume cursor: global_step=%s cursor=%s source=%s",
+        resolved.global_step,
+        resolved.next_sample_cursor,
+        data_args.streaming_resume_cursor_source,
+    )
+
+
 def build_trainer(
     model_args: ModelArguments,
     data_args: DataTrainingArguments,
@@ -752,6 +853,10 @@ def build_trainer(
     if training_args.do_eval and not training_args.prediction_loss_only and not is_torch_tpu_available():
         compute_metrics, preprocess_logits_for_metrics = build_metrics()
 
+    callbacks = [TrainingSummaryCallback()]
+    if training_args.do_train and can_use_local_text_streaming(data_args):
+        callbacks.append(StreamingStateCallback(data_args))
+
     trainer = Trainer(
         model=bundle.model,
         args=training_args,
@@ -761,7 +866,7 @@ def build_trainer(
         data_collator=data_collator,
         compute_metrics=compute_metrics,
         preprocess_logits_for_metrics=preprocess_logits_for_metrics,
-        callbacks=[TrainingSummaryCallback()],
+        callbacks=callbacks,
     )
     return trainer, train_dataset, eval_dataset, bundle.tokenizer
 
@@ -771,13 +876,14 @@ def run_pretrain(model_args: ModelArguments, data_args: DataTrainingArguments, t
     configure_torch_runtime(training_args)
     last_checkpoint = detect_last_checkpoint(training_args)
     set_seed(training_args.seed)
+    checkpoint = training_args.resume_from_checkpoint or last_checkpoint
+    prepare_streaming_resume_state(data_args, training_args, checkpoint)
 
     trainer, train_dataset, eval_dataset, tokenizer = build_trainer(model_args, data_args, training_args)
     if trainer.is_world_process_zero():
         write_run_manifest(training_args.output_dir, model_args, data_args, training_args, tokenizer)
 
     if training_args.do_train:
-        checkpoint = training_args.resume_from_checkpoint or last_checkpoint
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
         trainer.save_model()
         metrics = train_result.metrics

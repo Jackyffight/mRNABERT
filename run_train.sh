@@ -517,49 +517,42 @@ esac
 RESUME_ARGS=()
 STREAMING_RESUME_GLOBAL_STEP=""
 STREAMING_RESUME_WORLD_SIZE=""
+STREAMING_RESUME_CURSOR_SOURCE=""
+STREAMING_SHARD_MANIFEST=""
+if [ "$STREAMING_MODE" = "true" ] && [ -n "$SHARD_DIR" ] && [ -f "$SHARD_DIR/manifest.json" ]; then
+  STREAMING_SHARD_MANIFEST="$SHARD_DIR/manifest.json"
+fi
 if [ -n "$RESUME" ]; then
   RESUME_ARGS=(--resume_from_checkpoint "$RESUME")
   if [ "$STREAMING_MODE" = "true" ]; then
-    STREAMING_RESUME_GLOBAL_STEP=$("$PYTHON" - "$RESUME" <<'PY'
-import json
-import re
-import sys
-from pathlib import Path
-
-checkpoint = Path(sys.argv[1])
-state_file = checkpoint / "trainer_state.json"
-global_step = None
-if state_file.exists():
-    try:
-        global_step = int(json.loads(state_file.read_text()).get("global_step") or 0)
-    except Exception as exc:
-        raise SystemExit(f"Could not parse checkpoint trainer_state.json: {state_file}: {exc}")
-if global_step is None:
-    match = re.search(r"checkpoint-(\d+)$", checkpoint.name)
-    global_step = int(match.group(1)) if match else 0
-print(global_step)
-PY
-)
     if [ "$LAUNCHER" = "torchrun" ]; then
       STREAMING_RESUME_WORLD_SIZE="$NPROC_PER_NODE"
     else
       STREAMING_RESUME_WORLD_SIZE=1
     fi
-    if [ "$STREAMING_RESUME_SKIP_SAMPLES_SET" = false ]; then
-      STREAMING_RESUME_SKIP_SAMPLES=$("$PYTHON" - "$STREAMING_RESUME_GLOBAL_STEP" "$BATCH_SIZE" "$GRAD_ACCUM" "$STREAMING_RESUME_WORLD_SIZE" <<'PY'
-import sys
-
-global_step = int(sys.argv[1])
-batch_size = int(sys.argv[2])
-grad_accum = int(sys.argv[3])
-world_size = int(sys.argv[4])
-print(global_step * batch_size * grad_accum * world_size)
-PY
-)
+    STREAMING_RESUME_EFFECTIVE_BATCH=$((BATCH_SIZE * GRAD_ACCUM * STREAMING_RESUME_WORLD_SIZE))
+    STREAMING_RESOLVE_ARGS=(
+      --checkpoint "$RESUME"
+      --effective-batch "$STREAMING_RESUME_EFFECTIVE_BATCH"
+      --streaming-reader "$STREAMING_READER"
+      --shuffle-buffer "$STREAMING_SHUFFLE_BUFFER"
+      --shuffle-seed "$STREAMING_SHUFFLE_SEED"
+      --world-size "$STREAMING_RESUME_WORLD_SIZE"
+      --dataloader-num-workers "$DATALOADER_NUM_WORKERS"
+    )
+    if [ "$STREAMING_RESUME_SKIP_SAMPLES_SET" = true ]; then
+      STREAMING_RESOLVE_ARGS+=(--override-sample-cursor "$STREAMING_RESUME_SKIP_SAMPLES")
     fi
+    if [ -n "$STREAMING_SHARD_MANIFEST" ]; then
+      STREAMING_RESOLVE_ARGS+=(--shard-manifest "$STREAMING_SHARD_MANIFEST")
+    fi
+    STREAMING_RESOLVED=$("$PYTHON" -m mrnabert.streaming_state resolve "${STREAMING_RESOLVE_ARGS[@]}")
+    IFS=$'\t' read -r STREAMING_RESUME_GLOBAL_STEP STREAMING_RESUME_SKIP_SAMPLES STREAMING_RESUME_CURSOR_SOURCE <<< "$STREAMING_RESOLVED"
     RESUME_ARGS+=(
       --ignore_data_skip true
       --streaming_resume_skip_samples "$STREAMING_RESUME_SKIP_SAMPLES"
+      --streaming_resume_global_step "$STREAMING_RESUME_GLOBAL_STEP"
+      --streaming_resume_cursor_source "$STREAMING_RESUME_CURSOR_SOURCE"
     )
   fi
 fi
@@ -593,6 +586,9 @@ fi
 STREAMING_ARGS=()
 if [ "$STREAMING_MODE" = "true" ]; then
   STREAMING_ARGS=(--streaming)
+  if [ -n "$STREAMING_SHARD_MANIFEST" ]; then
+    STREAMING_ARGS+=(--streaming_shard_manifest "$STREAMING_SHARD_MANIFEST")
+  fi
 fi
 
 echo "=== mRNABERT training ==="
@@ -619,6 +615,8 @@ echo "epochs: $EPOCHS"
 [ -n "$RESUME" ] && [ "$STREAMING_MODE" = "true" ] && echo "streaming_resume_global_step: $STREAMING_RESUME_GLOBAL_STEP"
 [ -n "$RESUME" ] && [ "$STREAMING_MODE" = "true" ] && echo "streaming_resume_world_size: $STREAMING_RESUME_WORLD_SIZE"
 [ -n "$RESUME" ] && [ "$STREAMING_MODE" = "true" ] && echo "streaming_resume_skip_samples: $STREAMING_RESUME_SKIP_SAMPLES"
+[ -n "$RESUME" ] && [ "$STREAMING_MODE" = "true" ] && echo "streaming_resume_cursor_source: $STREAMING_RESUME_CURSOR_SOURCE"
+[ -n "$STREAMING_SHARD_MANIFEST" ] && echo "streaming_shard_manifest: $STREAMING_SHARD_MANIFEST"
 [ -n "$RESUME" ] && echo "torch_force_no_weights_only_load: ${TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD:-}"
 echo "dtype: $DTYPE"
 echo "preprocessing_workers: $PREPROCESSING_NUM_WORKERS"

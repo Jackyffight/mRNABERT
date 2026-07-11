@@ -7,27 +7,49 @@ to be exported by the caller.
 Recommended order:
 
 ```bash
-scripts/sync_checkpoints_to_nas.sh
-scripts/make_validation_split_nas.sh
-scripts/eval_one_checkpoint_nas.sh 100000 2000
-scripts/eval_one_checkpoint_nas.sh 100000
-scripts/eval_checkpoints_nas.sh
+scripts/bootstrap_streaming_state_nas.sh 600000 57600000
+scripts/run_mlm_baseline_suite_nas.sh 600000 100000 42
+scripts/run_mrfp_baseline_nas.sh 13 600000
+scripts/run_mrfp_baseline_nas.sh 42 600000
+scripts/run_mrfp_baseline_nas.sh 73 600000
 scripts/print_eval_results_nas.sh
-scripts/continue_train_nas.sh 150000 100000
+scripts/print_mrfp_results_nas.sh
 ```
 
 `continue_train_nas.sh` uses the current measured throughput sweet spot:
 3 GPUs, per-device batch 32, file-shard streaming, and 4 dataloader workers.
-On streaming resume, `run_train.sh` keeps Trainer's slow data replay disabled but
-passes a raw-example offset into the local streaming dataset. The launcher prints
-`streaming_resume_skip_samples`; for example, resuming from checkpoint 300000 with
-batch 32 on 3 GPUs should print `28800000`.
+On streaming resume, `run_train.sh` keeps Trainer's slow data replay disabled and
+uses `streaming_state.json` from the checkpoint as the authoritative raw-example
+cursor. Every new checkpoint records cursor, global step, corpus pass/offset, and
+the stable shard-manifest identity. Reader/shuffle/rank/worker topology is also
+checked, and an incompatible resume fails fast.
 
-For legacy checkpoints produced before the streaming resume fix, the checkpoint
-global step may overstate unique corpus coverage because previous resume segments
-replayed shard prefixes. Use `--streaming-resume-skip-samples <estimated_cursor>`
-on `run_train.sh` only when intentionally correcting that historical cursor, or
-pass it as the third argument to `continue_train_nas.sh`.
+Resume is cursor-correct but not constant-time. The reader scans and discards raw
+lines until it reconstructs the bounded-shuffle cursor; this happens before
+tokenization and GPU training. A large cursor can therefore spend several minutes
+at 0% while NAS is busy. Those scanned records are not trained again.
+
+`checkpoint-600000` predates checkpoint-level cursor persistence. Bootstrap it once
+with `scripts/bootstrap_streaming_state_nas.sh 600000 57600000` before any future
+resume. The `57,600,000` cursor matches the launcher's latest global-step fallback
+for effective batch 96; it cannot reconstruct cursor overrides that were not saved.
+Confirm it against the command used for the last resume and inspect the emitted JSON
+before continuing.
+
+For a legacy final segment, calculate the cursor as:
+
+```text
+final_cursor = logged_resume_skip_samples + (final_step - resume_step) * 96
+```
+
+Public baseline assets are pinned to Hugging Face revision
+`a1eb7df25804d23f08646e1cb996b234d7208a40`. The download script verifies the model
+weight SHA-256 and the Zenodo file MD5 checksums. `run_mlm_baseline_suite_nas.sh`
+compares MLM loss on the existing proxy validation set; this set leaked into the
+original training corpus, so use it only as a quick diagnostic. The mRFP scripts
+are the first task-level comparison and should be run over multiple seeds. They
+remove exact cross-split leakage and compare the internal model, public model, and
+a same-architecture random initialization.
 
 Throughput checks:
 
