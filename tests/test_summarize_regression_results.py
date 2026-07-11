@@ -1,4 +1,5 @@
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,6 +36,19 @@ class SummarizeRegressionResultsTest(unittest.TestCase):
         self.assertEqual(len(summaries), 1)
         self.assertAlmostEqual(summaries[0]["eval_spearman_corr_mean"], 0.3)
         self.assertAlmostEqual(summaries[0]["eval_spearman_corr_std"], 0.1414213562)
+
+    def test_nan_metric_is_reported_without_crashing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._write(root, "random-seed13", 0.2)
+            self._write(root, "random-seed42", math.nan)
+
+            rows = load_results(root)
+            summaries = summarize(rows)
+
+        self.assertEqual(summaries[0]["eval_spearman_corr_valid"], 1)
+        self.assertAlmostEqual(summaries[0]["eval_spearman_corr_mean"], 0.2)
+        self.assertEqual(summaries[0]["eval_spearman_corr_std"], 0.0)
 
 
 if __name__ == "__main__":

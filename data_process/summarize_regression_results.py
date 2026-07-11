@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import statistics
 from pathlib import Path
@@ -50,8 +51,16 @@ def summarize(rows: list[dict]) -> list[dict]:
         summary = {"model": model, "seeds": len(model_rows)}
         for metric in METRICS:
             values = [row[metric] for row in model_rows]
-            summary[f"{metric}_mean"] = statistics.fmean(values)
-            summary[f"{metric}_std"] = statistics.stdev(values) if len(values) > 1 else 0.0
+            finite_values = [value for value in values if math.isfinite(value)]
+            summary[f"{metric}_valid"] = len(finite_values)
+            if finite_values:
+                summary[f"{metric}_mean"] = statistics.fmean(finite_values)
+                summary[f"{metric}_std"] = (
+                    statistics.stdev(finite_values) if len(finite_values) > 1 else 0.0
+                )
+            else:
+                summary[f"{metric}_mean"] = math.nan
+                summary[f"{metric}_std"] = math.nan
         summaries.append(summary)
     return summaries
 
@@ -78,19 +87,29 @@ def print_report(rows: list[dict], summaries: list[dict]) -> None:
         )
 
     print("\naggregate")
-    print("model\tseeds\tspearman_mean\tspearman_std\tpearson_mean\tpearson_std\tr2_mean\tr2_std\tmse_mean\tmse_std")
+    print(
+        "model\tseeds\t"
+        "spearman_valid\tspearman_mean\tspearman_std\t"
+        "pearson_valid\tpearson_mean\tpearson_std\t"
+        "r2_valid\tr2_mean\tr2_std\t"
+        "mse_valid\tmse_mean\tmse_std"
+    )
     for row in summaries:
         print(
             "\t".join(
                 (
                     row["model"],
                     str(row["seeds"]),
+                    f'{row["eval_spearman_corr_valid"]}/{row["seeds"]}',
                     _format(row["eval_spearman_corr_mean"]),
                     _format(row["eval_spearman_corr_std"]),
+                    f'{row["eval_pearson_corr_valid"]}/{row["seeds"]}',
                     _format(row["eval_pearson_corr_mean"]),
                     _format(row["eval_pearson_corr_std"]),
+                    f'{row["eval_r2_score_valid"]}/{row["seeds"]}',
                     _format(row["eval_r2_score_mean"]),
                     _format(row["eval_r2_score_std"]),
+                    f'{row["eval_mse_loss_valid"]}/{row["seeds"]}',
                     _format(row["eval_mse_loss_mean"]),
                     _format(row["eval_mse_loss_std"]),
                 )
