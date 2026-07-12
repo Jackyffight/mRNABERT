@@ -50,6 +50,8 @@ class ThreeModelProbeScriptContractTest(unittest.TestCase):
         self.assertIn("public-YYLY66", runner)
         self.assertIn("evo2-7b", runner)
         self.assertIn("blocks.28.mlp.l3", runner)
+        self.assertIn('FROZEN_CHECKPOINTS=(', runner)
+        self.assertIn("Recovering frozen internal encoder", runner)
         self.assertIn("PCA(n_components=args.probe_dim", evaluator)
         self.assertIn("projector.fit_transform(train", evaluator)
         self.assertNotIn("projector.fit_transform(dev", evaluator)

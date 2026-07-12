@@ -99,6 +99,10 @@ only by dev Spearman, and test is evaluated once within this protocol. The mRFP 
 experiments, so this remains exploratory rather than confirmatory. The script
 defaults to checkpoint 600000 because it remains the stronger
 mRFP checkpoint by dev selection; pass another step explicitly to compare it.
+If the original 600000 pretraining checkpoint has already been rotated by
+`save_total_limit`, the runner automatically recovers its unchanged encoder blocks
+from a retained 600000 frozen-probe Trainer checkpoint. The trained pooler and head
+are ignored during embedding extraction.
 
 The first Evo 2 run creates an isolated NAS virtual environment and downloads a
 verified 13.77 GB checkpoint. It can take substantially longer than the two BERT

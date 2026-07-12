@@ -30,15 +30,34 @@ EVO2_MODEL="$EVO2_ROOT/evo2_7b-$EVO2_REVISION/evo2_7b.pt"
 EVO2_MODEL_SIZE=13766621200
 SOURCE_DATA="$REPO_ROOT/sample_data/fine-tune/mRFP"
 CLEAN_DATA="/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_data/downstream/clean/mRFP"
-RESULT_ROOT="/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_runs/downstream/mRFP/three-model-frozen-ridge"
+MRFP_RESULT_ROOT="/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_runs/downstream/mRFP"
+RESULT_ROOT="$MRFP_RESULT_ROOT/three-model-frozen-ridge"
 INTERNAL_EMBEDDINGS="$RESULT_ROOT/embeddings/internal-checkpoint-$STEP"
 PUBLIC_EMBEDDINGS="$RESULT_ROOT/embeddings/public-YYLY66-$MODEL_REVISION"
 EVO2_EMBEDDINGS="$RESULT_ROOT/embeddings/evo2-7b-$EVO2_REVISION-block28"
 COMPARISON_OUTPUT="$RESULT_ROOT/results/internal-$STEP-vs-public-vs-evo2-7b"
 
 if [ ! -f "$INTERNAL_MODEL/pytorch_model.bin" ] && [ ! -f "$INTERNAL_MODEL/model.safetensors" ]; then
-  echo "Internal checkpoint not found or incomplete: $INTERNAL_MODEL" >&2
-  exit 1
+  shopt -s nullglob
+  FROZEN_CHECKPOINTS=(
+    "$MRFP_RESULT_ROOT"/internal-checkpoint-"$STEP"-frozen-lr*-seed*/checkpoint-*
+  )
+  mapfile -t FROZEN_CHECKPOINTS < <(printf '%s\n' "${FROZEN_CHECKPOINTS[@]}" | sort -V)
+  INTERNAL_MODEL=""
+  for CANDIDATE in "${FROZEN_CHECKPOINTS[@]}"; do
+    if [ -f "$CANDIDATE/pytorch_model.bin" ] || [ -f "$CANDIDATE/model.safetensors" ]; then
+      INTERNAL_MODEL="$CANDIDATE"
+      break
+    fi
+  done
+  if [ -z "$INTERNAL_MODEL" ]; then
+    echo "Internal pretraining checkpoint-$STEP is missing, and no frozen-probe recovery checkpoint was found." >&2
+    echo "Available pretraining checkpoints:" >&2
+    find "/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_runs/mrnabert-full-devbox-20260707024008/output" \
+      -maxdepth 1 -type d -name 'checkpoint-*' -print 2>/dev/null | sort -V >&2
+    exit 1
+  fi
+  echo "Recovering frozen internal encoder from downstream checkpoint: $INTERNAL_MODEL"
 fi
 
 if [ ! -f "$PUBLIC_MODEL/pytorch_model.bin" ]; then
