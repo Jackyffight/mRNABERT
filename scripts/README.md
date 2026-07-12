@@ -16,6 +16,7 @@ scripts/print_eval_results_nas.sh
 scripts/print_mrfp_results_nas.sh
 scripts/run_mrfp_lr_sweep_nas.sh 600000
 scripts/run_mrfp_frozen_probe_nas.sh 600000
+scripts/run_three_model_frozen_probe_nas.sh 600000
 ```
 
 After a training segment finishes, evaluate every checkpoint still retained under
@@ -88,6 +89,30 @@ labels legacy results as `full-lr1e-4`. The summary prints each run's best dev
 Spearman separately from test metrics. Select recipes using dev results; the test
 values from the completed LR sweep have already been inspected and are exploratory,
 not an untouched confirmatory comparison.
+
+`run_three_model_frozen_probe_nas.sh` is a stricter representation comparison across
+the internal checkpoint, pinned public mRNABERT, and pinned Evo 2 7B. It extracts
+mean-pooled, L2-normalized frozen embeddings and trains the same Ridge head for all
+three models. A train-only PCA and scaler reduce every representation to 256
+features, so the supervised head capacity is also identical. Ridge alpha is selected
+only by dev Spearman, and test is evaluated once within this protocol. The mRFP test split was already inspected in earlier
+experiments, so this remains exploratory rather than confirmatory. The script
+defaults to checkpoint 600000 because it remains the stronger
+mRFP checkpoint by dev selection; pass another step explicitly to compare it.
+
+The first Evo 2 run creates an isolated NAS virtual environment and downloads a
+verified 13.77 GB checkpoint. It can take substantially longer than the two BERT
+extractors. Evo extraction checkpoints every 25 records and resumes automatically:
+
+```bash
+scripts/setup_evo2_baseline_nas.sh
+scripts/run_three_model_frozen_probe_nas.sh 600000
+```
+
+The comparison output is written below
+`mrna_runs/downstream/mRFP/three-model-frozen-ridge/results/`. This benchmark uses
+the small single-protein mRFP library. It measures frozen representation usefulness
+for that task, not general DNA generation quality or wet-lab superiority.
 
 Throughput checks:
 

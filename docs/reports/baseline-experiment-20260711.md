@@ -162,6 +162,44 @@ undefined and strongly negative R2. Under this training budget, the supervised h
 cannot recover the task from roughly one thousand labels without pretrained
 sequence representations.
 
+### Frozen-encoder probe and checkpoint 700000 update
+
+The frozen runs keep embeddings and Transformer blocks fixed while training the
+pooler and regression head. Learning rate was selected by mean dev Spearman. The
+best dev-selected setting for both learned encoders was `1e-3`:
+
+| Model | LR | Dev Spearman | Test Spearman | Test Pearson | Test R2 | Test MSE |
+|---|---:|---:|---:|---:|---:|---:|
+| Internal checkpoint 600000, frozen | `1e-3` | 0.5541 +/- 0.0018 | 0.6270 +/- 0.0030 | 0.5614 +/- 0.0030 | 0.2902 +/- 0.0047 | 0.3949 +/- 0.0026 |
+| Public mRNABERT, frozen | `1e-3` | **0.6714 +/- 0.0030** | **0.7260 +/- 0.0073** | **0.6861 +/- 0.0040** | **0.4431 +/- 0.0256** | **0.3098 +/- 0.0142** |
+
+The public checkpoint has a materially stronger fixed representation on this probe.
+Full fine-tuning largely closes the rank-correlation gap, which means the earlier
+near-tie is partly due to task-specific encoder adaptation rather than equal frozen
+representation quality.
+
+Checkpoint 700000 improved proxy MLM loss from 2.294945 at 600000 to 2.284286, but
+its `5e-5` full-fine-tuning result was weaker by dev selection:
+
+| Internal checkpoint | Dev Spearman | Test Spearman | Test R2 | Test MSE |
+|---:|---:|---:|---:|---:|
+| 600000, full `5e-5` | **0.8699 +/- 0.0048** | **0.8648 +/- 0.0073** | **0.7605 +/- 0.0142** | **0.1332 +/- 0.0079** |
+| 700000, full `5e-5` | 0.8650 +/- 0.0049 | 0.8504 +/- 0.0147 | 0.7491 +/- 0.0236 | 0.1396 +/- 0.0131 |
+
+This is direct evidence that lower proxy MLM loss is not sufficient for selecting
+the downstream checkpoint. Checkpoint 600000 remains the internal mRFP candidate.
+
+To compare against a modern genome model without giving different fine-tuning heads
+different capacities, the next protocol extracts frozen mean-pooled embeddings from
+internal checkpoint 600000, public mRNABERT, and pinned Evo 2 7B. All embeddings are
+L2-normalized, projected to 256 dimensions using train-only PCA, standardized using
+train-only statistics, and evaluated using the same Ridge regression head. Alpha is
+selected on dev Spearman before a single test evaluation:
+
+```bash
+scripts/run_three_model_frozen_probe_nas.sh 600000
+```
+
 ### Interpretation
 
 1. The internal pretrained weights contain real transferable signal for synonymous
