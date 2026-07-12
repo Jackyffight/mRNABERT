@@ -38,7 +38,14 @@ class ThreeModelProbeScriptContractTest(unittest.TestCase):
         downloader = Path("data_process/download_evo2_baseline.py").read_text(encoding="utf-8")
 
         self.assertIn('"evo2==0.6.0"', setup)
-        self.assertIn('"vtx==1.1.0"', setup)
+        self.assertIn(
+            "https://files.pythonhosted.org/packages/e2/ed/"
+            "9dab64893b6b78f832e4d18522bbd6696350a415c20e0af6bcea1b0f8152/"
+            "vtx-1.1.0-py3-none-any.whl",
+            setup,
+        )
+        self.assertIn("0ff9f1db2f9e81e288150b60fd4fe4832b8b992ac2c6c947271b2036ffeb8299", setup)
+        self.assertNotIn('"vtx==1.1.0"', setup)
         self.assertIn("bda0089f92582d5baabf0f22d9fc85f3588f6b58", downloader)
         self.assertIn("c66645929dc1b9c631f5be656da8726f38946315dc9167000a615dd626fcecf4", downloader)
 

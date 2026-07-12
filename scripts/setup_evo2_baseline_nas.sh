@@ -11,6 +11,7 @@ MODEL_DIR="$BASELINE_ROOT/evo2_7b-bda0089f92582d5baabf0f22d9fc85f3588f6b58"
 MODEL_PATH="$MODEL_DIR/evo2_7b.pt"
 MODEL_SIZE=13766621200
 FLASH_ATTN_WHEEL_URL="https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.0.post2/flash_attn-2.8.0.post2%2Bcu12torch2.7cxx11abiFALSE-cp311-cp311-linux_x86_64.whl"
+VTX_WHEEL_URL="https://files.pythonhosted.org/packages/e2/ed/9dab64893b6b78f832e4d18522bbd6696350a415c20e0af6bcea1b0f8152/vtx-1.1.0-py3-none-any.whl#sha256=0ff9f1db2f9e81e288150b60fd4fe4832b8b992ac2c6c947271b2036ffeb8299"
 
 mkdir -p "$BASELINE_ROOT"
 
@@ -63,9 +64,13 @@ PY
     "$FLASH_ATTN_WHEEL_URL"
 fi
 
-"$VENV_DIR/bin/python" -m pip install \
-  "vtx==1.1.0" \
-  "evo2==0.6.0"
+if ! "$VENV_DIR/bin/python" -c "from importlib.metadata import version; assert version('vtx') == '1.1.0'" >/dev/null 2>&1; then
+  "$VENV_DIR/bin/python" -m pip install \
+    --no-cache-dir \
+    "$VTX_WHEEL_URL"
+fi
+
+"$VENV_DIR/bin/python" -m pip install "evo2==0.6.0"
 
 "$VENV_DIR/bin/python" "$REPO_ROOT/data_process/download_evo2_baseline.py" \
   --output-dir "$MODEL_DIR"
