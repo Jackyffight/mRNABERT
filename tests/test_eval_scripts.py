@@ -3,6 +3,15 @@ import unittest
 
 
 class EvalScriptTest(unittest.TestCase):
+    def test_checkpoint_suite_discovers_retained_nas_checkpoints(self):
+        script = Path("scripts/eval_checkpoints_nas.sh").read_text(encoding="utf-8")
+
+        self.assertIn('CHECKPOINTS=("$RUN_OUTPUT"/checkpoint-*)', script)
+        self.assertIn("sort -V", script)
+        self.assertIn('STEPS=("$@")', script)
+        self.assertIn("Invalid checkpoint step", script)
+        self.assertNotIn("STEPS=(80000 85000 90000 95000 100000)", script)
+
     def test_eval_one_checkpoint_does_not_create_train_dataset(self):
         script = Path("scripts/eval_one_checkpoint_nas.sh").read_text(encoding="utf-8")
 

@@ -18,6 +18,18 @@ scripts/run_mrfp_lr_sweep_nas.sh 600000
 scripts/run_mrfp_frozen_probe_nas.sh 600000
 ```
 
+After a training segment finishes, evaluate every checkpoint still retained under
+the main NAS run directory, then print the complete fixed-validation history:
+
+```bash
+scripts/eval_checkpoints_nas.sh
+scripts/print_eval_results_nas.sh
+```
+
+The checkpoint suite discovers numeric `checkpoint-*` directories at runtime and
+sorts them by global step. Specific checkpoints can still be selected explicitly,
+for example `scripts/eval_checkpoints_nas.sh 680000 690000 700000`.
+
 `continue_train_nas.sh` uses the current measured throughput sweet spot:
 3 GPUs, per-device batch 32, file-shard streaming, and 4 dataloader workers.
 The worker count is per DDP rank, so this configuration creates 12
