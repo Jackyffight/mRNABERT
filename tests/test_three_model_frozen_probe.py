@@ -49,18 +49,18 @@ class ThreeModelProbeScriptContractTest(unittest.TestCase):
         self.assertIn("bda0089f92582d5baabf0f22d9fc85f3588f6b58", downloader)
         self.assertIn("c66645929dc1b9c631f5be656da8726f38946315dc9167000a615dd626fcecf4", downloader)
 
-    def test_flash_attention_uses_compatible_prebuilt_wheel_without_cache(self):
+    def test_flash_attention_builds_against_worker_torch_for_a100(self):
         setup = Path("scripts/setup_evo2_baseline_nas.sh").read_text(encoding="utf-8")
-        wheel_url = (
-            "https://github.com/Dao-AILab/flash-attention/releases/download/"
-            "v2.8.0.post2/flash_attn-2.8.0.post2%2Bcu12torch2.7"
-            "cxx11abiFALSE-cp311-cp311-linux_x86_64.whl"
-        )
 
-        self.assertIn(wheel_url, setup)
+        self.assertIn("FLASH_ATTENTION_FORCE_BUILD=TRUE", setup)
+        self.assertIn("FLASH_ATTN_CUDA_ARCHS=80", setup)
+        self.assertIn("MAX_JOBS=8", setup)
         self.assertIn("--no-cache-dir", setup)
-        self.assertNotIn('"flash-attn==2.8.0.post2"', setup)
-        self.assertNotIn("--no-build-isolation", setup)
+        self.assertIn("--no-binary", setup)
+        self.assertIn("--no-build-isolation", setup)
+        self.assertIn('"flash-attn==2.8.0.post2"', setup)
+        self.assertIn("import flash_attn, flash_attn_2_cuda", setup)
+        self.assertNotIn("flash_attn-2.8.0.post2%2Bcu12torch2.7", setup)
 
     def test_comparison_uses_shared_probe_and_dev_selection(self):
         runner = Path("scripts/run_three_model_frozen_probe_nas.sh").read_text(encoding="utf-8")
