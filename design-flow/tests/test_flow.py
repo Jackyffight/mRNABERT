@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -20,6 +21,7 @@ from design_flow.fasta import parse_fasta
 from design_flow.pipeline import analyze_project
 from design_flow.qc import analyze_sequence_pairs, normalize_nucleotide, translate_cds
 from design_flow.reporting import write_run_artifacts
+from design_flow.structure_job import build_structure_job, write_structure_job
 from design_flow.verification import build_artifact_index, verify_run
 from design_flow.workflow import (
     CURRENT_STAGE_ID,
@@ -591,6 +593,63 @@ class CandidateStageEndToEndTests(unittest.TestCase):
                 any("component-maps-cover-sequences" in error for error in result["errors"]),
                 result["errors"],
             )
+
+    def test_stage3_job_contains_only_verified_exploratory_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, source_run = self._write_stage2_project(root)
+            candidate_run = write_candidate_run(
+                analyze_candidate_specification(config_path, source_run_dir=source_run),
+                now=datetime(2026, 7, 14, 11, 0, tzinfo=timezone.utc),
+            )
+            prepared = write_structure_job(
+                config_path,
+                source_run_dir=candidate_run,
+                output_root=root / "transfer",
+                created_at=datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc),
+            )
+            job = json.loads(Path(prepared["job_manifest"]).read_text(encoding="utf-8"))
+            expected_model_inputs = json.loads(
+                (
+                    candidate_run
+                    / "nodes"
+                    / "candidate_specification"
+                    / "model_inputs.json"
+                ).read_text(encoding="utf-8")
+            )["models"]["ESMFold2"]["candidate_ids"]
+
+            self.assertEqual(prepared["records"], 6)
+            self.assertEqual(
+                [record["candidate_id"] for record in job["records"]],
+                expected_model_inputs,
+            )
+            with tarfile.open(prepared["archive"], "r:gz") as archive:
+                self.assertEqual(
+                    sorted(archive.getnames()),
+                    ["job-manifest.json", "sequences.fasta"],
+                )
+            rebuilt = write_structure_job(
+                config_path,
+                source_run_dir=candidate_run,
+                output_root=root / "transfer",
+                created_at=datetime(2026, 7, 14, 13, 0, tzinfo=timezone.utc),
+            )
+            self.assertEqual(rebuilt["job_identity"], prepared["job_identity"])
+
+    def test_stage3_job_rejects_candidates_over_backend_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, source_run = self._write_stage2_project(root)
+            candidate_run = write_candidate_run(
+                analyze_candidate_specification(config_path, source_run_dir=source_run),
+                now=datetime(2026, 7, 14, 14, 0, tzinfo=timezone.utc),
+            )
+            with self.assertRaisesRegex(ValueError, "exceeds ESMFold2 limit"):
+                build_structure_job(
+                    config_path,
+                    source_run_dir=candidate_run,
+                    maximum_sequence_length=8,
+                )
 
 
 if __name__ == "__main__":

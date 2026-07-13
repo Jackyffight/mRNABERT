@@ -99,6 +99,16 @@ The Stage 2 node writes `candidate_batch.json`, review CSV files, a bilingual no
 report, and `structure_candidates.fasta`. The latter is an explicitly provisional
 ESMFold2 input until the human release gates are resolved.
 
+Prepare the checksum-bound exploratory Stage 3 transfer archive:
+
+```bash
+./vaxflow prepare-stage3 projects/three-protein/project.json \
+  --from-run /absolute/path/to/verified-stage2-run
+```
+
+Only the resulting `.tar.gz` archive must be transferred to the GPU server. The
+24.4 GiB pinned ESMFold2-Fast/ESMC-6B runtime remains on that server.
+
 ## New Project
 
 To create another project without copying files by hand:

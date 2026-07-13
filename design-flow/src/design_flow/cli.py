@@ -18,6 +18,7 @@ from .candidate_specification import (
 from .domain import ProjectAnalysis
 from .pipeline import analyze_project
 from .reporting import write_run_artifacts
+from .structure_job import write_structure_job
 from .verification import verify_run
 from .workflow import CURRENT_STAGE_ID
 
@@ -71,6 +72,21 @@ def _build_parser() -> argparse.ArgumentParser:
         help="verify hashes and cross-file consistency for an immutable run",
     )
     verify_parser.add_argument("run_dir", type=Path)
+    prepare_stage3_parser = subparsers.add_parser(
+        "prepare-stage3",
+        help="write a checksum-bound ESMFold2 transfer job from a verified Stage 2 run",
+    )
+    prepare_stage3_parser.add_argument("project_config", type=Path)
+    prepare_stage3_parser.add_argument(
+        "--from-run",
+        type=Path,
+        help="verified Stage 2 run; defaults to the project's latest run",
+    )
+    prepare_stage3_parser.add_argument(
+        "--output-root",
+        type=Path,
+        help="external transfer directory; defaults under the project runtime root",
+    )
     return parser
 
 
@@ -212,6 +228,22 @@ def main(argv: list[str] | None = None) -> int:
             for warning in result["warnings"]:
                 print(f"  WARNING {warning}")
             return 0 if result["status"] == "pass" else 2
+
+        if args.command == "prepare-stage3":
+            prepared = write_structure_job(
+                args.project_config,
+                source_run_dir=args.from_run,
+                output_root=args.output_root,
+            )
+            print(
+                f"Stage 3 exploratory job: identity={prepared['job_identity']} "
+                f"records={prepared['records']} lengths="
+                f"{prepared['minimum_length']}-{prepared['maximum_length']}"
+            )
+            print(f"Job directory: {prepared['job_dir']}")
+            print(f"Transfer archive: {prepared['archive']}")
+            print(f"Transfer SHA256: {prepared['archive_sha256']}")
+            return 0
 
         if args.command in {"validate-stage2", "run-stage2"}:
             candidate_analysis = analyze_candidate_specification(
