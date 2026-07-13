@@ -287,13 +287,6 @@ def render_node_report(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{_e(stage.name)} | {_e(analysis.config.project_id)}</title>
   <style>
-    @font-face {{
-      font-family: "VaxFlow CJK";
-      src: url("/assets/NotoSansCJK-Regular.ttc") format("collection");
-      font-style: normal;
-      font-weight: 100 900;
-      font-display: swap;
-    }}
     :root {{
       --page: #f5f7f6;
       --surface: #ffffff;
@@ -316,7 +309,7 @@ def render_node_report(
       margin: 0;
       color: var(--ink);
       background: var(--page);
-      font-family: "VaxFlow CJK", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       font-size: 15px;
       line-height: 1.6;
       letter-spacing: 0;
