@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "project_id": "three-protein-vaccine",
+  "expected_protein_count": 3,
+  "inputs": {
+    "amino_acid_fasta": "input/proteins_aa.fasta",
+    "nucleotide_fasta": "input/proteins_cds.fasta"
+  },
+  "outputs": {
+    "run_root": "runs"
+  },
+  "context": {
+    "protein_expression_host": "unspecified",
+    "mrna_target_species": "unspecified"
+  }
+}
