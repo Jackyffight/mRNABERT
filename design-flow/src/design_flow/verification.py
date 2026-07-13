@@ -42,6 +42,10 @@ NODE_ARTIFACT_NAMES = (
 )
 CANDIDATE_STAGE_ID = "candidate_specification"
 STRUCTURE_STAGE_ID = "protein_structure_assessment"
+DEVELOPABILITY_STAGE_ID = "developability_assessment"
+PROTEIN_PRODUCT_STAGE_ID = "protein_product_design"
+MRNA_PRODUCT_STAGE_ID = "mrna_product_design"
+RANKING_STAGE_ID = "integrated_ranking"
 CANDIDATE_NODE_ARTIFACT_NAMES = (
     "summary.json",
     "report.html",
@@ -222,6 +226,41 @@ def verify_run(run_dir: Path, *, check_external_inputs: bool = True) -> dict[str
         from .structure_verification import verify_structure_run
 
         return verify_structure_run(
+            run_dir,
+            check_external_inputs=check_external_inputs,
+        )
+    if (
+        isinstance(current_manifest, dict)
+        and current_manifest.get("current_stage") == DEVELOPABILITY_STAGE_ID
+        and current_manifest.get("executed_stages")
+        == ["immune_evidence_assessment", DEVELOPABILITY_STAGE_ID]
+    ):
+        from .post_structure_verification import verify_post_structure_run
+
+        return verify_post_structure_run(
+            run_dir,
+            check_external_inputs=check_external_inputs,
+        )
+    if (
+        isinstance(current_manifest, dict)
+        and current_manifest.get("current_stage") == MRNA_PRODUCT_STAGE_ID
+        and current_manifest.get("executed_stages")
+        == [PROTEIN_PRODUCT_STAGE_ID, MRNA_PRODUCT_STAGE_ID]
+    ):
+        from .product_verification import verify_product_run
+
+        return verify_product_run(
+            run_dir,
+            check_external_inputs=check_external_inputs,
+        )
+    if (
+        isinstance(current_manifest, dict)
+        and current_manifest.get("current_stage") == RANKING_STAGE_ID
+        and current_manifest.get("executed_stages") == [RANKING_STAGE_ID]
+    ):
+        from .ranking_verification import verify_ranking_run
+
+        return verify_ranking_run(
             run_dir,
             check_external_inputs=check_external_inputs,
         )

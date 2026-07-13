@@ -16,12 +16,25 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from design_flow.cli import main as cli_main
+from design_flow.assessment_specs import (
+    ADAPTER_IDS,
+    DEVELOPABILITY_ADAPTER_IDS,
+    initialize_assessment_specifications,
+)
 from design_flow.candidate_reporting import write_candidate_run
 from design_flow.candidate_specification import analyze_candidate_specification
 from design_flow.domain import FastaRecord
 from design_flow.fasta import parse_fasta
 from design_flow.pipeline import analyze_project
-from design_flow.qc import analyze_sequence_pairs, normalize_nucleotide, translate_cds
+from design_flow.post_structure_assessment import analyze_post_structure_stages
+from design_flow.post_structure_reporting import write_post_structure_run
+from design_flow.product_design import analyze_product_designs
+from design_flow.product_reporting import write_product_design_run
+from design_flow.product_specs import initialize_product_specifications
+from design_flow.ranking import analyze_integrated_ranking
+from design_flow.ranking_reporting import write_ranking_run
+from design_flow.ranking_specs import initialize_ranking_specification
+from design_flow.qc import CODON_TABLE, analyze_sequence_pairs, normalize_nucleotide, translate_cds
 from design_flow.reporting import write_run_artifacts
 from design_flow.structure_job import build_structure_job, write_structure_job
 from design_flow.structure_assessment import analyze_structure_results
@@ -662,6 +675,115 @@ class CandidateStageEndToEndTests(unittest.TestCase):
         )
         return config_path, source_run
 
+    def _write_verified_stage3_run(
+        self,
+        root: Path,
+        config_path: Path,
+        source_run: Path,
+        *,
+        hour: int = 8,
+    ) -> Path:
+        candidate_run = write_candidate_run(
+            analyze_candidate_specification(config_path, source_run_dir=source_run),
+            now=datetime(2026, 7, 15, hour, 0, tzinfo=timezone.utc),
+        )
+        prepared = write_structure_job(
+            config_path,
+            source_run_dir=candidate_run,
+            output_root=root / f"transfer-{hour}",
+            created_at=datetime(2026, 7, 15, hour, 10, tzinfo=timezone.utc),
+        )
+        archive = self._write_stage3_result_archive(
+            Path(prepared["job_dir"]), root / f"stage3-results-{hour}.tar.gz"
+        )
+        return write_structure_run(
+            analyze_structure_results(
+                config_path,
+                result_archive=archive,
+                source_run_dir=candidate_run,
+                job_dir=Path(prepared["job_dir"]),
+            ),
+            now=datetime(2026, 7, 15, hour, 20, tzinfo=timezone.utc),
+        )
+
+    @staticmethod
+    def _write_empty_residue_evidence(
+        path: Path,
+        *,
+        adapter_id: str,
+        candidate_batch_sha256: str,
+    ) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "vaxflow.residue-evidence.v1",
+                    "adapter_id": adapter_id,
+                    "candidate_batch_sha256": candidate_batch_sha256,
+                    "tool": {
+                        "name": f"fixture-{adapter_id}",
+                        "version": "1.0.0",
+                        "revision": "fixture-revision",
+                    },
+                    "observations": [],
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _write_codon_usage(path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "vaxflow.codon-usage.v1",
+                    "species": "fixture-host",
+                    "provenance": {
+                        "source": "fixture",
+                        "version": "1",
+                        "revision": "fixture-revision",
+                    },
+                    "codon_frequencies": {
+                        codon: float(index + 1)
+                        for index, (codon, amino_acid) in enumerate(sorted(CODON_TABLE.items()))
+                        if amino_acid != "*"
+                    },
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _write_empty_product_evidence(
+        path: Path,
+        *,
+        schema_version: str,
+        adapter_id: str,
+        binding_field: str,
+        binding_sha256: str,
+    ) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": schema_version,
+                    "adapter_id": adapter_id,
+                    binding_field: binding_sha256,
+                    "tool": {
+                        "name": f"fixture-{adapter_id}",
+                        "version": "1.0.0",
+                        "revision": "fixture-revision",
+                    },
+                    "observations": [],
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+
     def test_stage2_infers_actual_component_order_and_writes_verified_run(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             config_path, source_run = self._write_stage2_project(Path(temporary_dir))
@@ -874,6 +996,501 @@ class CandidateStageEndToEndTests(unittest.TestCase):
                 ),
                 verification["errors"],
             )
+
+    def test_stage4_5_missing_inputs_are_explicit_and_run_verifies(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, source_run = self._write_stage2_project(root)
+            structure_run = self._write_verified_stage3_run(
+                root, config_path, source_run, hour=8
+            )
+
+            initialized = initialize_assessment_specifications(
+                config_path, source_run_dir=structure_run
+            )
+            analysis = analyze_post_structure_stages(
+                config_path, source_run_dir=structure_run
+            )
+            continuation = write_post_structure_run(
+                analysis,
+                now=datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(len(initialized["created"]), 2)
+            self.assertEqual(analysis.immune_result["status"], "needs_data")
+            self.assertEqual(analysis.developability_result["status"], "needs_data")
+            self.assertTrue(analysis.immune_result["requirements"])
+            self.assertTrue(analysis.developability_result["requirements"])
+            self.assertTrue(
+                all(
+                    candidate["categories"]["surface_accessibility_proxy"]["status"]
+                    == "evaluated"
+                    for candidate in analysis.immune_result["candidates"]
+                )
+            )
+            verification = verify_run(continuation)
+            self.assertEqual(verification["status"], "pass", verification["errors"])
+
+    def test_stage4_5_complete_versioned_inputs_recompute_exactly(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, source_run = self._write_stage2_project(root)
+            structure_run = self._write_verified_stage3_run(
+                root, config_path, source_run, hour=10
+            )
+            initialized = initialize_assessment_specifications(
+                config_path, source_run_dir=structure_run
+            )
+            runtime_root = Path(
+                json.loads(config_path.read_text(encoding="utf-8"))["runtime_root"]
+            )
+            batch_path = (
+                structure_run
+                / "nodes/candidate_specification/candidate_batch.json"
+            )
+            batch = json.loads(batch_path.read_text(encoding="utf-8"))
+            batch_sha = hashlib.sha256(batch_path.read_bytes()).hexdigest()
+            source_controls = {
+                candidate["inferred_components"][0]["source_protein_id"]: candidate
+                for candidate in batch["candidates"]
+                if candidate["candidate_type"] == "source_control"
+            }
+
+            immune_path = Path(initialized["immune_specification"])
+            immune = json.loads(immune_path.read_text(encoding="utf-8"))
+            alignment_root = runtime_root / "input/stage4/alignments"
+            for source_id, candidate in source_controls.items():
+                alignment = alignment_root / f"{source_id}.fasta"
+                alignment.parent.mkdir(parents=True, exist_ok=True)
+                sequence = candidate["amino_acid_sequence"]
+                alignment.write_text(
+                    f">reference\n{sequence}\n>panel-2\n{sequence}\n>panel-3\n{sequence}\n",
+                    encoding="utf-8",
+                )
+                immune["pathogen_panel"]["source_alignments"][source_id] = {
+                    "alignment_path": str(alignment.relative_to(runtime_root)),
+                    "reference_record_id": "reference",
+                }
+            panel_path = runtime_root / "input/stage4/bola-panel.json"
+            panel_path.write_text('{"schema_version":1,"alleles":[]}\n', encoding="utf-8")
+            immune["host"].update(
+                {
+                    "population_status": "approved",
+                    "population_description": "fixture population",
+                    "mhc_panel_path": str(panel_path.relative_to(runtime_root)),
+                }
+            )
+            immune["pathogen_panel"]["status"] = "approved"
+            immune["policy"]["status"] = "approved"
+            for adapter_id in ADAPTER_IDS:
+                evidence_path = runtime_root / f"input/stage4/evidence/{adapter_id}.json"
+                self._write_empty_residue_evidence(
+                    evidence_path,
+                    adapter_id=adapter_id,
+                    candidate_batch_sha256=batch_sha,
+                )
+                immune["adapters"][adapter_id] = {
+                    "status": "provided",
+                    "result_path": str(evidence_path.relative_to(runtime_root)),
+                }
+            immune_path.write_text(
+                json.dumps(immune, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+
+            developability_path = Path(initialized["developability_specification"])
+            developability = json.loads(
+                developability_path.read_text(encoding="utf-8")
+            )
+            developability["expression_context"].update(
+                {
+                    "status": "approved",
+                    "host": "fixture-host",
+                    "compartment": "fixture-cytosol",
+                    "purification_strategy": "fixture-affinity",
+                    "formulation_context": "fixture-buffer",
+                }
+            )
+            developability["policy"]["status"] = "approved"
+            for adapter_id in DEVELOPABILITY_ADAPTER_IDS:
+                evidence_path = runtime_root / f"input/stage5/evidence/{adapter_id}.json"
+                self._write_empty_residue_evidence(
+                    evidence_path,
+                    adapter_id=adapter_id,
+                    candidate_batch_sha256=batch_sha,
+                )
+                developability["external_adapters"][adapter_id] = {
+                    "status": "provided",
+                    "result_path": str(evidence_path.relative_to(runtime_root)),
+                }
+            developability_path.write_text(
+                json.dumps(developability, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            analysis = analyze_post_structure_stages(
+                config_path, source_run_dir=structure_run
+            )
+            continuation = write_post_structure_run(
+                analysis,
+                now=datetime(2026, 7, 15, 11, 0, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(analysis.immune_result["status"], "evaluated")
+            self.assertEqual(analysis.developability_result["status"], "evaluated")
+            self.assertEqual(analysis.immune_result["requirements"], [])
+            self.assertEqual(analysis.developability_result["requirements"], [])
+            verification = verify_run(continuation)
+            self.assertEqual(verification["status"], "pass", verification["errors"])
+
+    def test_stage5_verifier_detects_semantic_tampering_after_reindex(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, source_run = self._write_stage2_project(root)
+            structure_run = self._write_verified_stage3_run(
+                root, config_path, source_run, hour=12
+            )
+            initialize_assessment_specifications(
+                config_path, source_run_dir=structure_run
+            )
+            continuation = write_post_structure_run(
+                analyze_post_structure_stages(
+                    config_path, source_run_dir=structure_run
+                ),
+                now=datetime(2026, 7, 15, 13, 0, tzinfo=timezone.utc),
+            )
+            result_path = (
+                continuation
+                / "nodes/developability_assessment/developability_assessments.json"
+            )
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            result["candidates"][0]["descriptors"]["gravy"] = 99.0
+            result_path.write_text(
+                json.dumps(result, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            manifest = json.loads(
+                (continuation / "manifest.json").read_text(encoding="utf-8")
+            )
+            rebuilt = build_artifact_index(
+                continuation, manifest["project_id"], manifest["run_id"]
+            )
+            (continuation / "artifact_index.json").write_text(
+                json.dumps(rebuilt, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            verification = verify_run(continuation)
+            self.assertEqual(verification["status"], "fail")
+            self.assertTrue(
+                any(
+                    "stage5-developability-reproducibility" in error
+                    for error in verification["errors"]
+                ),
+                verification["errors"],
+            )
+
+    def test_stage1_to_stage7_missing_data_control_flow_is_reproducible(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, source_run = self._write_stage2_project(root)
+            stage3_run = self._write_verified_stage3_run(
+                root, config_path, source_run, hour=14
+            )
+            initialize_assessment_specifications(
+                config_path, source_run_dir=stage3_run
+            )
+            stage5_run = write_post_structure_run(
+                analyze_post_structure_stages(
+                    config_path, source_run_dir=stage3_run
+                ),
+                now=datetime(2026, 7, 15, 15, 0, tzinfo=timezone.utc),
+            )
+            initialize_product_specifications(
+                config_path, source_run_dir=stage5_run
+            )
+            product_analysis = analyze_product_designs(
+                config_path, source_run_dir=stage5_run
+            )
+            stage6_run = write_product_design_run(
+                product_analysis,
+                now=datetime(2026, 7, 15, 16, 0, tzinfo=timezone.utc),
+            )
+            initialize_ranking_specification(
+                config_path, source_run_dir=stage6_run
+            )
+            ranking_analysis = analyze_integrated_ranking(
+                config_path, source_run_dir=stage6_run
+            )
+            stage7_run = write_ranking_run(
+                ranking_analysis,
+                now=datetime(2026, 7, 15, 17, 0, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(product_analysis.protein_result["status"], "needs_data")
+            self.assertEqual(product_analysis.mrna_result["status"], "needs_data")
+            self.assertEqual(ranking_analysis.result["status"], "needs_data")
+            self.assertEqual(ranking_analysis.result["formal_portfolio"], [])
+            self.assertTrue(
+                all(
+                    product["translation_verified"]
+                    for product in product_analysis.protein_result["products"]
+                    if product["coding_sequence_dna"] is not None
+                )
+            )
+            self.assertTrue(
+                any(
+                    product["coding_source"]
+                    == "candidate_control_rejected_translation_mismatch"
+                    for product in product_analysis.protein_result["products"]
+                )
+            )
+            self.assertTrue(
+                all(
+                    design["translation_verified"]
+                    for design in product_analysis.mrna_result["designs"]
+                )
+            )
+            stage6_verification = verify_run(stage6_run)
+            stage7_verification = verify_run(stage7_run)
+            self.assertEqual(
+                stage6_verification["status"], "pass", stage6_verification["errors"]
+            )
+            self.assertEqual(
+                stage7_verification["status"], "pass", stage7_verification["errors"]
+            )
+
+    def test_stage7_verifier_detects_score_tampering_after_reindex(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, source_run = self._write_stage2_project(root)
+            stage3_run = self._write_verified_stage3_run(
+                root, config_path, source_run, hour=18
+            )
+            initialize_assessment_specifications(config_path, source_run_dir=stage3_run)
+            stage5_run = write_post_structure_run(
+                analyze_post_structure_stages(config_path, source_run_dir=stage3_run),
+                now=datetime(2026, 7, 15, 19, 0, tzinfo=timezone.utc),
+            )
+            initialize_product_specifications(config_path, source_run_dir=stage5_run)
+            stage6_run = write_product_design_run(
+                analyze_product_designs(config_path, source_run_dir=stage5_run),
+                now=datetime(2026, 7, 15, 20, 0, tzinfo=timezone.utc),
+            )
+            initialize_ranking_specification(config_path, source_run_dir=stage6_run)
+            stage7_run = write_ranking_run(
+                analyze_integrated_ranking(config_path, source_run_dir=stage6_run),
+                now=datetime(2026, 7, 15, 21, 0, tzinfo=timezone.utc),
+            )
+            result_path = stage7_run / "nodes/integrated_ranking/ranking_result.json"
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            result["rankings"][0]["score"] = 1.0
+            result_path.write_text(
+                json.dumps(result, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            manifest = json.loads((stage7_run / "manifest.json").read_text(encoding="utf-8"))
+            rebuilt = build_artifact_index(
+                stage7_run, manifest["project_id"], manifest["run_id"]
+            )
+            (stage7_run / "artifact_index.json").write_text(
+                json.dumps(rebuilt, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            verification = verify_run(stage7_run)
+            self.assertEqual(verification["status"], "fail")
+            self.assertTrue(
+                any(
+                    "stage7-ranking-reproducibility" in error
+                    for error in verification["errors"]
+                ),
+                verification["errors"],
+            )
+
+    def test_stage6_generates_translation_safe_pareto_designs_with_versioned_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, source_run = self._write_stage2_project(root)
+            stage3_run = self._write_verified_stage3_run(
+                root, config_path, source_run, hour=22
+            )
+            initialize_assessment_specifications(config_path, source_run_dir=stage3_run)
+            stage5_run = write_post_structure_run(
+                analyze_post_structure_stages(config_path, source_run_dir=stage3_run),
+                now=datetime(2026, 7, 15, 23, 0, tzinfo=timezone.utc),
+            )
+            initialized = initialize_product_specifications(
+                config_path, source_run_dir=stage5_run
+            )
+            runtime_root = Path(
+                json.loads(config_path.read_text(encoding="utf-8"))["runtime_root"]
+            )
+            codon_path = runtime_root / "input/stage6/fixture-codon-usage.json"
+            self._write_codon_usage(codon_path)
+
+            protein_path = Path(initialized["protein_specification"])
+            protein = json.loads(protein_path.read_text(encoding="utf-8"))
+            protein["selection"]["status"] = "approved"
+            protein["expression_context"].update(
+                {
+                    "status": "approved",
+                    "host": "fixture-host",
+                    "compartment": "fixture-cytosol",
+                    "vector_family": "fixture-vector",
+                    "purification_strategy": "fixture-affinity",
+                    "final_product_form": "fixture-soluble-protein",
+                }
+            )
+            protein["policy"]["status"] = "approved"
+            protein["codon_usage_table_path"] = str(codon_path.relative_to(runtime_root))
+            protein_path.write_text(
+                json.dumps(protein, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+
+            mrna_path = Path(initialized["mrna_specification"])
+            mrna = json.loads(mrna_path.read_text(encoding="utf-8"))
+            mrna["selection"]["status"] = "approved"
+            mrna["target_context"].update(
+                {
+                    "status": "approved",
+                    "species": "fixture-host",
+                    "cell_context": "fixture-cell",
+                    "delivery_platform": "fixture-lnp",
+                }
+            )
+            mrna["generation"].update({"status": "enabled", "designs_per_candidate": 2})
+            mrna["constraints"].update(
+                {
+                    "maximum_gc_fraction": 0.95,
+                    "target_gc_fraction": 0.60,
+                    "maximum_homopolymer_length": 30,
+                }
+            )
+            mrna["noncoding_elements"].update(
+                {
+                    "status": "approved",
+                    "five_prime_utr": "ACGU",
+                    "three_prime_utr": "UGCA",
+                    "poly_a_length": 12,
+                    "cap_assumption": "fixture-cap",
+                    "modified_nucleoside_assumption": "fixture-unmodified",
+                }
+            )
+            mrna["policy"]["status"] = "approved"
+            mrna["codon_usage_table_path"] = str(codon_path.relative_to(runtime_root))
+            mrna_path.write_text(
+                json.dumps(mrna, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+
+            provisional = analyze_product_designs(config_path, source_run_dir=stage5_run)
+            for adapter_id in ("structure_recheck", "expression_support"):
+                path = runtime_root / f"input/stage6/protein-evidence/{adapter_id}.json"
+                self._write_empty_product_evidence(
+                    path,
+                    schema_version="vaxflow.product-evidence.v1",
+                    adapter_id=adapter_id,
+                    binding_field="product_batch_sha256",
+                    binding_sha256=provisional.protein_result["product_batch_sha256"],
+                )
+                protein["external_adapters"][adapter_id] = {
+                    "status": "provided",
+                    "result_path": str(path.relative_to(runtime_root)),
+                }
+            protein_path.write_text(
+                json.dumps(protein, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            for adapter_id in ("rna_structure", "evo2_sequence_score"):
+                path = runtime_root / f"input/stage6/mrna-evidence/{adapter_id}.json"
+                if adapter_id == "evo2_sequence_score":
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(
+                        json.dumps(
+                            {
+                                "schema_version": "vaxflow.mrna-evidence.v1",
+                                "adapter_id": adapter_id,
+                                "mrna_design_batch_sha256": provisional.mrna_result[
+                                    "mrna_design_batch_sha256"
+                                ],
+                                "tool": {
+                                    "name": "fixture-evo2",
+                                    "version": "7b",
+                                    "revision": "fixture-revision",
+                                },
+                                "observations": [
+                                    {
+                                        "evidence_id": f"evo2-{index}",
+                                        "design_id": design["design_id"],
+                                        "status": "context",
+                                        "score": float(index),
+                                    }
+                                    for index, design in enumerate(
+                                        provisional.mrna_result["designs"], 1
+                                    )
+                                ],
+                            },
+                            sort_keys=True,
+                        ),
+                        encoding="utf-8",
+                    )
+                else:
+                    self._write_empty_product_evidence(
+                        path,
+                        schema_version="vaxflow.mrna-evidence.v1",
+                        adapter_id=adapter_id,
+                        binding_field="mrna_design_batch_sha256",
+                        binding_sha256=provisional.mrna_result["mrna_design_batch_sha256"],
+                    )
+                mrna["external_adapters"][adapter_id] = {
+                    "status": "provided",
+                    "result_path": str(path.relative_to(runtime_root)),
+                }
+            mrna_path.write_text(
+                json.dumps(mrna, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+
+            analysis = analyze_product_designs(config_path, source_run_dir=stage5_run)
+            optimized = [
+                design
+                for design in analysis.mrna_result["designs"]
+                if design["design_type"].startswith("synonymous_")
+            ]
+            self.assertEqual(len(optimized), 12)
+            self.assertTrue(all(design["translation_verified"] for design in optimized))
+            self.assertTrue(all(design["full_mrna_sequence"] for design in optimized))
+            self.assertTrue(
+                all(
+                    state["status"] == "evaluated"
+                    for state in analysis.protein_result["adapter_states"].values()
+                )
+            )
+            self.assertTrue(
+                all(
+                    state["status"] == "evaluated"
+                    for state in analysis.mrna_result["adapter_states"].values()
+                )
+            )
+            stage6_run = write_product_design_run(
+                analysis,
+                now=datetime(2026, 7, 16, 0, 0, tzinfo=timezone.utc),
+            )
+            verification = verify_run(stage6_run)
+            self.assertEqual(verification["status"], "pass", verification["errors"])
+            initialize_ranking_specification(config_path, source_run_dir=stage6_run)
+            ranking = analyze_integrated_ranking(
+                config_path, source_run_dir=stage6_run
+            )
+            evo2_components = [
+                component
+                for row in ranking.result["rankings"]
+                if row["modality"] == "mrna"
+                for component in row["components"]
+                if component["feature_id"] == "mrna_evo2_mean_score"
+            ]
+            self.assertTrue(evo2_components)
+            self.assertTrue(
+                all(component["raw_value"] is not None for component in evo2_components)
+            )
+            self.assertTrue(all(component["weight"] == 0.0 for component in evo2_components))
 
 
 if __name__ == "__main__":

@@ -46,11 +46,11 @@ terminal node, and two modality branches that rejoin before experiment release:
 1. **Program definition and source intake (implemented)**
 2. **Candidate specification and generation (manual/provisional specification implemented)**
 3. **Protein structure assessment (exploratory ESMFold2 path implemented)**
-4. **Immune evidence assessment**
-5. **Developability and manufacturability assessment**
-6. **Recombinant protein product design (6A)**
-7. **mRNA product design (6B)**
-8. **Integrated ranking and portfolio selection**
+4. **Immune evidence assessment (deterministic partial-evidence path implemented)**
+5. **Developability and manufacturability assessment (deterministic intrinsic and adapter path implemented)**
+6. **Recombinant protein product design (6A, exploratory path implemented)**
+7. **mRNA product design (6B, synonymous-design and adapter path implemented)**
+8. **Integrated ranking and portfolio selection (provisional, unreleased path implemented)**
 9. **Experiment design and release**
 10. **Assay ingestion and quality control**
 11. **Learning, calibration, and next-round design**

@@ -15,8 +15,25 @@ from .candidate_specification import (
     CandidateBatchAnalysis,
     analyze_candidate_specification,
 )
+from .assessment_specs import (
+    DEVELOPABILITY_STAGE_ID,
+    IMMUNE_STAGE_ID,
+    initialize_assessment_specifications,
+)
 from .domain import ProjectAnalysis
 from .pipeline import analyze_project
+from .post_structure_assessment import analyze_post_structure_stages
+from .post_structure_reporting import write_post_structure_run
+from .product_design import analyze_product_designs
+from .product_reporting import write_product_design_run
+from .product_specs import (
+    MRNA_PRODUCT_STAGE_ID,
+    PROTEIN_PRODUCT_STAGE_ID,
+    initialize_product_specifications,
+)
+from .ranking import analyze_integrated_ranking
+from .ranking_reporting import write_ranking_run
+from .ranking_specs import RANKING_STAGE_ID, initialize_ranking_specification
 from .reporting import write_run_artifacts
 from .structure_job import write_structure_job
 from .structure_assessment import analyze_structure_results
@@ -104,6 +121,66 @@ def _build_parser() -> argparse.ArgumentParser:
         "--job-dir",
         type=Path,
         help="unpacked job directory; inferred from the result job identity by default",
+    )
+    init_stage4_5_parser = subparsers.add_parser(
+        "init-stage4-5",
+        help="create versioned Stage 4 immune and Stage 5 developability specifications",
+    )
+    init_stage4_5_parser.add_argument("project_config", type=Path)
+    init_stage4_5_parser.add_argument(
+        "--from-run",
+        type=Path,
+        help="verified Stage 3 run; defaults to the project's latest run",
+    )
+    run_stage4_5_parser = subparsers.add_parser(
+        "run-stage4-5",
+        help="write deterministic Stage 4/5 evidence nodes from a verified Stage 3 run",
+    )
+    run_stage4_5_parser.add_argument("project_config", type=Path)
+    run_stage4_5_parser.add_argument(
+        "--from-run",
+        type=Path,
+        help="verified Stage 3 run; defaults to the project's latest Stage 3 run",
+    )
+    init_stage6_parser = subparsers.add_parser(
+        "init-stage6",
+        help="create versioned recombinant-protein and mRNA product specifications",
+    )
+    init_stage6_parser.add_argument("project_config", type=Path)
+    init_stage6_parser.add_argument(
+        "--from-run",
+        type=Path,
+        help="verified combined Stage 4/5 run; defaults to the project's latest run",
+    )
+    run_stage6_parser = subparsers.add_parser(
+        "run-stage6",
+        help="write deterministic Stage 6A protein and Stage 6B mRNA product nodes",
+    )
+    run_stage6_parser.add_argument("project_config", type=Path)
+    run_stage6_parser.add_argument(
+        "--from-run",
+        type=Path,
+        help="verified combined Stage 4/5 run; defaults to the project's latest run",
+    )
+    init_stage7_parser = subparsers.add_parser(
+        "init-stage7",
+        help="create a versioned transparent integrated-ranking policy",
+    )
+    init_stage7_parser.add_argument("project_config", type=Path)
+    init_stage7_parser.add_argument(
+        "--from-run",
+        type=Path,
+        help="verified combined Stage 6 run; defaults to the project's latest run",
+    )
+    run_stage7_parser = subparsers.add_parser(
+        "run-stage7",
+        help="write deterministic integrated rankings and provisional portfolios",
+    )
+    run_stage7_parser.add_argument("project_config", type=Path)
+    run_stage7_parser.add_argument(
+        "--from-run",
+        type=Path,
+        help="verified combined Stage 6 run; defaults to the project's latest run",
     )
     return parser
 
@@ -280,6 +357,101 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Run artifacts: {run_dir}")
             print(f"Node summary: {node_dir / 'summary.json'}")
             print(f"Node report: {node_dir / 'report.html'}")
+            return 0
+
+        if args.command == "init-stage4-5":
+            initialized = initialize_assessment_specifications(
+                args.project_config,
+                source_run_dir=args.from_run,
+            )
+            print(f"Stage 4/5 specifications: source_run={initialized['source_run']}")
+            print(f"Immune specification: {initialized['immune_specification']}")
+            print(
+                "Developability specification: "
+                f"{initialized['developability_specification']}"
+            )
+            print(f"Created files: {len(initialized['created'])}")
+            return 0
+
+        if args.command == "run-stage4-5":
+            post_structure = analyze_post_structure_stages(
+                args.project_config,
+                source_run_dir=args.from_run,
+            )
+            run_dir = write_post_structure_run(post_structure)
+            immune_node = run_dir / "nodes" / IMMUNE_STAGE_ID
+            developability_node = run_dir / "nodes" / DEVELOPABILITY_STAGE_ID
+            print(
+                "Stage 4/5 assessment: "
+                f"immune={post_structure.immune_result['status']} "
+                f"developability={post_structure.developability_result['status']} "
+                f"immune_missing={len(post_structure.immune_result['requirements'])} "
+                "developability_missing="
+                f"{len(post_structure.developability_result['requirements'])}"
+            )
+            print(f"Run artifacts: {run_dir}")
+            print(f"Immune report: {immune_node / 'report.html'}")
+            print(f"Developability report: {developability_node / 'report.html'}")
+            return 0
+
+        if args.command == "init-stage6":
+            initialized = initialize_product_specifications(
+                args.project_config,
+                source_run_dir=args.from_run,
+            )
+            print(f"Stage 6 specifications: source_run={initialized['source_run']}")
+            print(f"Protein specification: {initialized['protein_specification']}")
+            print(f"mRNA specification: {initialized['mrna_specification']}")
+            print(f"Created files: {len(initialized['created'])}")
+            return 0
+
+        if args.command == "run-stage6":
+            product_analysis = analyze_product_designs(
+                args.project_config,
+                source_run_dir=args.from_run,
+            )
+            run_dir = write_product_design_run(product_analysis)
+            protein_node = run_dir / "nodes" / PROTEIN_PRODUCT_STAGE_ID
+            mrna_node = run_dir / "nodes" / MRNA_PRODUCT_STAGE_ID
+            print(
+                "Stage 6 product design: "
+                f"protein={product_analysis.protein_result['status']} "
+                f"mrna={product_analysis.mrna_result['status']} "
+                f"protein_products={len(product_analysis.protein_result['products'])} "
+                f"mrna_designs={len(product_analysis.mrna_result['designs'])}"
+            )
+            print(f"Run artifacts: {run_dir}")
+            print(f"Protein report: {protein_node / 'report.html'}")
+            print(f"mRNA report: {mrna_node / 'report.html'}")
+            return 0
+
+        if args.command == "init-stage7":
+            initialized = initialize_ranking_specification(
+                args.project_config,
+                source_run_dir=args.from_run,
+            )
+            print(f"Stage 7 specification: source_run={initialized['source_run']}")
+            print(f"Ranking specification: {initialized['ranking_specification']}")
+            print(f"Created files: {len(initialized['created'])}")
+            return 0
+
+        if args.command == "run-stage7":
+            ranking_analysis = analyze_integrated_ranking(
+                args.project_config,
+                source_run_dir=args.from_run,
+            )
+            run_dir = write_ranking_run(ranking_analysis)
+            node = run_dir / "nodes" / RANKING_STAGE_ID
+            print(
+                "Stage 7 integrated ranking: "
+                f"status={ranking_analysis.result['status']} "
+                f"rows={len(ranking_analysis.result['rankings'])} "
+                "provisional="
+                f"{sum(len(items) for items in ranking_analysis.result['provisional_portfolios'].values())} "
+                "formal=0"
+            )
+            print(f"Run artifacts: {run_dir}")
+            print(f"Ranking report: {node / 'report.html'}")
             return 0
 
         if args.command in {"validate-stage2", "run-stage2"}:

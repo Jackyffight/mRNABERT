@@ -5,7 +5,8 @@ kept separate from the mRNABERT training code so protein design, structure model
 mRNA design, ranking, and wet-lab feedback can evolve without coupling their state
 to a single model implementation.
 
-The current milestone implements source intake and provisional candidate specification:
+The current milestone implements the reproducible computational path from source
+intake through provisional integrated ranking:
 
 - strict amino-acid and CDS FASTA parsing;
 - one-to-one matching by FASTA ID;
@@ -21,11 +22,22 @@ The current milestone implements source intake and provisional candidate specifi
 - checksum-bound ESMFold2-Fast GPU jobs and resumable remote execution;
 - deterministic Stage 3 result import, residue confidence, principal-axis geometry,
   component/boundary analysis, source-geometry comparisons, and bilingual reports.
+- Stage 4 residue-mapped conservation, structure-surface proxy, and pinned immune
+  evidence adapters with missing evidence preserved as `not_evaluated`;
+- Stage 5 intrinsic developability descriptors and pinned external predictor adapters;
+- parallel Stage 6A recombinant-protein and Stage 6B mRNA product specifications;
+- exact antigen/expression/final-product separation and CDS translation auditing;
+- deterministic synonymous CDS search, hard constraints, Pareto selection, and exact
+  full-mRNA assembly once versioned codon and non-coding inputs are supplied;
+- Stage 7 hard gates, transparent feature contributions, coverage penalties,
+  control-aware diversity selection, and weight-sensitivity analysis;
+- semantic verifiers that recompute Stage 4-7 results after integrity checks.
 
-It does **not** yet predict antigenicity, safety, expression, or vaccine efficacy.
-Stage 3 records exploratory structure predictions as computational hypotheses;
-immune, developability, product-design, and experimental stages remain explicitly
-marked `not_evaluated`.
+It does **not** claim antigenicity, safety, expression success, manufacturing success,
+or vaccine efficacy. Stage 3-7 outputs are computational hypotheses and technical
+prioritization. Missing external evidence remains `not_evaluated`; Stage 7 always
+leaves the formal portfolio empty, so experiment release still requires a later
+human-controlled node.
 
 ## First Three Proteins
 
@@ -126,6 +138,48 @@ The importer safely extracts the bounded archive, verifies all remote identities
 and PDB checksums, requires exact PDB/candidate residue correspondence, recomputes
 the versioned geometry rules, and writes an immutable bilingual Stage 3 run.
 
+Initialize and run the combined Stage 4/5 evidence assessment:
+
+```bash
+./vaxflow init-stage4-5 projects/three-protein/project.json \
+  --from-run /absolute/path/to/verified-stage3-run
+./vaxflow run-stage4-5 projects/three-protein/project.json \
+  --from-run /absolute/path/to/verified-stage3-run
+```
+
+The first command creates editable specifications under the external runtime root.
+The second command succeeds when optional datasets or model results are absent, but
+affected categories and node status remain explicit `not_evaluated`/`needs_data`.
+
+Initialize and run both Stage 6 product branches:
+
+```bash
+./vaxflow init-stage6 projects/three-protein/project.json \
+  --from-run /absolute/path/to/verified-stage4-5-run
+./vaxflow run-stage6 projects/three-protein/project.json \
+  --from-run /absolute/path/to/verified-stage4-5-run
+```
+
+Stage 6A writes exact protein constructs, coding sequences, and an ESMFold2 structure
+recheck payload for constructs changed by expression additions. Stage 6B retains
+source-CDS controls and, after a versioned 61-codon table is configured, creates
+translation-safe Pareto designs. No sequence with a translation mismatch can enter
+the output batch.
+
+Initialize and run Stage 7 provisional ranking:
+
+```bash
+./vaxflow init-stage7 projects/three-protein/project.json \
+  --from-run /absolute/path/to/verified-stage6-run
+./vaxflow run-stage7 projects/three-protein/project.json \
+  --from-run /absolute/path/to/verified-stage6-run
+```
+
+The ranking policy is a runtime input, not hidden code. Features with weight zero are
+reported but cannot affect rank. Missing positive-weight evidence is penalized, hard
+gates run before ranking, excluded candidates remain visible, and the output is a
+provisional portfolio only.
+
 ## New Project
 
 To create another project without copying files by hand:
@@ -151,6 +205,8 @@ PYTHONPATH=src python -m unittest discover -s tests
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design-build-test-learn path.
+Stage 4-7 implementation details and external input contracts are recorded in
+[docs/stage4-7-computational-pipeline.md](docs/stage4-7-computational-pipeline.md).
 The frozen route is recorded in
 [docs/workflow-v1.md](docs/workflow-v1.md) and
 `docs/workflow-v1.json`; CI-style tests prevent those contracts from drifting
