@@ -16,6 +16,7 @@ from design_flow.fasta import parse_fasta
 from design_flow.pipeline import analyze_project
 from design_flow.qc import analyze_sequence_pairs, normalize_nucleotide, translate_cds
 from design_flow.reporting import write_run_artifacts
+from design_flow.workflow import CURRENT_STAGE_ID
 
 
 VALID_AA = [
@@ -98,7 +99,9 @@ class SequenceAuditTests(unittest.TestCase):
 
 class EndToEndTests(unittest.TestCase):
     def _write_project(self, root: Path) -> Path:
-        input_dir = root / "input"
+        source_dir = root / "source-project"
+        runtime_dir = root / "runtime-project"
+        input_dir = runtime_dir / "input"
         input_dir.mkdir(parents=True)
         (input_dir / "proteins_aa.fasta").write_text(
             ">protein_1\nMAA\n>protein_2\nMKF\n>protein_3\nMGP\n",
@@ -114,17 +117,22 @@ class EndToEndTests(unittest.TestCase):
             "schema_version": 1,
             "project_id": "test-three-protein",
             "expected_protein_count": 3,
+            "runtime_root": str(runtime_dir),
             "inputs": {
                 "amino_acid_fasta": "input/proteins_aa.fasta",
                 "nucleotide_fasta": "input/proteins_cds.fasta",
             },
             "outputs": {"run_root": "runs"},
             "context": {
-                "protein_expression_host": "unspecified",
-                "mrna_target_species": "unspecified",
+                "target_indication": "test indication",
+                "intended_host_species": "test host",
+                "product_modalities": ["recombinant_protein", "mrna"],
+                "protein_expression_host": "test expression host",
+                "mrna_target_species": "test host",
             },
         }
-        config_path = root / "project.json"
+        source_dir.mkdir(parents=True)
+        config_path = source_dir / "project.json"
         config_path.write_text(json.dumps(config), encoding="utf-8")
         return config_path
 
@@ -140,15 +148,39 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(analysis.status, "pass")
             self.assertEqual(
                 {path.name for path in run_dir.iterdir()},
-                {"manifest.json", "proteins.json", "proteins.csv", "qc_issues.csv", "report.md"},
+                {"manifest.json", "workflow.json", "nodes"},
+            )
+            node_dir = run_dir / "nodes" / CURRENT_STAGE_ID
+            self.assertEqual(
+                {path.name for path in node_dir.iterdir()},
+                {
+                    "summary.json",
+                    "report.md",
+                    "input_audit.json",
+                    "process_record.json",
+                    "output_audit.json",
+                    "human_actions.json",
+                    "handoff.json",
+                    "proteins.json",
+                    "proteins.csv",
+                    "qc_issues.csv",
+                },
             )
             manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
-            latest = json.loads((root / "runs" / "latest.json").read_text(encoding="utf-8"))
-            self.assertEqual(manifest["status"], "pass")
-            self.assertEqual(manifest["stages"]["sequence_audit"], "pass")
-            self.assertEqual(manifest["stages"]["structure_prediction"], "not_evaluated")
+            workflow = json.loads((run_dir / "workflow.json").read_text(encoding="utf-8"))
+            summary = json.loads((node_dir / "summary.json").read_text(encoding="utf-8"))
+            latest = json.loads(
+                (root / "runtime-project" / "runs" / "latest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["status"], "complete")
+            self.assertEqual(manifest["runtime_root"], str(root / "runtime-project"))
+            self.assertEqual(manifest["nodes"][CURRENT_STAGE_ID]["status"], "complete")
+            self.assertEqual(summary["computational_audit_status"], "pass")
+            self.assertEqual(summary["handoff_readiness"], "ready")
+            self.assertEqual(workflow["stages"][0]["status"], "complete")
+            self.assertEqual(workflow["stages"][1]["status"], "not_evaluated")
             self.assertEqual(latest["run_id"], manifest["run_id"])
-            self.assertIn("does not establish", (run_dir / "report.md").read_text(encoding="utf-8"))
+            self.assertIn("does not establish", (node_dir / "report.md").read_text(encoding="utf-8"))
 
     def test_cli_validate_returns_zero_for_valid_project(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -157,9 +189,62 @@ class EndToEndTests(unittest.TestCase):
 
     def test_cli_init_refuses_to_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
-            project_dir = Path(temporary_dir) / "new-project"
-            self.assertEqual(cli_main(["init", str(project_dir)]), 0)
-            self.assertEqual(cli_main(["init", str(project_dir)]), 1)
+            root = Path(temporary_dir)
+            project_dir = root / "source-project"
+            runtime_dir = root / "runtime-project"
+            arguments = [
+                "init",
+                str(project_dir),
+                "--runtime-root",
+                str(runtime_dir),
+            ]
+            self.assertEqual(cli_main(arguments), 0)
+            self.assertEqual(cli_main(arguments), 1)
+
+    def test_runtime_inside_source_project_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path = self._write_project(root)
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            config["runtime_root"] = str(config_path.parent / "runtime")
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "outside the source project"):
+                analyze_project(config_path)
+
+    def test_open_human_questions_block_next_node_without_failing_sequence_qc(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path = self._write_project(root)
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            config["context"]["target_indication"] = "unspecified"
+            config["human_actions"] = [
+                {
+                    "action_id": "approve-controls",
+                    "question": "Approve immutable source controls.",
+                    "required_before_stage": "candidate_specification",
+                    "status": "open",
+                }
+            ]
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            analysis = analyze_project(config_path)
+            run_dir = write_run_artifacts(
+                analysis,
+                now=datetime(2026, 7, 13, 13, 0, tzinfo=timezone.utc),
+            )
+            node_dir = run_dir / "nodes" / CURRENT_STAGE_ID
+            summary = json.loads((node_dir / "summary.json").read_text(encoding="utf-8"))
+            handoff = json.loads((node_dir / "handoff.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(analysis.status, "pass")
+            self.assertEqual(summary["status"], "needs_human_input")
+            self.assertEqual(handoff["readiness"], "needs_human_input")
+            self.assertEqual(handoff["source_node_artifacts"]["input_audit"], "input_audit.json")
+            self.assertEqual(handoff["source_node_artifacts"]["output_audit"], "output_audit.json")
+            self.assertEqual(
+                set(handoff["blocking_action_ids"]),
+                {"approve-controls", "define-target-indication"},
+            )
 
 
 if __name__ == "__main__":

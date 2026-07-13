@@ -8,9 +8,11 @@ from pathlib import Path
 import re
 import sys
 
+from . import __version__
 from .domain import ProjectAnalysis
 from .pipeline import analyze_project
 from .reporting import write_run_artifacts
+from .workflow import CURRENT_STAGE_ID
 
 
 def _project_id(value: str) -> str:
@@ -24,11 +26,15 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="vaxflow",
         description="Traceable vaccine construct design workflow",
     )
-    parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    init_parser = subparsers.add_parser("init", help="create a three-protein project")
+    init_parser = subparsers.add_parser(
+        "init",
+        help="create a source project with an external runtime",
+    )
     init_parser.add_argument("project_dir", type=Path)
+    init_parser.add_argument("--runtime-root", type=Path, required=True)
     init_parser.add_argument("--project-id", type=_project_id, default="three-protein-vaccine")
     init_parser.add_argument("--expected-count", type=int, default=3)
 
@@ -48,28 +54,43 @@ def _placeholder_records(count: int, sequence_type: str) -> str:
     return "".join(f">protein_{index}\n{placeholder}\n" for index in range(1, count + 1))
 
 
-def _init_project(project_dir: Path, project_id: str, expected_count: int) -> int:
+def _init_project(
+    project_dir: Path,
+    runtime_root: Path,
+    project_id: str,
+    expected_count: int,
+) -> int:
     if expected_count < 1:
         raise ValueError("--expected-count must be a positive integer")
     project_dir = project_dir.resolve()
+    if not runtime_root.is_absolute():
+        raise ValueError("--runtime-root must be an absolute path")
+    runtime_root = runtime_root.resolve()
+    if runtime_root == project_dir or runtime_root.is_relative_to(project_dir):
+        raise ValueError("--runtime-root must be outside project_dir")
     config_path = project_dir / "project.json"
-    amino_acid_path = project_dir / "input" / "proteins_aa.fasta"
-    nucleotide_path = project_dir / "input" / "proteins_cds.fasta"
+    amino_acid_path = runtime_root / "input" / "proteins_aa.fasta"
+    nucleotide_path = runtime_root / "input" / "proteins_cds.fasta"
     existing = [path for path in (config_path, amino_acid_path, nucleotide_path) if path.exists()]
     if existing:
         raise ValueError(f"Refusing to overwrite existing project file: {existing[0]}")
 
     amino_acid_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     config = {
         "schema_version": 1,
         "project_id": project_id,
         "expected_protein_count": expected_count,
+        "runtime_root": str(runtime_root),
         "inputs": {
             "amino_acid_fasta": "input/proteins_aa.fasta",
             "nucleotide_fasta": "input/proteins_cds.fasta",
         },
         "outputs": {"run_root": "runs"},
         "context": {
+            "target_indication": "unspecified",
+            "intended_host_species": "unspecified",
+            "product_modalities": [],
             "protein_expression_host": "unspecified",
             "mrna_target_species": "unspecified",
         },
@@ -78,6 +99,7 @@ def _init_project(project_dir: Path, project_id: str, expected_count: int) -> in
     amino_acid_path.write_text(_placeholder_records(expected_count, "aa"), encoding="utf-8")
     nucleotide_path.write_text(_placeholder_records(expected_count, "cds"), encoding="utf-8")
     print(f"Created project: {config_path}")
+    print(f"Runtime root: {runtime_root}")
     print(f"Replace placeholder sequences in: {amino_acid_path}")
     print(f"Replace placeholder sequences in: {nucleotide_path}")
     return 0
@@ -107,14 +129,20 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
-            return _init_project(args.project_dir, args.project_id, args.expected_count)
+            return _init_project(
+                args.project_dir,
+                args.runtime_root,
+                args.project_id,
+                args.expected_count,
+            )
 
         analysis = analyze_project(args.project_config)
         _print_analysis(analysis)
         if args.command == "run":
             run_dir = write_run_artifacts(analysis)
             print(f"Run artifacts: {run_dir}")
-            print(f"Report: {run_dir / 'report.md'}")
+            print(f"Node summary: {run_dir / 'nodes' / CURRENT_STAGE_ID / 'summary.json'}")
+            print(f"Node report: {run_dir / 'nodes' / CURRENT_STAGE_ID / 'report.md'}")
         return 0 if analysis.status == "pass" else 2
     except (OSError, ValueError) as error:
         print(f"vaxflow: {error}", file=sys.stderr)

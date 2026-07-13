@@ -2,6 +2,7 @@
   "schema_version": 1,
   "project_id": "three-protein-vaccine",
   "expected_protein_count": 3,
+  "runtime_root": "/data00/home/wangzhi.wit/models/design-flow-runtime/three-protein",
   "inputs": {
     "amino_acid_fasta": "input/proteins_aa.fasta",
     "nucleotide_fasta": "input/proteins_cds.fasta"
@@ -10,7 +11,43 @@
     "run_root": "runs"
   },
   "context": {
+    "target_indication": "unspecified",
+    "intended_host_species": "unspecified",
+    "product_modalities": [
+      "recombinant_protein",
+      "mrna"
+    ],
     "protein_expression_host": "unspecified",
     "mrna_target_species": "unspecified"
-  }
+  },
+  "human_actions": [
+    {
+      "action_id": "confirm-source-provenance",
+      "question": "Provide the accession, source version, isolate or strain, and owner for each A33, B5, and L1 source sequence.",
+      "required_before_stage": "candidate_specification",
+      "status": "open",
+      "owner": "unassigned"
+    },
+    {
+      "action_id": "confirm-reference-controls",
+      "question": "Confirm that the supplied full-length A33, B5, and L1 proteins with original CDS are the immutable reference controls.",
+      "required_before_stage": "candidate_specification",
+      "status": "open",
+      "owner": "unassigned"
+    },
+    {
+      "action_id": "resolve-b5-optimized-cds",
+      "question": "Replace or formally reject the supplied B5 optimized CDS, which currently translates exactly to the supplied A33 protein.",
+      "required_before_stage": "mrna_product_design",
+      "status": "open",
+      "owner": "unassigned"
+    },
+    {
+      "action_id": "confirm-manual-construct-annotations",
+      "question": "Confirm truncation boundaries, initiator methionines, FLAG tag, linker identities, and domain order for the supplied manual constructs.",
+      "required_before_stage": "candidate_specification",
+      "status": "open",
+      "owner": "unassigned"
+    }
+  ]
 }

@@ -49,5 +49,6 @@ They are data-integrity findings, not biological efficacy conclusions.
    before those files can be compared with standalone FASTA records.
 
 The next executable action is to place the three approved full-length source pairs
-under `projects/three-protein/input/`, run `vaxflow validate`, and freeze the first
-sequence-audit run before generating any new construct.
+under `/data00/home/wangzhi.wit/models/design-flow-runtime/three-protein/input/`,
+run `vaxflow validate`, and freeze the first sequence-audit node before generating
+any new construct.

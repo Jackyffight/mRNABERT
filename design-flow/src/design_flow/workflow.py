@@ -1,0 +1,417 @@
+"""Complete system route and audit contract for every design-flow stage."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class StageDefinition:
+    order: str
+    stage_id: str
+    name: str
+    purpose: str
+    capabilities: tuple[str, ...]
+    input_audit: tuple[str, ...]
+    process: tuple[str, ...]
+    output_audit: tuple[str, ...]
+    human_intervention: tuple[str, ...]
+    depends_on: tuple[str, ...] = ()
+
+
+CURRENT_STAGE_ID = "program_and_source_intake"
+
+
+FULL_WORKFLOW = (
+    StageDefinition(
+        order="1",
+        stage_id=CURRENT_STAGE_ID,
+        name="Program definition and source intake",
+        purpose=(
+            "Freeze the product question, source identities, immutable reference controls, "
+            "and evidence provenance before any sequence is redesigned."
+        ),
+        capabilities=(
+            "Pair protein and CDS records and verify translation consistency.",
+            "Detect malformed, mislabeled, duplicated, or incomplete source records.",
+            "Create stable candidate IDs, input hashes, and a source evidence baseline.",
+        ),
+        input_audit=(
+            "Verify target indication, intended host, product modalities, owners, and success criteria.",
+            "Verify source accession/version, organism or isolate, file integrity, and record identity.",
+            "Verify AA/CDS record counts, alphabets, reading frames, start/stop behavior, and pairing IDs.",
+        ),
+        process=(
+            "Normalize FASTA formatting without silently changing biological sequence content.",
+            "Translate CDS with the declared genetic code and compare it residue by residue with AA input.",
+            "Calculate descriptive sequence metrics and quarantine inconsistent records.",
+        ),
+        output_audit=(
+            "Confirm every accepted source has an immutable ID, normalized sequences, and SHA-256 provenance.",
+            "Confirm errors, warnings, and exclusions are explicit and machine-readable.",
+            "Confirm the source set and unresolved decisions are ready for candidate specification."
+        ),
+        human_intervention=(
+            "Approve the project brief and immutable reference controls.",
+            "Resolve missing provenance and decide whether disputed or mislabeled files are replaced or rejected.",
+            "Assign owners and resolutions to every open action before its blocking stage."
+        ),
+    ),
+    StageDefinition(
+        order="2",
+        stage_id="candidate_specification",
+        name="Candidate specification and generation",
+        purpose=(
+            "Represent originals, truncations, manual controls, and generated fusion constructs under one "
+            "explicit lineage and construct grammar."
+        ),
+        capabilities=(
+            "Enumerate single-protein and multi-protein fusion candidates.",
+            "Track residue boundaries, domain order, linkers, tags, signal peptides, and cleavage sites.",
+            "Use pluggable sequence design models while preserving manually supplied controls."
+        ),
+        input_audit=(
+            "Accept only source records released by stage 1 and verify their hashes.",
+            "Audit allowed boundaries, required domains, forbidden edits, length limits, and modality constraints.",
+            "Audit every manual construct against its claimed components and annotations."
+        ),
+        process=(
+            "Generate candidates from a versioned grammar and record every parent-to-child transformation.",
+            "Deduplicate exact sequences and separate generation from scoring.",
+            "Retain original and manual constructs as named controls in every candidate batch."
+        ),
+        output_audit=(
+            "Verify exact AA sequence, component map, lineage, generator revision, and parameter set per candidate.",
+            "Verify no tag, linker, residue deletion, or insertion is implicit.",
+            "Verify candidate coverage and diversity against the approved design space."
+        ),
+        human_intervention=(
+            "Approve construct grammar, boundaries, domain order, linker families, tags, and required controls.",
+            "Review candidates violating biological assumptions even when computationally valid.",
+            "Freeze the candidate batch before expensive model evaluation."
+        ),
+        depends_on=(CURRENT_STAGE_ID,),
+    ),
+    StageDefinition(
+        order="3",
+        stage_id="protein_structure_assessment",
+        name="Protein structure assessment",
+        purpose=(
+            "Test whether each construct is structurally plausible and preserves intended domains, surfaces, "
+            "and interfaces before downstream ranking."
+        ),
+        capabilities=(
+            "Run one or more pinned monomer or complex structure predictors.",
+            "Extract confidence, disorder, clashes, domain geometry, interfaces, and refolding consistency.",
+            "Compare variants with source structures and manual controls."
+        ),
+        input_audit=(
+            "Verify candidate batch hash, chain definitions, oligomer assumptions, templates, and predictor limits.",
+            "Verify sequence length and alphabet compatibility for every selected structure backend.",
+            "Verify source or reference structures and residue mappings when supplied."
+        ),
+        process=(
+            "Predict structures with pinned models, revisions, seeds, and inference parameters.",
+            "Compute confidence and geometry features under a common residue map.",
+            "Repeat or cross-check predictions when uncertainty or model disagreement is material."
+        ),
+        output_audit=(
+            "Verify every score maps to the exact candidate and structure artifact checksum.",
+            "Verify failures and low-confidence regions are retained rather than filtered silently.",
+            "Verify structural gates are calibrated and do not claim experimental folding."
+        ),
+        human_intervention=(
+            "Review domain preservation, exposed regions, unexpected interfaces, and low-confidence linkers.",
+            "Approve exceptions to structural gates with a written rationale.",
+            "Select candidates requiring alternative oligomer or construct hypotheses."
+        ),
+        depends_on=("candidate_specification",),
+    ),
+    StageDefinition(
+        order="4",
+        stage_id="immune_evidence_assessment",
+        name="Immune evidence assessment",
+        purpose=(
+            "Assemble computational evidence relevant to immune recognition while keeping predictions "
+            "separate from experimental immunogenicity claims."
+        ),
+        capabilities=(
+            "Assess conservation, surface accessibility, epitope evidence, host presentation coverage, and similarity risks.",
+            "Map evidence to residues, domains, and candidate structure context.",
+            "Quantify disagreement and uncertainty across methods and host assumptions."
+        ),
+        input_audit=(
+            "Verify target population or host genetics, pathogen sequence panel, and evidence database versions.",
+            "Verify candidate residue maps and structural confidence before geometry-dependent analysis.",
+            "Verify exclusion lists, homology databases, and threshold calibration sets."
+        ),
+        process=(
+            "Run pinned evidence adapters and retain per-method raw scores.",
+            "Aggregate only after calibration, leakage checks, and explicit host assumptions.",
+            "Flag conflicting evidence instead of hiding it in a single composite score."
+        ),
+        output_audit=(
+            "Verify residue-level evidence is traceable to model/database revision and candidate hash.",
+            "Verify coverage, uncertainty, conflicts, and unsupported regions are reported.",
+            "Verify outputs are labeled computational evidence, not efficacy or safety conclusions."
+        ),
+        human_intervention=(
+            "Confirm host population assumptions and acceptable evidence thresholds.",
+            "Review conserved versus variable regions and biologically implausible predictions.",
+            "Approve which evidence may act as a gate versus a ranking feature."
+        ),
+        depends_on=("candidate_specification", "protein_structure_assessment"),
+    ),
+    StageDefinition(
+        order="5",
+        stage_id="developability_assessment",
+        name="Developability and manufacturability assessment",
+        purpose=(
+            "Estimate whether candidates can be expressed, purified, handled, and formulated without "
+            "obvious sequence or structure liabilities."
+        ),
+        capabilities=(
+            "Assess solubility, aggregation, disorder, proteolysis, topology, stability, and modification liabilities.",
+            "Compare predicted behavior across expression hosts and product formats.",
+            "Expose hard constraints separately from tunable optimization objectives."
+        ),
+        input_audit=(
+            "Verify intended expression host, compartment, purification strategy, formulation assumptions, and construct form.",
+            "Verify sequence/structure inputs and model applicability domains.",
+            "Verify thresholds against internal or public experimental baselines where available."
+        ),
+        process=(
+            "Run pinned property predictors and rule-based checks.",
+            "Normalize outputs with applicability and uncertainty metadata.",
+            "Evaluate tradeoffs without allowing one favorable metric to erase a hard liability."
+        ),
+        output_audit=(
+            "Verify every liability has residue-level or construct-level evidence and severity.",
+            "Verify pass/fail rules and ranking features are versioned and reproducible.",
+            "Verify unsupported predictions are marked not evaluated."
+        ),
+        human_intervention=(
+            "Confirm host, purification, formulation, and acceptable risk thresholds.",
+            "Review liabilities that may be mitigated experimentally rather than by redesign.",
+            "Approve redesign requests and preserve the rejected candidate lineage."
+        ),
+        depends_on=("candidate_specification", "protein_structure_assessment"),
+    ),
+    StageDefinition(
+        order="6A",
+        stage_id="protein_product_design",
+        name="Recombinant protein product design",
+        purpose=(
+            "Convert an accepted antigen candidate into a traceable recombinant expression and purification construct."
+        ),
+        capabilities=(
+            "Design expression-specific signal peptides, tags, cleavage sites, and host-compatible coding constructs.",
+            "Evaluate expression and purification constraints without changing the antigen silently.",
+            "Release a protein-product specification for experimental review."
+        ),
+        input_audit=(
+            "Verify selected antigen lineage, expression host, vector constraints, tags, cleavage strategy, and product form.",
+            "Verify every expression-only addition is distinguishable from the final antigen sequence.",
+            "Verify developability gates and unresolved exceptions."
+        ),
+        process=(
+            "Generate versioned expression constructs and back-translate only under declared host constraints.",
+            "Re-run sequence and structural checks affected by expression-specific additions.",
+            "Create a bill of materials and exact release sequence."
+        ),
+        output_audit=(
+            "Verify antigen, expression construct, tags, and cleavage products are separately defined.",
+            "Verify released DNA and translated protein match the approved design.",
+            "Verify all manufacturing assumptions and unresolved risks are included."
+        ),
+        human_intervention=(
+            "Approve expression host, vector, tag, cleavage, purification, and formulation choices.",
+            "Confirm whether expression-only residues remain in the tested product.",
+            "Sign off the exact construct before synthesis or cloning."
+        ),
+        depends_on=("developability_assessment",),
+    ),
+    StageDefinition(
+        order="6B",
+        stage_id="mrna_product_design",
+        name="mRNA product design",
+        purpose=(
+            "Create host-aware mRNA constructs that preserve the approved antigen protein while optimizing "
+            "delivery-specific sequence constraints."
+        ),
+        capabilities=(
+            "Optimize synonymous CDS under codon, GC, motif, repeat, and RNA-structure constraints.",
+            "Version UTR, cap, poly(A), and other non-coding design assumptions when available.",
+            "Compare multiple Pareto-optimal mRNA designs instead of emitting one opaque sequence."
+        ),
+        input_audit=(
+            "Verify exact antigen AA, target species/cell context, delivery platform constraints, and forbidden motifs.",
+            "Verify source/optimized CDS identity and quarantine mislabeled sequences.",
+            "Verify non-coding elements and formulation assumptions are licensed and versioned."
+        ),
+        process=(
+            "Generate synonymous candidates while continuously asserting translation identity.",
+            "Score codon, motif, GC, repeat, and RNA-structure objectives with pinned tools.",
+            "Retain Pareto frontier, parentage, and all rejected hard-constraint violations."
+        ),
+        output_audit=(
+            "Verify every released mRNA translates exactly to the approved antigen.",
+            "Verify all coding and non-coding components, scores, constraints, and tool revisions.",
+            "Verify no optimized sequence is accepted solely because of a language-model score."
+        ),
+        human_intervention=(
+            "Approve target species/cell context, UTR/poly(A) choices, motif constraints, and synthesis limits.",
+            "Review Pareto tradeoffs and select more than one design when uncertainty is material.",
+            "Sign off the exact mRNA sequence before synthesis."
+        ),
+        depends_on=("developability_assessment",),
+    ),
+    StageDefinition(
+        order="7",
+        stage_id="integrated_ranking",
+        name="Integrated ranking and portfolio selection",
+        purpose=(
+            "Combine validated evidence into a transparent, uncertainty-aware portfolio without hiding hard gates "
+            "or model disagreement."
+        ),
+        capabilities=(
+            "Rank candidates by modality-specific objectives, uncertainty, diversity, and experimental value.",
+            "Compare generated candidates directly with originals and manual controls.",
+            "Perform sensitivity analysis across weights, thresholds, and missing evidence."
+        ),
+        input_audit=(
+            "Verify candidate identities, stage completeness, score calibration, missing values, and exclusion reasons.",
+            "Verify no training/test leakage or duplicated biological entities in task models.",
+            "Verify ranking policy, weights, hard gates, and decision budget are frozen before scoring."
+        ),
+        process=(
+            "Apply hard gates first, then transparent multi-objective ranking and uncertainty penalties.",
+            "Measure rank stability and retain component-level explanations.",
+            "Select a diverse portfolio with explicit positive, negative, original, and manual controls."
+        ),
+        output_audit=(
+            "Verify ranks reproduce from component scores and policy revision.",
+            "Verify excluded candidates remain visible with reasons.",
+            "Verify selected portfolio covers controls, diversity, and uncertainty rather than only top scores."
+        ),
+        human_intervention=(
+            "Approve ranking policy, budget, risk tolerance, and control composition.",
+            "Review unstable ranks and disagreements between modalities or evidence families.",
+            "Sign off the experimental candidate portfolio."
+        ),
+        depends_on=(
+            "protein_structure_assessment",
+            "immune_evidence_assessment",
+            "developability_assessment",
+            "protein_product_design",
+            "mrna_product_design",
+        ),
+    ),
+    StageDefinition(
+        order="8",
+        stage_id="experiment_release",
+        name="Experiment design and release",
+        purpose=(
+            "Convert the selected portfolio into a blinded, controlled, and traceable experimental release package."
+        ),
+        capabilities=(
+            "Define controls, replicates, randomization, batches, acceptance criteria, and sample identities.",
+            "Generate release manifests and chain-of-custody records.",
+            "Freeze predictions before outcomes are observed."
+        ),
+        input_audit=(
+            "Verify selected candidates, synthesis feasibility, controls, assay objectives, budget, and ethical approvals.",
+            "Verify sample identifiers do not leak ranking labels to blinded operators.",
+            "Verify protocol versions, units, replicate plans, and acceptance rules."
+        ),
+        process=(
+            "Create blinded sample sheets, randomization, batch layout, and release checksums.",
+            "Freeze model predictions and candidate manifests before execution.",
+            "Record deviations through controlled amendments."
+        ),
+        output_audit=(
+            "Verify every physical sample maps to one immutable candidate and batch.",
+            "Verify controls, replicates, and acceptance criteria are complete.",
+            "Verify release package approval and amendment history."
+        ),
+        human_intervention=(
+            "Scientific, laboratory, safety, and quality owners approve protocol and release.",
+            "Operators record deviations, failed controls, and sample handling events.",
+            "No model is updated until the frozen release is closed."
+        ),
+        depends_on=("integrated_ranking",),
+    ),
+    StageDefinition(
+        order="9",
+        stage_id="assay_ingestion",
+        name="Assay ingestion and quality control",
+        purpose=(
+            "Turn raw laboratory observations into immutable, unit-aware, quality-controlled evidence linked to "
+            "the released candidates."
+        ),
+        capabilities=(
+            "Ingest raw files, metadata, controls, replicates, batches, units, and protocol revisions.",
+            "Apply predefined assay QC and preserve both raw and processed observations.",
+            "Expose batch effects, missingness, and censored measurements."
+        ),
+        input_audit=(
+            "Verify file checksums, instrument exports, sample mapping, protocol, batch, units, and operator metadata.",
+            "Verify controls and acceptance criteria before unblinding.",
+            "Verify amendments and exclusions have signed reasons."
+        ),
+        process=(
+            "Store immutable raw data, normalize through versioned transforms, and run assay-specific QC.",
+            "Aggregate replicates only under declared rules and retain individual measurements.",
+            "Unblind only after QC status is frozen."
+        ),
+        output_audit=(
+            "Verify every value traces to raw file, sample, unit, batch, and transform revision.",
+            "Verify failed controls and excluded observations remain visible.",
+            "Verify labels are suitable for the declared downstream learning task."
+        ),
+        human_intervention=(
+            "Laboratory and data owners adjudicate failed controls, deviations, censoring, and exclusions.",
+            "Approve the frozen analysis dataset and permitted endpoint definitions.",
+            "Document any exploratory endpoint separately from preregistered endpoints."
+        ),
+        depends_on=("experiment_release",),
+    ),
+    StageDefinition(
+        order="10",
+        stage_id="learning_and_iteration",
+        name="Learning, calibration, and next-round design",
+        purpose=(
+            "Learn task-specific decision models from leakage-safe experimental data and use uncertainty to plan "
+            "the next design round."
+        ),
+        capabilities=(
+            "Train and compare task heads, baselines, calibration models, and active-learning policies.",
+            "Estimate generalization by biological split, batch, and time.",
+            "Propose the next portfolio while preserving all prior predictions and outcomes."
+        ),
+        input_audit=(
+            "Verify frozen assay labels, entity-level split rules, batch metadata, sample size, and endpoint definitions.",
+            "Verify baselines, model revisions, hyperparameter budgets, and leakage controls.",
+            "Verify unresolved data-quality issues are represented, not discarded silently."
+        ),
+        process=(
+            "Train baselines and task models under fixed splits and repeated seeds.",
+            "Calibrate uncertainty, perform ablations, and compare prospective decision utility.",
+            "Version model cards, predictions, and active-learning acquisition policy."
+        ),
+        output_audit=(
+            "Verify held-out and prospective metrics, uncertainty calibration, stability, and failure analysis.",
+            "Verify claims are limited to evaluated populations and assays.",
+            "Verify the next-round proposal preserves controls and targets informative uncertainty."
+        ),
+        human_intervention=(
+            "Approve labels, splits, decision thresholds, and acceptable evidence for model promotion.",
+            "Review failure modes and decide whether to redesign candidates, assays, or models.",
+            "Approve the next round, then restart at candidate specification with inherited lineage and evidence."
+        ),
+        depends_on=("assay_ingestion",),
+    ),
+)
+
+
+STAGE_BY_ID = {stage.stage_id: stage for stage in FULL_WORKFLOW}

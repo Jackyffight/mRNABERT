@@ -72,6 +72,52 @@ new immutable stage directory containing:
 Adapters must not depend on one storage backend. Local disk, NAS, and object-store
 publication belong behind artifact-store interfaces, not inside model adapters.
 
+## Source And Runtime Boundary
+
+The Git project contains code, portable project specifications, schemas, tests,
+and empty templates only. Every project specification names an absolute external
+`runtime_root`. Real sequences, intermediate model files, logs, reports, manifests,
+and published results live below that root. Configuration loading rejects a runtime
+root inside the source project, preventing generated data from leaking into Git.
+
+The current local root is `/data00/home/wangzhi.wit/models/design-flow-runtime`, a
+sibling of `datasets`. A different machine must use its own explicit absolute path;
+runtime locations are never inferred from environment variables.
+
+## Workflow And Node Reports
+
+The complete workflow definition is a system blueprint, not a monolithic report.
+Every run writes `workflow.json` as the future UI graph: node IDs, dependencies,
+capabilities, and audit contracts. It says what the complete system will do even
+when only the first node has been implemented.
+
+Executed evidence accumulates one node at a time:
+
+```text
+runs/<run-id>/
+  manifest.json
+  workflow.json
+  nodes/
+    <stage-id>/
+      summary.json
+      report.md
+      input_audit.json
+      process_record.json
+      output_audit.json
+      human_actions.json
+      handoff.json
+```
+
+`summary.json` is the compact future UI node card. `report.md` is that node's detail
+view, not a repetition of the whole workflow. The three audit records preserve what
+entered the node, what actually happened, and what was released. Human actions have
+owners, statuses, blocking stages, and resolutions. `handoff.json` carries candidate
+IDs, hashes, findings, and unresolved actions into the next node.
+
+As implementation and experiments progress, the run gains additional node folders
+and therefore increasingly complete evidence. Previous node reports remain
+immutable; a correction creates a new run or an explicitly versioned node attempt.
+
 ## Initial Milestones
 
 - **M0:** sequence intake and reproducible audit, now implemented.

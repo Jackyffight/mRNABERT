@@ -19,12 +19,30 @@ class ProjectConfig:
     schema_version: int
     project_id: str
     expected_protein_count: int
+    runtime_root: Path
     amino_acid_fasta: Path
     nucleotide_fasta: Path
     run_root: Path
+    target_indication: str
+    intended_host_species: str
+    product_modalities: tuple[str, ...]
     protein_expression_host: str
     mrna_target_species: str
+    human_actions: tuple[HumanAction, ...]
     config_path: Path
+
+
+@dataclass(frozen=True)
+class HumanAction:
+    action_id: str
+    question: str
+    required_before_stage: str
+    status: str = "open"
+    owner: str = "unassigned"
+    resolution: str = ""
+
+    def to_dict(self) -> dict[str, str]:
+        return asdict(self)
 
 
 @dataclass(frozen=True)

@@ -19,11 +19,19 @@ efficacy. Those stages remain explicitly marked `not_evaluated` in every manifes
 
 ## First Three Proteins
 
-From this directory, create the real input files from the tracked templates:
+Source code and runtime data are deliberately separated. The tracked project uses
+this external runtime root:
+
+```text
+/data00/home/wangzhi.wit/models/design-flow-runtime/three-protein
+```
+
+From this directory, create the runtime input files from the tracked templates:
 
 ```bash
-cp projects/three-protein/input/proteins_aa.fasta.example projects/three-protein/input/proteins_aa.fasta
-cp projects/three-protein/input/proteins_cds.fasta.example projects/three-protein/input/proteins_cds.fasta
+mkdir -p /data00/home/wangzhi.wit/models/design-flow-runtime/three-protein/input
+cp projects/three-protein/input/proteins_aa.fasta.example /data00/home/wangzhi.wit/models/design-flow-runtime/three-protein/input/proteins_aa.fasta
+cp projects/three-protein/input/proteins_cds.fasta.example /data00/home/wangzhi.wit/models/design-flow-runtime/three-protein/input/proteins_cds.fasta
 ```
 
 Replace every placeholder with the real sequence. The two files must contain the
@@ -43,28 +51,43 @@ When validation is understandable, calculate and record the first run:
 ./vaxflow run projects/three-protein/project.json
 ```
 
-The command prints the exact run path. Each run contains:
+The command prints the exact run path. The run root contains:
 
-- `manifest.json`: provenance, hashes, stage states, and counts;
-- `proteins.json`: complete normalized sequences, metrics, and issues;
-- `proteins.csv`: one flat row per original protein;
-- `qc_issues.csv`: machine-readable errors and warnings;
-- `report.md`: concise human-readable report.
+- `manifest.json`: run identity, context, current node, and artifact pointers;
+- `workflow.json`: complete future UI node graph and every node's audit contract;
+- `nodes/program_and_source_intake/summary.json`: compact UI node summary;
+- `nodes/program_and_source_intake/report.md`: current node detail report;
+- `nodes/program_and_source_intake/input_audit.json`: audited node inputs;
+- `nodes/program_and_source_intake/process_record.json`: processing provenance;
+- `nodes/program_and_source_intake/output_audit.json`: audited node outputs;
+- `nodes/program_and_source_intake/human_actions.json`: human questions and decisions;
+- `nodes/program_and_source_intake/handoff.json`: next-node payload;
+- sequence JSON/CSV details under the same node directory.
 
-The pointer `projects/three-protein/runs/latest.json` identifies the latest run.
-Input FASTA files and run outputs are intentionally ignored by Git; only reusable
-code, schemas, and templates are committed.
+As the workflow advances, each completed system node adds its own `summary.json`
+and `report.md` plus the same audit envelope. The workflow snapshot is not repeated
+inside every node report.
+
+The pointer
+`/data00/home/wangzhi.wit/models/design-flow-runtime/three-protein/runs/latest.json`
+identifies the latest run. Real input FASTA files and all run outputs remain outside
+the Git repository; only reusable code, schemas, and templates are committed.
 
 ## New Project
 
 To create another project without copying files by hand:
 
 ```bash
-./vaxflow init projects/my-project --project-id my-project --expected-count 3
+./vaxflow init projects/my-project \
+  --runtime-root /data00/home/wangzhi.wit/models/design-flow-runtime/my-project \
+  --project-id my-project \
+  --expected-count 3
 ```
 
-The generated FASTA files contain deliberately invalid placeholders, so a project
-cannot accidentally pass validation before real sequences are supplied.
+The project specification is written under `projects/`, while input placeholders
+and later runs are written under the external runtime root. The generated FASTA
+files contain deliberately invalid placeholders, so a project cannot accidentally
+pass validation before real sequences are supplied.
 
 ## Development
 
