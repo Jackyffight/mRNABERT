@@ -415,3 +415,91 @@ FULL_WORKFLOW = (
 
 
 STAGE_BY_ID = {stage.stage_id: stage for stage in FULL_WORKFLOW}
+
+
+def validate_workflow(stages: tuple[StageDefinition, ...] = FULL_WORKFLOW) -> None:
+    if not stages:
+        raise ValueError("Workflow must contain at least one stage")
+    stage_ids = [stage.stage_id for stage in stages]
+    duplicate_ids = sorted(
+        stage_id for stage_id in set(stage_ids) if stage_ids.count(stage_id) > 1
+    )
+    if duplicate_ids:
+        raise ValueError(f"Duplicate workflow stage IDs: {duplicate_ids}")
+    if CURRENT_STAGE_ID not in stage_ids:
+        raise ValueError(f"Current stage is missing from workflow: {CURRENT_STAGE_ID}")
+    orders = [stage.order for stage in stages]
+    duplicate_orders = sorted(order for order in set(orders) if orders.count(order) > 1)
+    if duplicate_orders:
+        raise ValueError(f"Duplicate workflow stage orders: {duplicate_orders}")
+    for stage in stages:
+        scalar_fields = (stage.order, stage.stage_id, stage.name, stage.purpose)
+        contract_fields = (
+            stage.capabilities,
+            stage.input_audit,
+            stage.process,
+            stage.output_audit,
+            stage.human_intervention,
+        )
+        if not all(isinstance(value, str) and value.strip() for value in scalar_fields):
+            raise ValueError(f"Workflow stage has an empty identity field: {stage.stage_id!r}")
+        if not all(
+            values and all(isinstance(value, str) and value.strip() for value in values)
+            for values in contract_fields
+        ):
+            raise ValueError(f"Workflow stage has an empty audit contract: {stage.stage_id}")
+
+    known_ids = set(stage_ids)
+    unknown_dependencies = sorted(
+        (stage.stage_id, dependency)
+        for stage in stages
+        for dependency in stage.depends_on
+        if dependency not in known_ids
+    )
+    if unknown_dependencies:
+        raise ValueError(f"Unknown workflow dependencies: {unknown_dependencies}")
+
+    remaining_dependencies = {
+        stage.stage_id: set(stage.depends_on)
+        for stage in stages
+    }
+    resolved: set[str] = set()
+    while remaining_dependencies:
+        ready = sorted(
+            stage_id
+            for stage_id, dependencies in remaining_dependencies.items()
+            if dependencies <= resolved
+        )
+        if not ready:
+            cycle_nodes = sorted(remaining_dependencies)
+            raise ValueError(f"Workflow dependency cycle detected among: {cycle_nodes}")
+        resolved.update(ready)
+        for stage_id in ready:
+            del remaining_dependencies[stage_id]
+
+    roots = sorted(stage.stage_id for stage in stages if not stage.depends_on)
+    if roots != [CURRENT_STAGE_ID]:
+        raise ValueError(
+            f"Workflow must have exactly one entry stage ({CURRENT_STAGE_ID}); found {roots}"
+        )
+
+    dependents = {stage_id: set() for stage_id in stage_ids}
+    for stage in stages:
+        for dependency in stage.depends_on:
+            dependents[dependency].add(stage.stage_id)
+    reachable = {CURRENT_STAGE_ID}
+    frontier = [CURRENT_STAGE_ID]
+    while frontier:
+        current = frontier.pop()
+        for dependent in dependents[current] - reachable:
+            reachable.add(dependent)
+            frontier.append(dependent)
+    if reachable != known_ids:
+        raise ValueError(f"Workflow contains unreachable stages: {sorted(known_ids - reachable)}")
+
+    terminals = sorted(stage_id for stage_id, children in dependents.items() if not children)
+    if len(terminals) != 1:
+        raise ValueError(f"Workflow must have exactly one terminal stage; found {terminals}")
+
+
+validate_workflow()

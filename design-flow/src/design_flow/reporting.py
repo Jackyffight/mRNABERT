@@ -13,7 +13,15 @@ from typing import Any
 
 from . import __version__
 from .domain import ProjectAnalysis, QCIssue
+from .html_report import render_node_report
 from .node_record import build_node_bundle, build_workflow_snapshot
+from .verification import (
+    ARTIFACT_INDEX_FILENAME,
+    SOURCE_SNAPSHOT_PATHS,
+    build_artifact_index,
+    sha256_file,
+    verify_run,
+)
 from .workflow import CURRENT_STAGE_ID, STAGE_BY_ID
 
 
@@ -23,6 +31,21 @@ def _atomic_write(path: Path, content: str) -> None:
     temporary_path = Path(temporary_name)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def _atomic_write_bytes(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
@@ -272,6 +295,14 @@ def write_run_artifacts(
 
     bundle = build_node_bundle(analysis, run_id)
     bundle["summary"]["created_at_utc"] = created_at
+    source_paths = {
+        "project_config": analysis.config.config_path,
+        "amino_acid_fasta": analysis.config.amino_acid_fasta,
+        "nucleotide_fasta": analysis.config.nucleotide_fasta,
+    }
+    for input_name, snapshot_path in SOURCE_SNAPSHOT_PATHS.items():
+        _atomic_write_bytes(run_dir / snapshot_path, source_paths[input_name].read_bytes())
+        bundle["input_audit"]["inputs"][input_name]["snapshot_path"] = snapshot_path
     workflow = build_workflow_snapshot(bundle["status"])
     workflow["run_id"] = run_id
     proteins_document = {
@@ -311,13 +342,15 @@ def write_run_artifacts(
             CURRENT_STAGE_ID: {
                 "status": bundle["status"],
                 "summary": f"{node_relative}/summary.json",
-                "report": f"{node_relative}/report.md",
+                "report": f"{node_relative}/report.html",
             }
         },
         "artifacts": {
             "workflow": "workflow.json",
             "node_root": node_relative,
             "handoff": f"{node_relative}/handoff.json",
+            "source_inputs": "inputs",
+            "artifact_index": ARTIFACT_INDEX_FILENAME,
         },
     }
 
@@ -335,10 +368,20 @@ def write_run_artifacts(
         _csv_text(["scope", "protein_id", "severity", "code", "message"], issue_rows),
     )
     _atomic_write(
-        node_dir / "report.md",
-        _markdown_report(analysis, bundle, run_id, created_at),
+        node_dir / "report.html",
+        render_node_report(analysis, bundle, run_id, created_at),
     )
     _atomic_write(run_dir / "manifest.json", _json_text(manifest))
+    artifact_index = build_artifact_index(
+        run_dir,
+        project_id=analysis.config.project_id,
+        run_id=run_id,
+    )
+    _atomic_write(run_dir / ARTIFACT_INDEX_FILENAME, _json_text(artifact_index))
+    verification = verify_run(run_dir)
+    if verification["status"] != "pass":
+        details = "; ".join(verification["errors"][:5])
+        raise ValueError(f"Run verification failed; latest was not updated: {details}")
     _atomic_write(
         analysis.config.run_root / "latest.json",
         _json_text(
@@ -350,7 +393,10 @@ def write_run_artifacts(
                 "current_stage": CURRENT_STAGE_ID,
                 "status": bundle["status"],
                 "summary_path": str(node_dir / "summary.json"),
-                "report_path": str(node_dir / "report.md"),
+                "report_path": str(node_dir / "report.html"),
+                "artifact_index_path": str(run_dir / ARTIFACT_INDEX_FILENAME),
+                "artifact_index_sha256": sha256_file(run_dir / ARTIFACT_INDEX_FILENAME),
+                "verification_status": verification["status"],
             }
         ),
     )

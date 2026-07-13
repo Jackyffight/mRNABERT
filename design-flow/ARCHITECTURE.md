@@ -28,35 +28,37 @@ a new candidate with an explicit parent.
 
 ## Stages
 
-1. **Intake and sequence audit (implemented)**
-   Pair AA and CDS records, translate CDS, detect hard input errors, calculate
-   baseline descriptors, hash inputs, and write a manifest.
-2. **Candidate generation**
-   Create originals, manual controls, single-protein variants, and fusion variants
-   under an explicit construct grammar. Keep generation separate from ranking.
+`src/design_flow/workflow.py` is the canonical route. It defines one entry, one
+terminal node, and two modality branches that rejoin before experiment release:
+
+1. **Program definition and source intake (implemented)**
+2. **Candidate specification and generation**
 3. **Protein structure assessment**
-   Run pluggable structure predictors, confidence extraction, refolding checks,
-   interface/domain preservation checks, and structural failure gates.
-4. **Developability and sequence risk assessment**
-   Add aggregation, solubility, disorder, topology, manufacturability, and other
-   relevant predictors. Record model versions and calibrated uncertainty.
-5. **Delivery-specific design**
-   For recombinant protein, add expression and purification constraints. For mRNA,
-   optimize synonymous CDS and non-coding design constraints while preserving the
-   exact candidate protein sequence.
-6. **Candidate ranking**
-   Combine hard gates, calibrated task models, uncertainty, and diversity. Keep
-   every component score visible; do not collapse evidence into an unexplained
-   single number.
-7. **Experiment design**
-   Select candidates plus positive, negative, original, and manual controls. Emit
-   a blinded sample sheet and freeze the candidate manifest before testing.
-8. **Assay ingestion**
-   Import raw and processed measurements with assay protocol, batch, replicate,
-   units, and QC. Never overwrite observations.
-9. **Learning**
-   Fit task-specific heads and recalibrate rankings only after leakage-safe splits
-   and baseline comparisons. Preserve old model versions and predictions.
+4. **Immune evidence assessment**
+5. **Developability and manufacturability assessment**
+6. **Recombinant protein product design (6A)**
+7. **mRNA product design (6B)**
+8. **Integrated ranking and portfolio selection**
+9. **Experiment design and release**
+10. **Assay ingestion and quality control**
+11. **Learning, calibration, and next-round design**
+
+The validator rejects duplicate IDs or orders, unknown dependencies, cycles,
+additional entry nodes, unreachable nodes, multiple terminal nodes, and empty
+audit contracts. Iteration starts a new immutable run rather than adding a cycle
+inside one run DAG.
+
+## Deterministic Execution
+
+The production workflow is a deterministic state machine. Stage dependencies,
+status transitions, human gates, artifact identities, and report conclusions are
+computed from structured records. Scientific models run through pinned adapters;
+they do not schedule the workflow or reinterpret its provenance.
+
+No ChatGPT, Claude, or other general-purpose language model is required to execute
+or operate the system. An LLM may be added later as an optional sidecar for drafting
+or exploration, but it may not be required for scheduling, release gates, identity
+checks, audit records, or reproducibility.
 
 ## Stage Contract
 
@@ -95,12 +97,17 @@ Executed evidence accumulates one node at a time:
 
 ```text
 runs/<run-id>/
+  artifact_index.json
   manifest.json
   workflow.json
+  inputs/
+    project.json
+    proteins_aa.fasta
+    proteins_cds.fasta
   nodes/
     <stage-id>/
       summary.json
-      report.md
+      report.html
       input_audit.json
       process_record.json
       output_audit.json
@@ -108,11 +115,19 @@ runs/<run-id>/
       handoff.json
 ```
 
-`summary.json` is the compact future UI node card. `report.md` is that node's detail
-view, not a repetition of the whole workflow. The three audit records preserve what
-entered the node, what actually happened, and what was released. Human actions have
+`summary.json` is the compact future UI node card. `report.html` is that node's
+self-contained bilingual detail view, not a repetition of the whole workflow. The
+three audit records preserve what entered the node, what actually happened, and what was released. Human actions have
 owners, statuses, blocking stages, and resolutions. `handoff.json` carries candidate
 IDs, hashes, findings, and unresolved actions into the next node.
+
+Each run snapshots its exact source configuration and FASTA inputs. The artifact
+index records SHA-256 and byte size for every snapshot and generated artifact. A
+cross-file verifier checks run/stage identity, DAG contents, input digests,
+candidate IDs and statuses, QC counts, CSV/JSON equality, human gates, and handoff
+provenance. `latest.json` is updated only after this verification passes. A
+biologically invalid input may still produce a valid `blocked` audit run; artifact
+integrity and scientific acceptance are deliberately separate states.
 
 As implementation and experiments progress, the run gains additional node folders
 and therefore increasingly complete evidence. Previous node reports remain

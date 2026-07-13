@@ -12,7 +12,8 @@ The current milestone implements sequence intake only:
 - standard genetic-code translation and AA/CDS consistency checks;
 - frame, stop-codon, alphabet, and start-codon QC;
 - descriptive AA/CDS metrics;
-- immutable JSON, CSV, and Markdown run artifacts with input hashes.
+- exact input snapshots, indexed immutable artifacts, and cross-file verification;
+- JSON/CSV audit records and self-contained bilingual HTML reports.
 
 It does **not** yet predict antigenicity, safety, expression, structure, or vaccine
 efficacy. Those stages remain explicitly marked `not_evaluated` in every manifest.
@@ -53,10 +54,12 @@ When validation is understandable, calculate and record the first run:
 
 The command prints the exact run path. The run root contains:
 
+- `inputs/`: exact project and FASTA snapshots used by this run;
+- `artifact_index.json`: SHA-256 and byte size for every run artifact;
 - `manifest.json`: run identity, context, current node, and artifact pointers;
 - `workflow.json`: complete future UI node graph and every node's audit contract;
 - `nodes/program_and_source_intake/summary.json`: compact UI node summary;
-- `nodes/program_and_source_intake/report.md`: current node detail report;
+- `nodes/program_and_source_intake/report.html`: bilingual current-node detail report;
 - `nodes/program_and_source_intake/input_audit.json`: audited node inputs;
 - `nodes/program_and_source_intake/process_record.json`: processing provenance;
 - `nodes/program_and_source_intake/output_audit.json`: audited node outputs;
@@ -65,13 +68,20 @@ The command prints the exact run path. The run root contains:
 - sequence JSON/CSV details under the same node directory.
 
 As the workflow advances, each completed system node adds its own `summary.json`
-and `report.md` plus the same audit envelope. The workflow snapshot is not repeated
+and `report.html` plus the same audit envelope. The workflow snapshot is not repeated
 inside every node report.
 
 The pointer
 `/data00/home/wangzhi.wit/models/design-flow-runtime/three-protein/runs/latest.json`
 identifies the latest run. Real input FASTA files and all run outputs remain outside
 the Git repository; only reusable code, schemas, and templates are committed.
+The pointer is published only after hashes and cross-file semantics pass verification.
+
+Verify any run independently:
+
+```bash
+./vaxflow verify-run /absolute/path/to/runs/<run-id>
+```
 
 ## New Project
 

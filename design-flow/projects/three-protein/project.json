@@ -11,19 +11,20 @@
     "run_root": "runs"
   },
   "context": {
-    "target_indication": "unspecified",
-    "intended_host_species": "unspecified",
+    "target_indication": "Prevention of lumpy skin disease caused by LSDV",
+    "intended_host_species": "cattle (Bos taurus)",
     "product_modalities": [
       "recombinant_protein",
       "mrna"
     ],
     "protein_expression_host": "unspecified",
-    "mrna_target_species": "unspecified"
+    "mrna_target_species": "cattle (Bos taurus)"
   },
   "human_actions": [
     {
       "action_id": "confirm-source-provenance",
       "question": "Provide the accession, source version, isolate or strain, and owner for each A33, B5, and L1 source sequence.",
+      "question_zh": "补充 A33、B5 和 L1 各自的数据库登录号、来源版本、分离株或毒株以及数据负责人。",
       "required_before_stage": "candidate_specification",
       "status": "open",
       "owner": "unassigned"
@@ -31,6 +32,7 @@
     {
       "action_id": "confirm-reference-controls",
       "question": "Confirm that the supplied full-length A33, B5, and L1 proteins with original CDS are the immutable reference controls.",
+      "question_zh": "确认当前全长 A33、B5、L1 蛋白及其原始 CDS 是后续不可静默修改的参照对照。",
       "required_before_stage": "candidate_specification",
       "status": "open",
       "owner": "unassigned"
@@ -38,6 +40,7 @@
     {
       "action_id": "resolve-b5-optimized-cds",
       "question": "Replace or formally reject the supplied B5 optimized CDS, which currently translates exactly to the supplied A33 protein.",
+      "question_zh": "替换或正式弃用当前 B5 密码子优化 CDS；该文件实际翻译结果与 A33 全长蛋白完全一致。",
       "required_before_stage": "mrna_product_design",
       "status": "open",
       "owner": "unassigned"
@@ -45,9 +48,40 @@
     {
       "action_id": "confirm-manual-construct-annotations",
       "question": "Confirm truncation boundaries, initiator methionines, FLAG tag, linker identities, and domain order for the supplied manual constructs.",
+      "question_zh": "确认手工构建体的截短边界、起始甲硫氨酸、FLAG 标签、连接肽身份和结构域顺序。",
       "required_before_stage": "candidate_specification",
       "status": "open",
       "owner": "unassigned"
+    },
+    {
+      "action_id": "define-target-indication",
+      "question": "Define the target indication, use scenario, and measurable program objective.",
+      "question_zh": "明确目标适应症、使用场景和可量化的项目目标。",
+      "required_before_stage": "candidate_specification",
+      "status": "resolved",
+      "owner": "project_owner",
+      "resolution": "The program targets prevention of lumpy skin disease caused by LSDV. Quantitative success criteria remain to be defined before experiment release.",
+      "resolution_zh": "项目目标是预防 LSDV 引起的牛结节性皮肤病；定量成功标准需要在实验发布前继续明确。"
+    },
+    {
+      "action_id": "confirm-intended-host-species",
+      "question": "Confirm the intended vaccinated host species and population assumptions.",
+      "question_zh": "确认预期接种的宿主物种和目标群体假设。",
+      "required_before_stage": "candidate_specification",
+      "status": "resolved",
+      "owner": "project_owner",
+      "resolution": "The intended vaccinated host species is cattle (Bos taurus). Population and breed coverage assumptions remain to be refined during immune evidence assessment.",
+      "resolution_zh": "预期接种宿主为牛（Bos taurus）；群体和品种覆盖假设将在免疫证据评估阶段继续细化。"
+    },
+    {
+      "action_id": "confirm-mrna-target-species",
+      "question": "Confirm the species and cell context used for mRNA sequence design constraints.",
+      "question_zh": "确认 mRNA 序列设计约束使用的物种和细胞环境。",
+      "required_before_stage": "mrna_product_design",
+      "status": "resolved",
+      "owner": "project_owner",
+      "resolution": "Use cattle (Bos taurus) as the initial species context. The target cell type and delivery context remain to be selected before mRNA product design.",
+      "resolution_zh": "初始物种环境采用牛（Bos taurus）；目标细胞类型和递送环境需要在 mRNA 产品设计前确定。"
     }
   ]
 }

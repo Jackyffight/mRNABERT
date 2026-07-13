@@ -61,9 +61,11 @@ def _human_actions(value: Any) -> tuple[HumanAction, ...]:
                 action_id=action_id,
                 question=_required_text(action, "question"),
                 required_before_stage=_required_text(action, "required_before_stage"),
+                question_zh=str(action.get("question_zh", "")).strip(),
                 status=status,
                 owner=str(action.get("owner", "unassigned")).strip() or "unassigned",
                 resolution=resolution,
+                resolution_zh=str(action.get("resolution_zh", "")).strip(),
             )
         )
     return tuple(actions)

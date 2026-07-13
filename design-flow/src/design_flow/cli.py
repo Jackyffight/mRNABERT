@@ -12,6 +12,7 @@ from . import __version__
 from .domain import ProjectAnalysis
 from .pipeline import analyze_project
 from .reporting import write_run_artifacts
+from .verification import verify_run
 from .workflow import CURRENT_STAGE_ID
 
 
@@ -43,6 +44,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser("run", help="audit inputs and write immutable run artifacts")
     run_parser.add_argument("project_config", type=Path)
+    verify_parser = subparsers.add_parser(
+        "verify-run",
+        help="verify hashes and cross-file consistency for an immutable run",
+    )
+    verify_parser.add_argument("run_dir", type=Path)
     return parser
 
 
@@ -136,13 +142,26 @@ def main(argv: list[str] | None = None) -> int:
                 args.expected_count,
             )
 
+        if args.command == "verify-run":
+            result = verify_run(args.run_dir)
+            print(
+                f"Run {result['run_id']}: status={result['status']} "
+                f"checks={len(result['checks'])} errors={len(result['errors'])} "
+                f"warnings={len(result['warnings'])}"
+            )
+            for error in result["errors"]:
+                print(f"  ERROR {error}")
+            for warning in result["warnings"]:
+                print(f"  WARNING {warning}")
+            return 0 if result["status"] == "pass" else 2
+
         analysis = analyze_project(args.project_config)
         _print_analysis(analysis)
         if args.command == "run":
             run_dir = write_run_artifacts(analysis)
             print(f"Run artifacts: {run_dir}")
             print(f"Node summary: {run_dir / 'nodes' / CURRENT_STAGE_ID / 'summary.json'}")
-            print(f"Node report: {run_dir / 'nodes' / CURRENT_STAGE_ID / 'report.md'}")
+            print(f"Node report: {run_dir / 'nodes' / CURRENT_STAGE_ID / 'report.html'}")
         return 0 if analysis.status == "pass" else 2
     except (OSError, ValueError) as error:
         print(f"vaxflow: {error}", file=sys.stderr)

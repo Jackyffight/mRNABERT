@@ -26,6 +26,7 @@ def _automatic_human_actions(analysis: ProjectAnalysis) -> list[HumanAction]:
                 action_id="define-target-indication",
                 question="Define the target indication, use scenario, and measurable program objective.",
                 required_before_stage=NEXT_STAGE_ID,
+                question_zh="明确目标适应症、使用场景和可量化的项目目标。",
             )
         )
     if _is_unspecified(config.intended_host_species):
@@ -34,6 +35,7 @@ def _automatic_human_actions(analysis: ProjectAnalysis) -> list[HumanAction]:
                 action_id="confirm-intended-host-species",
                 question="Confirm the intended vaccinated host species and population assumptions.",
                 required_before_stage=NEXT_STAGE_ID,
+                question_zh="确认预期接种的宿主物种和目标群体假设。",
             )
         )
     if not config.product_modalities:
@@ -42,6 +44,7 @@ def _automatic_human_actions(analysis: ProjectAnalysis) -> list[HumanAction]:
                 action_id="select-product-modalities",
                 question="Select the product modalities that must be designed and compared.",
                 required_before_stage=NEXT_STAGE_ID,
+                question_zh="选择需要设计和比较的产品路线。",
             )
         )
     if "recombinant_protein" in config.product_modalities and _is_unspecified(
@@ -52,6 +55,7 @@ def _automatic_human_actions(analysis: ProjectAnalysis) -> list[HumanAction]:
                 action_id="select-protein-expression-host",
                 question="Select the initial recombinant protein expression host and compartment assumptions.",
                 required_before_stage="developability_assessment",
+                question_zh="选择重组蛋白的初始表达宿主和表达区室假设。",
             )
         )
     if "mrna" in config.product_modalities and _is_unspecified(config.mrna_target_species):
@@ -60,6 +64,7 @@ def _automatic_human_actions(analysis: ProjectAnalysis) -> list[HumanAction]:
                 action_id="confirm-mrna-target-species",
                 question="Confirm the species and cell context used for mRNA sequence design constraints.",
                 required_before_stage="mrna_product_design",
+                question_zh="确认 mRNA 序列设计约束使用的物种和细胞环境。",
             )
         )
     return actions
@@ -278,7 +283,7 @@ def build_node_bundle(analysis: ProjectAnalysis, run_id: str) -> dict[str, Any]:
             "process_record": "process_record.json",
             "output_audit": "output_audit.json",
             "human_actions": "human_actions.json",
-            "report": "report.md",
+            "report": "report.html",
         },
         "carried_forward": {
             "project_id": analysis.config.project_id,

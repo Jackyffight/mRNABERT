@@ -253,7 +253,7 @@ def analyze_sequence_pairs(
                         protein_id,
                     )
                 )
-        digest = hashlib.sha256(f"{protein_id}\0{aa}\0{cds}".encode("ascii")).hexdigest()
+        digest = hashlib.sha256(f"{protein_id}\0{aa}\0{cds}".encode("utf-8")).hexdigest()
         proteins.append(
             ProteinAnalysis(
                 protein_id=protein_id,

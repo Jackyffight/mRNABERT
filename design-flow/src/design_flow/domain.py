@@ -37,9 +37,11 @@ class HumanAction:
     action_id: str
     question: str
     required_before_stage: str
+    question_zh: str = ""
     status: str = "open"
     owner: str = "unassigned"
     resolution: str = ""
+    resolution_zh: str = ""
 
     def to_dict(self) -> dict[str, str]:
         return asdict(self)
