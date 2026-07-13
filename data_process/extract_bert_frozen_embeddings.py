@@ -9,7 +9,7 @@ import os
 import time
 from pathlib import Path
 
-from frozen_embedding_common import SPLITS, load_regression_records
+from frozen_embedding_common import SPLITS, extract_last_hidden_state, load_regression_records
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -66,6 +66,7 @@ def main(argv=None) -> None:
     model = AutoModel.from_pretrained(
         args.model_path,
         config=config,
+        add_pooling_layer=False,
         trust_remote_code=bool(auto_map),
     )
     device = torch.device(args.device)
@@ -99,7 +100,7 @@ def main(argv=None) -> None:
                 dtype=torch.bfloat16,
                 enabled=device.type == "cuda",
             ):
-                hidden = model(**encoded, return_dict=True).last_hidden_state
+                hidden = extract_last_hidden_state(model(**encoded, return_dict=True))
 
             valid = encoded["attention_mask"].bool()
             for token_id in tokenizer.all_special_ids:

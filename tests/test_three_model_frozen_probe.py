@@ -1,15 +1,27 @@
 import csv
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 
 from data_process.frozen_embedding_common import (
+    extract_last_hidden_state,
     load_regression_records,
     normalize_nucleotide_sequence,
 )
 
 
 class FrozenEmbeddingCommonTest(unittest.TestCase):
+    def test_extract_last_hidden_state_supports_huggingface_and_remote_outputs(self):
+        hidden = object()
+
+        self.assertIs(extract_last_hidden_state(SimpleNamespace(last_hidden_state=hidden)), hidden)
+        self.assertIs(extract_last_hidden_state((hidden, None)), hidden)
+
+    def test_extract_last_hidden_state_rejects_unknown_output(self):
+        with self.assertRaisesRegex(TypeError, "last hidden state"):
+            extract_last_hidden_state(())
+
     def test_normalize_spaced_codon_and_bracketed_rna(self):
         self.assertEqual(normalize_nucleotide_sequence("[AUG GCC] UAA"), "ATGGCCTAA")
 
@@ -65,6 +77,9 @@ class ThreeModelProbeScriptContractTest(unittest.TestCase):
     def test_comparison_uses_shared_probe_and_dev_selection(self):
         runner = Path("scripts/run_three_model_frozen_probe_nas.sh").read_text(encoding="utf-8")
         evaluator = Path("data_process/evaluate_frozen_embeddings.py").read_text(encoding="utf-8")
+        bert_extractor = Path("data_process/extract_bert_frozen_embeddings.py").read_text(
+            encoding="utf-8"
+        )
 
         self.assertIn("internal-checkpoint-$STEP", runner)
         self.assertIn("public-YYLY66", runner)
@@ -78,6 +93,8 @@ class ThreeModelProbeScriptContractTest(unittest.TestCase):
         self.assertIn("--probe-dim 256", runner)
         self.assertIn("selected only by dev Spearman", evaluator)
         self.assertNotIn("test_metrics[\"spearman\"]", evaluator)
+        self.assertIn("add_pooling_layer=False", bert_extractor)
+        self.assertIn("extract_last_hidden_state(model(**encoded", bert_extractor)
 
 
 if __name__ == "__main__":

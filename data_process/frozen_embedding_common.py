@@ -20,6 +20,19 @@ class RegressionRecord:
     sequence_sha256: str
 
 
+def extract_last_hidden_state(model_output: object) -> object:
+    """Read the encoder state from Hugging Face or legacy remote-model outputs."""
+
+    hidden = getattr(model_output, "last_hidden_state", None)
+    if hidden is not None:
+        return hidden
+    if isinstance(model_output, (tuple, list)) and model_output and model_output[0] is not None:
+        return model_output[0]
+    raise TypeError(
+        f"Model output {type(model_output).__name__} does not contain a last hidden state"
+    )
+
+
 def normalize_nucleotide_sequence(sequence: str) -> str:
     """Convert spaced codons or bracketed mRNA text to an Evo-compatible DNA string."""
 
