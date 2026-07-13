@@ -5,7 +5,7 @@ kept separate from the mRNABERT training code so protein design, structure model
 mRNA design, ranking, and wet-lab feedback can evolve without coupling their state
 to a single model implementation.
 
-The current milestone implements sequence intake only:
+The current milestone implements source intake and provisional candidate specification:
 
 - strict amino-acid and CDS FASTA parsing;
 - one-to-one matching by FASTA ID;
@@ -14,9 +14,14 @@ The current milestone implements sequence intake only:
 - descriptive AA/CDS metrics;
 - exact input snapshots, indexed immutable artifacts, and cross-file verification;
 - JSON/CSV audit records and self-contained bilingual HTML reports.
+- a Stage 2 candidate specification contract for source controls, truncations, and fusions;
+- deterministic AA/CDS terminal-addition, source-range, and component-order inference;
+- immutable continuation runs with sealed Stage 1 provenance;
+- provisional, deduplicated ESMFold2 FASTA export and explicit model handoff state.
 
 It does **not** yet predict antigenicity, safety, expression, structure, or vaccine
-efficacy. Those stages remain explicitly marked `not_evaluated` in every manifest.
+efficacy. Stage 2 prepares exact model inputs but does not run or interpret a
+scientific model. Those later stages remain explicitly marked `not_evaluated`.
 
 ## First Three Proteins
 
@@ -83,6 +88,17 @@ Verify any run independently:
 ./vaxflow verify-run /absolute/path/to/runs/<run-id>
 ```
 
+Run candidate specification against a verified Stage 1 run:
+
+```bash
+./vaxflow validate-stage2 projects/three-protein/project.json --from-run /absolute/path/to/stage1-run
+./vaxflow run-stage2 projects/three-protein/project.json --from-run /absolute/path/to/stage1-run
+```
+
+The Stage 2 node writes `candidate_batch.json`, review CSV files, a bilingual node
+report, and `structure_candidates.fasta`. The latter is an explicitly provisional
+ESMFold2 input until the human release gates are resolved.
+
 ## New Project
 
 To create another project without copying files by hand:
@@ -118,3 +134,10 @@ defined in
 The initial supplied archive review is recorded in
 [docs/supplied-data-audit.md](docs/supplied-data-audit.md); raw sequences are not
 stored in Git.
+The three stage-1 decisions that remain open after deferring later-branch questions
+are recorded in
+[docs/three-protein-stage-1-open-decisions.md](docs/three-protein-stage-1-open-decisions.md),
+including their blocking scope, machine-inference boundary, and minimum human input.
+The implemented Stage 2 contract, current deterministic findings, artifacts, and
+model launch order are documented in
+[docs/stage2-candidate-specification.md](docs/stage2-candidate-specification.md).

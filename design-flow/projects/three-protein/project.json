@@ -5,7 +5,8 @@
   "runtime_root": "/data00/home/wangzhi.wit/models/design-flow-runtime/three-protein",
   "inputs": {
     "amino_acid_fasta": "input/proteins_aa.fasta",
-    "nucleotide_fasta": "input/proteins_cds.fasta"
+    "nucleotide_fasta": "input/proteins_cds.fasta",
+    "candidate_specification": "input/candidate_specification.json"
   },
   "outputs": {
     "run_root": "runs"

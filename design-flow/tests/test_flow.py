@@ -13,6 +13,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from design_flow.cli import main as cli_main
+from design_flow.candidate_reporting import write_candidate_run
+from design_flow.candidate_specification import analyze_candidate_specification
 from design_flow.domain import FastaRecord
 from design_flow.fasta import parse_fasta
 from design_flow.pipeline import analyze_project
@@ -423,6 +425,172 @@ class EndToEndTests(unittest.TestCase):
             )
 
             self.assertEqual(cli_main(["verify-run", str(run_dir)]), 0)
+
+
+class CandidateStageEndToEndTests(unittest.TestCase):
+    def _write_stage2_project(self, root: Path) -> tuple[Path, Path]:
+        source_dir = root / "source-project"
+        runtime_dir = root / "runtime-project"
+        input_dir = runtime_dir / "input"
+        manual_dir = input_dir / "manual"
+        manual_dir.mkdir(parents=True)
+        source_aa = {
+            "A": "MAAAAAAAA",
+            "B": "MCCCCCCCC",
+            "C": "MGGGGGGGG",
+        }
+        source_cds = {
+            "A": "ATG" + "GCT" * 8 + "TAA",
+            "B": "ATG" + "TGT" * 8 + "TAA",
+            "C": "ATG" + "GGT" * 8 + "TAA",
+        }
+        (input_dir / "proteins_aa.fasta").write_text(
+            "".join(f">{key}\n{value}\n" for key, value in source_aa.items()),
+            encoding="utf-8",
+        )
+        (input_dir / "proteins_cds.fasta").write_text(
+            "".join(f">{key}\n{value}\n" for key, value in source_cds.items()),
+            encoding="utf-8",
+        )
+        manual_records = {
+            "trunc-a.aa.fasta": ">trunc-a\nAAAAAAAA\n",
+            "trunc-a.cds.fasta": ">trunc-a\n" + "GCT" * 8 + "TAA\n",
+            "trunc-b.aa.fasta": ">trunc-b\nCCCCCCCC\n",
+            "trunc-b.cds.fasta": ">trunc-b\n" + "TGT" * 8 + "TAA\n",
+            "fusion.aa.fasta": ">fusion\nCCCCCCCCAAAAAAAA\n",
+            "fusion.cds.fasta": ">fusion\nATG" + "TGT" * 8 + "GCT" * 8 + "TAA\n",
+        }
+        for name, content in manual_records.items():
+            (manual_dir / name).write_text(content, encoding="utf-8")
+        specification = {
+            "schema_version": 1,
+            "specification_id": "test-stage2-v1",
+            "batch_label": "test candidates",
+            "release_mode": "provisional",
+            "include_source_controls": ["A", "B", "C"],
+            "manual_candidates": [
+                {
+                    "candidate_key": "trunc-a",
+                    "candidate_type": "truncation",
+                    "amino_acid_fasta": "input/manual/trunc-a.aa.fasta",
+                    "nucleotide_fasta": "input/manual/trunc-a.cds.fasta",
+                    "claimed_source_id": "A",
+                    "claimed_source_start": 2,
+                    "claimed_source_end": 9,
+                    "annotation_status": "unreviewed",
+                },
+                {
+                    "candidate_key": "trunc-b",
+                    "candidate_type": "truncation",
+                    "amino_acid_fasta": "input/manual/trunc-b.aa.fasta",
+                    "nucleotide_fasta": "input/manual/trunc-b.cds.fasta",
+                    "claimed_source_id": "B",
+                    "claimed_source_start": 2,
+                    "claimed_source_end": 9,
+                    "annotation_status": "unreviewed",
+                },
+                {
+                    "candidate_key": "fusion-ba",
+                    "candidate_type": "fusion",
+                    "amino_acid_fasta": "input/manual/fusion.aa.fasta",
+                    "nucleotide_fasta": "input/manual/fusion.cds.fasta",
+                    "claimed_component_keys": ["trunc-a", "trunc-b"],
+                    "annotation_status": "unreviewed",
+                },
+            ],
+            "generation_grammar": {
+                "status": "draft",
+                "generate_new_candidates": False,
+                "structure_max_length": 1024,
+            },
+        }
+        specification_path = input_dir / "candidate_specification.json"
+        specification_path.write_text(json.dumps(specification), encoding="utf-8")
+        config = {
+            "schema_version": 1,
+            "project_id": "test-stage2",
+            "expected_protein_count": 3,
+            "runtime_root": str(runtime_dir),
+            "inputs": {
+                "amino_acid_fasta": "input/proteins_aa.fasta",
+                "nucleotide_fasta": "input/proteins_cds.fasta",
+                "candidate_specification": "input/candidate_specification.json",
+            },
+            "outputs": {"run_root": "runs"},
+            "context": {
+                "target_indication": "test indication",
+                "intended_host_species": "test host",
+                "product_modalities": ["recombinant_protein", "mrna"],
+                "protein_expression_host": "test expression host",
+                "mrna_target_species": "test host",
+            },
+        }
+        source_dir.mkdir(parents=True)
+        config_path = source_dir / "project.json"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        source_run = write_run_artifacts(
+            analyze_project(config_path),
+            now=datetime(2026, 7, 14, 8, 0, tzinfo=timezone.utc),
+        )
+        return config_path, source_run
+
+    def test_stage2_infers_actual_component_order_and_writes_verified_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            config_path, source_run = self._write_stage2_project(Path(temporary_dir))
+            analysis = analyze_candidate_specification(
+                config_path,
+                source_run_dir=source_run,
+            )
+            fusion = next(
+                candidate for candidate in analysis.candidates if candidate.candidate_key == "fusion-ba"
+            )
+
+            self.assertEqual(fusion.observed_component_keys, ["trunc-b", "trunc-a"])
+            self.assertTrue(
+                any(issue.code == "claimed_component_order_mismatch" for issue in fusion.issues)
+            )
+            self.assertEqual(fusion.release_status, "quarantined")
+            candidate_run = write_candidate_run(
+                analysis,
+                now=datetime(2026, 7, 14, 9, 0, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(verify_run(candidate_run)["status"], "pass")
+            self.assertEqual(verify_run(source_run)["status"], "pass")
+            summary = json.loads(
+                (candidate_run / "nodes" / "candidate_specification" / "summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(summary["candidate_count"], 6)
+            self.assertEqual(summary["exploratory_structure_ready_count"], 6)
+            self.assertEqual(summary["formal_structure_ready_count"], 3)
+
+    def test_stage2_verifier_detects_component_tampering_after_reindex(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            config_path, source_run = self._write_stage2_project(Path(temporary_dir))
+            candidate_run = write_candidate_run(
+                analyze_candidate_specification(config_path, source_run_dir=source_run),
+                now=datetime(2026, 7, 14, 10, 0, tzinfo=timezone.utc),
+            )
+            batch_path = candidate_run / "nodes" / "candidate_specification" / "candidate_batch.json"
+            batch = json.loads(batch_path.read_text(encoding="utf-8"))
+            batch["candidates"][-1]["inferred_components"][0]["source_start"] = 1
+            batch_path.write_text(json.dumps(batch, indent=2) + "\n", encoding="utf-8")
+            manifest = json.loads((candidate_run / "manifest.json").read_text(encoding="utf-8"))
+            index = build_artifact_index(candidate_run, manifest["project_id"], manifest["run_id"])
+            (candidate_run / "artifact_index.json").write_text(
+                json.dumps(index, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            result = verify_run(candidate_run)
+
+            self.assertEqual(result["status"], "fail")
+            self.assertTrue(
+                any("component-maps-cover-sequences" in error for error in result["errors"]),
+                result["errors"],
+            )
 
 
 if __name__ == "__main__":

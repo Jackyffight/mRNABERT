@@ -114,12 +114,26 @@ def load_project_config(path: Path) -> ProjectConfig:
         runtime_root,
         _required_text(inputs, "nucleotide_fasta"),
     )
+    candidate_specification_value = inputs.get("candidate_specification")
+    if candidate_specification_value is not None and (
+        not isinstance(candidate_specification_value, str)
+        or not candidate_specification_value.strip()
+    ):
+        raise ValueError("inputs.candidate_specification must be a non-empty path")
+    candidate_specification = (
+        _runtime_path(runtime_root, candidate_specification_value)
+        if isinstance(candidate_specification_value, str)
+        else None
+    )
     run_root = _runtime_path(runtime_root, str(outputs.get("run_root", "runs")))
-    for field_name, runtime_path in (
+    checked_runtime_paths: list[tuple[str, Path]] = [
         ("amino_acid_fasta", amino_acid_fasta),
         ("nucleotide_fasta", nucleotide_fasta),
         ("run_root", run_root),
-    ):
+    ]
+    if candidate_specification is not None:
+        checked_runtime_paths.append(("candidate_specification", candidate_specification))
+    for field_name, runtime_path in checked_runtime_paths:
         if not runtime_path.is_relative_to(runtime_root):
             raise ValueError(f"{field_name} must resolve inside runtime_root")
 
@@ -136,6 +150,7 @@ def load_project_config(path: Path) -> ProjectConfig:
         runtime_root=runtime_root,
         amino_acid_fasta=amino_acid_fasta,
         nucleotide_fasta=nucleotide_fasta,
+        candidate_specification=candidate_specification,
         run_root=run_root,
         target_indication=str(context.get("target_indication", "unspecified")),
         intended_host_species=str(context.get("intended_host_species", "unspecified")),

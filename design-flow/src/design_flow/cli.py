@@ -9,6 +9,12 @@ import re
 import sys
 
 from . import __version__
+from .candidate_reporting import write_candidate_run
+from .candidate_specification import (
+    CANDIDATE_STAGE_ID,
+    CandidateBatchAnalysis,
+    analyze_candidate_specification,
+)
 from .domain import ProjectAnalysis
 from .pipeline import analyze_project
 from .reporting import write_run_artifacts
@@ -44,6 +50,22 @@ def _build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser("run", help="audit inputs and write immutable run artifacts")
     run_parser.add_argument("project_config", type=Path)
+    for command, help_text in (
+        ("validate-stage2", "validate candidate specification without writing a continuation run"),
+        ("run-stage2", "write an immutable candidate-specification continuation run"),
+    ):
+        stage2_parser = subparsers.add_parser(command, help=help_text)
+        stage2_parser.add_argument("project_config", type=Path)
+        stage2_parser.add_argument(
+            "--from-run",
+            type=Path,
+            help="verified stage-1 run; defaults to the project's latest run",
+        )
+        stage2_parser.add_argument(
+            "--specification",
+            type=Path,
+            help="candidate specification JSON; defaults to the project input",
+        )
     verify_parser = subparsers.add_parser(
         "verify-run",
         help="verify hashes and cross-file consistency for an immutable run",
@@ -130,6 +152,42 @@ def _print_analysis(analysis: ProjectAnalysis) -> None:
         print(f"  {issue.severity.upper()} {issue.code}: {scope}{issue.message}")
 
 
+def _print_candidate_analysis(analysis: CandidateBatchAnalysis) -> None:
+    errors = sum(issue.severity == "error" for issue in analysis.all_issues)
+    warnings = sum(issue.severity == "warning" for issue in analysis.all_issues)
+    ready = sum(
+        candidate.exploratory_structure_ready and candidate.duplicate_of is None
+        for candidate in analysis.candidates
+    )
+    print(
+        f"Project {analysis.config.project_id}: stage={CANDIDATE_STAGE_ID} "
+        f"status={analysis.computational_status} candidates={len(analysis.candidates)} "
+        f"structure_ready={ready} errors={errors} warnings={warnings}"
+    )
+    print(
+        f"  source_run={analysis.source_run_id} "
+        f"source_handoff={analysis.source_handoff.get('readiness')} "
+        f"specification={analysis.specification.specification_id}"
+    )
+    for candidate in analysis.candidates:
+        components = ",".join(
+            (
+                f"{component['source_protein_id']}:{component['source_start']}-{component['source_end']}"
+                if component["component_type"] == "source_segment"
+                else f"addition:{component['sequence']}"
+            )
+            for component in candidate.inferred_components
+        )
+        print(
+            f"  {candidate.candidate_key}: compute={candidate.computational_status} "
+            f"release={candidate.release_status} aa={len(candidate.amino_acid_sequence)} "
+            f"translation={candidate.translation_relation['relation']} components={components}"
+        )
+    for issue in analysis.all_issues:
+        scope = f"[{issue.protein_id}] " if issue.protein_id else ""
+        print(f"  {issue.severity.upper()} {issue.code}: {scope}{issue.message}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -154,6 +212,22 @@ def main(argv: list[str] | None = None) -> int:
             for warning in result["warnings"]:
                 print(f"  WARNING {warning}")
             return 0 if result["status"] == "pass" else 2
+
+        if args.command in {"validate-stage2", "run-stage2"}:
+            candidate_analysis = analyze_candidate_specification(
+                args.project_config,
+                source_run_dir=args.from_run,
+                specification_path=args.specification,
+            )
+            _print_candidate_analysis(candidate_analysis)
+            if args.command == "run-stage2":
+                run_dir = write_candidate_run(candidate_analysis)
+                node_dir = run_dir / "nodes" / CANDIDATE_STAGE_ID
+                print(f"Run artifacts: {run_dir}")
+                print(f"Node summary: {node_dir / 'summary.json'}")
+                print(f"Node report: {node_dir / 'report.html'}")
+                print(f"ESMFold2 input: {node_dir / 'structure_candidates.fasta'}")
+            return 0 if candidate_analysis.computational_status == "pass" else 2
 
         analysis = analyze_project(args.project_config)
         _print_analysis(analysis)

@@ -40,6 +40,22 @@ NODE_ARTIFACT_NAMES = (
     "proteins.csv",
     "qc_issues.csv",
 )
+CANDIDATE_STAGE_ID = "candidate_specification"
+CANDIDATE_NODE_ARTIFACT_NAMES = (
+    "summary.json",
+    "report.html",
+    "input_audit.json",
+    "process_record.json",
+    "output_audit.json",
+    "human_actions.json",
+    "handoff.json",
+    "candidate_batch.json",
+    "candidates.csv",
+    "candidate_components.csv",
+    "findings.csv",
+    "structure_candidates.fasta",
+    "model_inputs.json",
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -192,6 +208,15 @@ def _read_csv(verifier: _Verification, path: Path, check_id: str) -> list[dict[s
 def verify_run(run_dir: Path, *, check_external_inputs: bool = True) -> dict[str, Any]:
     """Verify file integrity, provenance snapshots, and cross-file semantics."""
     run_dir = run_dir.expanduser().resolve()
+    try:
+        current_manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        current_manifest = None
+    if isinstance(current_manifest, dict) and current_manifest.get("current_stage") == CANDIDATE_STAGE_ID:
+        return _verify_candidate_run(
+            run_dir,
+            check_external_inputs=check_external_inputs,
+        )
     verifier = _Verification()
     run_id = run_dir.name
     if not run_dir.is_dir():
@@ -676,4 +701,554 @@ def verify_run(run_dir: Path, *, check_external_inputs: bool = True) -> dict[str
         "Process and manifest pipeline versions differ",
     )
 
+    return verifier.result(run_dir, run_id)
+
+
+def _verify_candidate_run(
+    run_dir: Path,
+    *,
+    check_external_inputs: bool,
+) -> dict[str, Any]:
+    """Verify a stage-2 continuation run and its sealed stage-1 evidence."""
+    verifier = _Verification()
+    run_id = run_dir.name
+    source_stage_id = CURRENT_STAGE_ID
+    candidate_node_dir = run_dir / "nodes" / CANDIDATE_STAGE_ID
+    source_node_dir = run_dir / "nodes" / source_stage_id
+    if not run_dir.is_dir():
+        verifier.fail("run-directory", f"Run directory does not exist: {run_dir}")
+        return verifier.result(run_dir, run_id)
+
+    fixed_expected_files = {
+        "manifest.json",
+        "workflow.json",
+        *SOURCE_SNAPSHOT_PATHS.values(),
+        "inputs/source_run_manifest.json",
+        "inputs/source_run_artifact_index.json",
+        *(
+            f"nodes/{source_stage_id}/{name}"
+            for name in NODE_ARTIFACT_NAMES
+        ),
+        *(
+            f"nodes/{CANDIDATE_STAGE_ID}/{name}"
+            for name in CANDIDATE_NODE_ARTIFACT_NAMES
+        ),
+    }
+    actual_files: set[str] = set()
+    symlinks: list[str] = []
+    for path in run_dir.rglob("*"):
+        relative_path = path.relative_to(run_dir).as_posix()
+        if path.is_symlink():
+            symlinks.append(relative_path)
+        elif path.is_file() and relative_path != ARTIFACT_INDEX_FILENAME:
+            actual_files.add(relative_path)
+    verifier.check(
+        "no-symlinks",
+        not symlinks,
+        "Run contains no symlinked artifacts",
+        f"Symlinked artifacts are not allowed: {symlinks}",
+    )
+    verifier.check(
+        "required-artifacts",
+        fixed_expected_files <= actual_files,
+        "All fixed stage-1 and stage-2 artifacts are present",
+        f"Missing required artifacts: {sorted(fixed_expected_files - actual_files)}",
+    )
+
+    index = _load_json(verifier, run_dir / ARTIFACT_INDEX_FILENAME, "artifact-index-json")
+    if isinstance(index, dict):
+        entries = index.get("artifacts")
+        valid_entries = isinstance(entries, dict) and all(
+            isinstance(relative_path, str) and isinstance(identity, dict)
+            for relative_path, identity in entries.items()
+        )
+        verifier.check(
+            "artifact-index-shape",
+            valid_entries and index.get("hash_algorithm") == "sha256",
+            "Artifact index uses SHA-256 and has a path map",
+            "Artifact index is malformed or uses an unsupported hash algorithm",
+        )
+        if valid_entries:
+            verifier.check(
+                "artifact-index-coverage",
+                set(entries) == actual_files,
+                f"Artifact index covers all {len(actual_files)} run files",
+                (
+                    f"Index mismatch: missing={sorted(actual_files - set(entries))}, "
+                    f"unexpected={sorted(set(entries) - actual_files)}"
+                ),
+            )
+            for relative_path, identity in sorted(entries.items()):
+                artifact_path = _safe_run_path(run_dir, relative_path)
+                valid = (
+                    artifact_path is not None
+                    and artifact_path.is_file()
+                    and identity.get("sha256") == sha256_file(artifact_path)
+                    and identity.get("size_bytes") == artifact_path.stat().st_size
+                )
+                verifier.check(
+                    f"artifact-integrity:{relative_path}",
+                    valid,
+                    f"SHA-256 and size match for {relative_path}",
+                    f"SHA-256 or size mismatch for {relative_path}",
+                )
+
+    document_paths = {
+        "manifest": run_dir / "manifest.json",
+        "workflow": run_dir / "workflow.json",
+        "summary": candidate_node_dir / "summary.json",
+        "input_audit": candidate_node_dir / "input_audit.json",
+        "process_record": candidate_node_dir / "process_record.json",
+        "output_audit": candidate_node_dir / "output_audit.json",
+        "human_actions": candidate_node_dir / "human_actions.json",
+        "handoff": candidate_node_dir / "handoff.json",
+        "candidate_batch": candidate_node_dir / "candidate_batch.json",
+        "model_inputs": candidate_node_dir / "model_inputs.json",
+        "source_manifest": run_dir / "inputs" / "source_run_manifest.json",
+        "source_index": run_dir / "inputs" / "source_run_artifact_index.json",
+        "source_summary": source_node_dir / "summary.json",
+        "source_proteins": source_node_dir / "proteins.json",
+    }
+    documents = {
+        name: _load_json(verifier, path, f"json:{name}")
+        for name, path in document_paths.items()
+    }
+    if not all(isinstance(document, dict) for document in documents.values()):
+        return verifier.result(run_dir, run_id)
+
+    manifest = documents["manifest"]
+    workflow = documents["workflow"]
+    summary = documents["summary"]
+    input_audit = documents["input_audit"]
+    process_record = documents["process_record"]
+    output_audit = documents["output_audit"]
+    human_actions = documents["human_actions"]
+    handoff = documents["handoff"]
+    candidate_batch = documents["candidate_batch"]
+    model_inputs = documents["model_inputs"]
+    source_manifest = documents["source_manifest"]
+    source_index = documents["source_index"]
+    source_summary = documents["source_summary"]
+    source_proteins_document = documents["source_proteins"]
+    project_id = manifest.get("project_id")
+
+    verifier.check(
+        "run-identity",
+        isinstance(project_id, str)
+        and bool(project_id)
+        and manifest.get("run_id") == run_id
+        and workflow.get("run_id") == run_id
+        and summary.get("run_id") == run_id
+        and handoff.get("run_id") == run_id
+        and candidate_batch.get("run_id") == run_id
+        and candidate_batch.get("project_id") == project_id,
+        f"Stage-2 run and project identity agree on {run_id}",
+        "Run or project identity differs across stage-2 artifacts",
+    )
+    if isinstance(index, dict):
+        verifier.check(
+            "artifact-index-identity",
+            index.get("run_id") == run_id and index.get("project_id") == project_id,
+            "Artifact index identity matches the manifest",
+            "Artifact index identity differs from the manifest",
+        )
+
+    try:
+        validate_workflow()
+        workflow_valid = _workflow_blueprint_matches(workflow)
+    except ValueError:
+        workflow_valid = False
+    verifier.check(
+        "workflow-blueprint",
+        workflow_valid,
+        "Workflow contract matches the validated system DAG",
+        "workflow.json differs from the validated system DAG",
+    )
+    workflow_stages = workflow.get("stages")
+    stage_statuses = (
+        {stage.get("stage_id"): stage.get("status") for stage in workflow_stages}
+        if isinstance(workflow_stages, list)
+        and all(isinstance(stage, dict) for stage in workflow_stages)
+        else {}
+    )
+    manifest_nodes = manifest.get("nodes")
+    manifest_nodes = manifest_nodes if isinstance(manifest_nodes, dict) else {}
+    verifier.check(
+        "stage-identity",
+        manifest.get("current_stage") == CANDIDATE_STAGE_ID
+        and workflow.get("current_stage") == CANDIDATE_STAGE_ID
+        and summary.get("stage_id") == CANDIDATE_STAGE_ID
+        and input_audit.get("stage_id") == CANDIDATE_STAGE_ID
+        and process_record.get("stage_id") == CANDIDATE_STAGE_ID
+        and output_audit.get("stage_id") == CANDIDATE_STAGE_ID
+        and human_actions.get("stage_id") == CANDIDATE_STAGE_ID
+        and handoff.get("from_stage") == CANDIDATE_STAGE_ID
+        and candidate_batch.get("stage_id") == CANDIDATE_STAGE_ID
+        and model_inputs.get("stage_id") == CANDIDATE_STAGE_ID,
+        "All current-node artifacts identify candidate_specification",
+        "One or more stage-2 artifacts identify a different stage",
+    )
+    future_statuses_valid = all(
+        status == "not_evaluated"
+        for stage_id, status in stage_statuses.items()
+        if stage_id not in {source_stage_id, CANDIDATE_STAGE_ID}
+    )
+    verifier.check(
+        "stage-status",
+        manifest.get("status") == summary.get("status")
+        and isinstance(manifest_nodes.get(CANDIDATE_STAGE_ID), dict)
+        and manifest_nodes[CANDIDATE_STAGE_ID].get("status") == summary.get("status")
+        and stage_statuses.get(CANDIDATE_STAGE_ID) == summary.get("status")
+        and stage_statuses.get(source_stage_id) == source_summary.get("status")
+        and future_statuses_valid,
+        "Source, current, and future stage statuses are consistent",
+        "Stage status differs across manifest, summary, or workflow",
+    )
+
+    lineage = manifest.get("lineage")
+    lineage = lineage if isinstance(lineage, dict) else {}
+    parent_run_id = source_manifest.get("run_id")
+    source_entries = source_index.get("artifacts")
+    source_entries = source_entries if isinstance(source_entries, dict) else {}
+    verifier.check(
+        "parent-run-lineage",
+        isinstance(parent_run_id, str)
+        and parent_run_id
+        and lineage.get("parent_run_id") == parent_run_id
+        and candidate_batch.get("source_run_id") == parent_run_id
+        and input_audit.get("source_run", {}).get("run_id") == parent_run_id
+        and lineage.get("parent_artifact_index_sha256")
+        == sha256_file(run_dir / "inputs" / "source_run_artifact_index.json")
+        and source_manifest.get("project_id") == project_id,
+        f"Stage-2 lineage is sealed to source run {parent_run_id}",
+        "Source-run identity or artifact-index seal differs",
+    )
+    copied_parent_paths = {
+        *SOURCE_SNAPSHOT_PATHS.values(),
+        *(
+            f"nodes/{source_stage_id}/{name}"
+            for name in NODE_ARTIFACT_NAMES
+        ),
+    }
+    parent_copy_matches = bool(source_entries) and all(
+        relative_path in source_entries
+        and (run_dir / relative_path).is_file()
+        and source_entries[relative_path].get("sha256") == sha256_file(run_dir / relative_path)
+        and source_entries[relative_path].get("size_bytes") == (run_dir / relative_path).stat().st_size
+        for relative_path in copied_parent_paths
+    )
+    verifier.check(
+        "source-node-seal",
+        parent_copy_matches,
+        "Copied source snapshots and stage-1 node exactly match the parent artifact index",
+        "One or more copied stage-1 artifacts differ from the sealed parent run",
+    )
+
+    input_records = input_audit.get("inputs")
+    input_records = input_records if isinstance(input_records, dict) else {}
+    snapshots_valid = bool(input_records)
+    for input_name, record in input_records.items():
+        if not isinstance(record, dict):
+            snapshots_valid = False
+            continue
+        snapshot_relative = record.get("snapshot_path")
+        snapshot_path = _safe_run_path(candidate_node_dir, snapshot_relative)
+        matches = (
+            isinstance(snapshot_relative, str)
+            and snapshot_relative.startswith("inputs/")
+            and snapshot_path is not None
+            and snapshot_path.is_file()
+            and record.get("sha256") == sha256_file(snapshot_path)
+        )
+        snapshots_valid = snapshots_valid and matches
+        if check_external_inputs:
+            external_value = record.get("path")
+            external_path = Path(external_value) if isinstance(external_value, str) else None
+            try:
+                external_matches = (
+                    external_path is not None
+                    and external_path.is_file()
+                    and record.get("sha256") == sha256_file(external_path)
+                )
+            except OSError:
+                external_matches = False
+            verifier.check(
+                f"external-input-current:{input_name}",
+                external_matches,
+                f"Current external input still matches {input_name}",
+                f"External input is unavailable or has drifted for {input_name}",
+                warning=True,
+            )
+    verifier.check(
+        "candidate-input-snapshots",
+        snapshots_valid,
+        f"All {len(input_records)} candidate inputs have matching snapshots",
+        "Candidate input snapshots are missing, unsafe, or inconsistent",
+    )
+    manifest_inputs = manifest.get("inputs")
+    manifest_candidate_inputs = (
+        manifest_inputs.get("candidate_specification")
+        if isinstance(manifest_inputs, dict)
+        else None
+    )
+    verifier.check(
+        "candidate-input-records",
+        manifest_candidate_inputs == input_records
+        and "candidate_specification" in input_records,
+        "Manifest and input audit carry identical candidate input identities",
+        "Manifest and input audit candidate inputs differ",
+    )
+
+    raw_candidates = candidate_batch.get("candidates")
+    candidates = raw_candidates if isinstance(raw_candidates, list) else []
+    valid_candidate_shape = bool(candidates) and all(
+        isinstance(candidate, dict)
+        and isinstance(candidate.get("candidate_key"), str)
+        and isinstance(candidate.get("candidate_id"), str)
+        and isinstance(candidate.get("amino_acid_sequence"), str)
+        and isinstance(candidate.get("inferred_components"), list)
+        for candidate in candidates
+    )
+    candidate_keys = [candidate.get("candidate_key") for candidate in candidates if isinstance(candidate, dict)]
+    candidate_ids = [candidate.get("candidate_id") for candidate in candidates if isinstance(candidate, dict)]
+    verifier.check(
+        "candidate-schema-and-identity",
+        valid_candidate_shape
+        and len(candidate_keys) == len(set(candidate_keys))
+        and len(candidate_ids) == len(set(candidate_ids)),
+        "Candidate keys and IDs are present and unique",
+        "Candidate records are malformed or contain duplicate identities",
+    )
+
+    source_records = source_proteins_document.get("proteins")
+    source_records = source_records if isinstance(source_records, list) else []
+    source_sequences = {
+        record.get("protein_id"): record.get("amino_acid_sequence")
+        for record in source_records
+        if isinstance(record, dict)
+        and isinstance(record.get("protein_id"), str)
+        and isinstance(record.get("amino_acid_sequence"), str)
+    }
+    component_maps_valid = valid_candidate_shape
+    for candidate in candidates:
+        aa = candidate["amino_acid_sequence"]
+        components = candidate["inferred_components"]
+        expected_start = 1
+        rebuilt: list[str] = []
+        for component in components:
+            if not isinstance(component, dict):
+                component_maps_valid = False
+                break
+            sequence = component.get("sequence")
+            start = component.get("candidate_start")
+            end = component.get("candidate_end")
+            if (
+                not isinstance(sequence, str)
+                or start != expected_start
+                or end != start + len(sequence) - 1
+                or component.get("sequence_sha256")
+                != hashlib.sha256(sequence.encode("utf-8")).hexdigest()
+            ):
+                component_maps_valid = False
+                break
+            if component.get("component_type") == "source_segment":
+                source_id = component.get("source_protein_id")
+                source_start = component.get("source_start")
+                source_end = component.get("source_end")
+                source_sequence = source_sequences.get(source_id)
+                if (
+                    not isinstance(source_sequence, str)
+                    or not isinstance(source_start, int)
+                    or not isinstance(source_end, int)
+                    or source_sequence[source_start - 1 : source_end] != sequence
+                ):
+                    component_maps_valid = False
+                    break
+            rebuilt.append(sequence)
+            expected_start = end + 1
+        if "".join(rebuilt) != aa:
+            component_maps_valid = False
+        if candidate.get("amino_acid_sha256") != hashlib.sha256(aa.encode("utf-8")).hexdigest():
+            component_maps_valid = False
+    verifier.check(
+        "component-maps-cover-sequences",
+        component_maps_valid,
+        "Every component map is contiguous, source-backed, and reconstructs its candidate",
+        "A component map does not reconstruct the candidate or source interval",
+    )
+
+    output_candidates = output_audit.get("candidates")
+    expected_output_candidates = [
+        {
+            "candidate_key": candidate["candidate_key"],
+            "candidate_id": candidate["candidate_id"],
+            "computational_status": candidate["computational_status"],
+            "release_status": candidate["release_status"],
+            "aa_length": len(candidate["amino_acid_sequence"]),
+            "translation_relation": candidate["translation_relation"]["relation"],
+            "exploratory_structure_ready": candidate["exploratory_structure_ready"],
+            "formal_structure_ready": candidate["formal_structure_ready"],
+        }
+        for candidate in candidates
+    ] if valid_candidate_shape else []
+    verifier.check(
+        "candidate-output-cross-reference",
+        output_candidates == expected_output_candidates,
+        "Output audit is an exact projection of the candidate batch",
+        "Output audit candidates differ from candidate_batch.json",
+    )
+
+    expected_structure = {
+        candidate["candidate_id"]: candidate["amino_acid_sequence"]
+        for candidate in candidates
+        if candidate.get("exploratory_structure_ready") is True
+        and candidate.get("duplicate_of") is None
+    }
+    try:
+        from .fasta import parse_fasta
+
+        structure_records = parse_fasta(candidate_node_dir / "structure_candidates.fasta")
+        observed_structure = {record.record_id: record.sequence for record in structure_records}
+    except ValueError:
+        observed_structure = {}
+    verifier.check(
+        "structure-fasta-cross-reference",
+        observed_structure == expected_structure,
+        f"Structure FASTA contains exactly {len(expected_structure)} eligible unique candidates",
+        "Structure FASTA differs from eligible candidates in the batch",
+    )
+    models = model_inputs.get("models")
+    models = models if isinstance(models, dict) else {}
+    esmfold = models.get("ESMFold2")
+    expected_structure_ids = list(expected_structure)
+    verifier.check(
+        "model-input-cross-reference",
+        isinstance(esmfold, dict)
+        and esmfold.get("input_path") == "structure_candidates.fasta"
+        and esmfold.get("candidate_ids") == expected_structure_ids
+        and models.get("Evo2", {}).get("status") == "deferred"
+        and models.get("mRNABERT", {}).get("status") == "deferred",
+        "Model handoff matches the candidate batch and stage responsibilities",
+        "Model handoff contains inconsistent candidate IDs or stage assignments",
+    )
+
+    findings = [
+        finding
+        for candidate in candidates
+        for finding in candidate.get("issues", [])
+        if isinstance(finding, dict)
+    ]
+    error_count = sum(finding.get("severity") == "error" for finding in findings)
+    warning_count = sum(finding.get("severity") == "warning" for finding in findings)
+    computational_status = "fail" if error_count else "pass"
+    output_summary = output_audit.get("summary")
+    output_summary = output_summary if isinstance(output_summary, dict) else {}
+    expected_counts = {
+        "candidate_count": len(candidates),
+        "source_control_count": sum(candidate.get("candidate_type") == "source_control" for candidate in candidates),
+        "manual_candidate_count": sum(candidate.get("candidate_type") != "source_control" for candidate in candidates),
+        "released_count": sum(candidate.get("release_status") == "released" for candidate in candidates),
+        "quarantined_count": sum(candidate.get("release_status") == "quarantined" for candidate in candidates),
+        "rejected_count": sum(candidate.get("release_status") == "rejected" for candidate in candidates),
+        "exploratory_structure_ready_count": len(expected_structure),
+        "formal_structure_ready_count": sum(candidate.get("formal_structure_ready") is True for candidate in candidates),
+        "errors": error_count,
+        "warnings": warning_count,
+    }
+    verifier.check(
+        "candidate-counts-and-status",
+        output_summary == expected_counts
+        and input_audit.get("status") == computational_status
+        and output_audit.get("status") == computational_status
+        and summary.get("computational_audit_status") == computational_status
+        and manifest.get("counts", {}).get("candidate_count") == len(candidates),
+        "Candidate counts and computational status agree across artifacts",
+        "Candidate counts or computational status differ across artifacts",
+    )
+
+    raw_actions = human_actions.get("actions")
+    actions = raw_actions if isinstance(raw_actions, list) else []
+    action_ids = [action.get("action_id") for action in actions if isinstance(action, dict)]
+    known_stage_ids = {stage.stage_id for stage in FULL_WORKFLOW}
+    open_actions = [
+        action for action in actions if isinstance(action, dict) and action.get("status") == "open"
+    ]
+    due_actions = [
+        action
+        for action in open_actions
+        if action.get("required_before_stage") in {CANDIDATE_STAGE_ID, handoff.get("to_stage")}
+    ]
+    actions_valid = (
+        isinstance(raw_actions, list)
+        and len(action_ids) == len(set(action_ids))
+        and all(
+            isinstance(action, dict)
+            and action.get("required_before_stage") in known_stage_ids
+            and action.get("status") in {"open", "resolved", "waived"}
+            for action in actions
+        )
+    )
+    verifier.check(
+        "human-actions",
+        actions_valid
+        and human_actions.get("open_count") == len(open_actions)
+        and human_actions.get("due_before_next_stage_count") == len(due_actions)
+        and summary.get("open_human_actions") == len(open_actions)
+        and summary.get("due_human_actions") == len(due_actions)
+        and handoff.get("blocking_action_ids")
+        == [action.get("action_id") for action in due_actions]
+        and handoff.get("carried_human_actions") == open_actions,
+        "Human actions, counts, and handoff gates agree",
+        "Human actions or handoff gates are inconsistent",
+    )
+    if computational_status == "fail":
+        expected_status, expected_readiness = "blocked", "blocked"
+    elif due_actions:
+        expected_status, expected_readiness = "needs_human_input", "needs_human_input"
+    else:
+        expected_status, expected_readiness = "complete", "ready"
+    verifier.check(
+        "handoff-readiness",
+        summary.get("status") == expected_status
+        and summary.get("handoff_readiness") == expected_readiness
+        and handoff.get("readiness") == expected_readiness
+        and handoff.get("to_stage") == "protein_structure_assessment",
+        f"Node status and handoff correctly resolve to {expected_readiness}",
+        "Node status or handoff readiness conflicts with findings and actions",
+    )
+    candidate_batch_sha256 = sha256_file(candidate_node_dir / "candidate_batch.json")
+    carried_forward = handoff.get("carried_forward")
+    carried_forward = carried_forward if isinstance(carried_forward, dict) else {}
+    verifier.check(
+        "handoff-candidate-batch",
+        carried_forward.get("candidate_batch_sha256") == candidate_batch_sha256
+        and carried_forward.get("source_run_id") == parent_run_id
+        and carried_forward.get("project_id") == project_id
+        and carried_forward.get("candidates") == expected_output_candidates
+        and carried_forward.get("exploratory_structure_candidate_ids") == expected_structure_ids,
+        "Handoff carries the exact candidate batch and exploratory structure set",
+        "Handoff candidate batch identity or candidates differ",
+    )
+
+    manifest_artifacts = manifest.get("artifacts")
+    manifest_artifacts = manifest_artifacts if isinstance(manifest_artifacts, dict) else {}
+    verifier.check(
+        "manifest-artifact-references",
+        manifest_artifacts.get("workflow") == "workflow.json"
+        and manifest_artifacts.get("current_node_root") == f"nodes/{CANDIDATE_STAGE_ID}"
+        and manifest_artifacts.get("handoff") == f"nodes/{CANDIDATE_STAGE_ID}/handoff.json"
+        and manifest_artifacts.get("candidate_batch")
+        == f"nodes/{CANDIDATE_STAGE_ID}/candidate_batch.json"
+        and manifest_artifacts.get("structure_candidates")
+        == f"nodes/{CANDIDATE_STAGE_ID}/structure_candidates.fasta"
+        and manifest_artifacts.get("artifact_index") == ARTIFACT_INDEX_FILENAME,
+        "Manifest artifact references match the continuation-run layout",
+        "Manifest artifact references are missing or inconsistent",
+    )
+    verifier.check(
+        "pipeline-version",
+        process_record.get("pipeline_version") == manifest.get("pipeline_version"),
+        "Process and manifest pipeline versions agree",
+        "Process and manifest pipeline versions differ",
+    )
     return verifier.result(run_dir, run_id)

@@ -154,7 +154,8 @@ immutable; a correction creates a new run or an explicitly versioned node attemp
 ## Initial Milestones
 
 - **M0:** sequence intake and reproducible audit, now implemented.
-- **M1:** candidate schema plus manually supplied original and fusion constructs.
+- **M1:** candidate schema plus manually supplied original and fusion constructs;
+  provisional reconciliation is implemented, while grammar and batch approval remain open.
 - **M2:** one structure-prediction adapter and a structure comparison report.
 - **M3:** developability adapters and transparent multi-objective ranking.
 - **M4:** protein-expression and mRNA-design branches.

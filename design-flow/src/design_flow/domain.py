@@ -22,6 +22,7 @@ class ProjectConfig:
     runtime_root: Path
     amino_acid_fasta: Path
     nucleotide_fasta: Path
+    candidate_specification: Path | None
     run_root: Path
     target_indication: str
     intended_host_species: str
