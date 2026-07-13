@@ -19,6 +19,8 @@ from .domain import ProjectAnalysis
 from .pipeline import analyze_project
 from .reporting import write_run_artifacts
 from .structure_job import write_structure_job
+from .structure_assessment import analyze_structure_results
+from .structure_reporting import write_structure_run
 from .verification import verify_run
 from .workflow import CURRENT_STAGE_ID
 
@@ -86,6 +88,22 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output-root",
         type=Path,
         help="external transfer directory; defaults under the project runtime root",
+    )
+    import_stage3_parser = subparsers.add_parser(
+        "import-stage3",
+        help="verify an ESMFold2 result archive and write an immutable Stage 3 run",
+    )
+    import_stage3_parser.add_argument("project_config", type=Path)
+    import_stage3_parser.add_argument("--results", type=Path, required=True)
+    import_stage3_parser.add_argument(
+        "--from-run",
+        type=Path,
+        help="verified Stage 2 run; defaults to the project's latest Stage 2 run",
+    )
+    import_stage3_parser.add_argument(
+        "--job-dir",
+        type=Path,
+        help="unpacked job directory; inferred from the result job identity by default",
     )
     return parser
 
@@ -243,6 +261,25 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Job directory: {prepared['job_dir']}")
             print(f"Transfer archive: {prepared['archive']}")
             print(f"Transfer SHA256: {prepared['archive_sha256']}")
+            return 0
+
+        if args.command == "import-stage3":
+            structure_analysis = analyze_structure_results(
+                args.project_config,
+                result_archive=args.results,
+                source_run_dir=args.from_run,
+                job_dir=args.job_dir,
+            )
+            run_dir = write_structure_run(structure_analysis)
+            node_dir = run_dir / "nodes" / "protein_structure_assessment"
+            print(
+                f"Stage 3 structure assessment: status=pass "
+                f"candidates={len(structure_analysis.assessments)} "
+                f"review_flags={len(structure_analysis.findings)}"
+            )
+            print(f"Run artifacts: {run_dir}")
+            print(f"Node summary: {node_dir / 'summary.json'}")
+            print(f"Node report: {node_dir / 'report.html'}")
             return 0
 
         if args.command in {"validate-stage2", "run-stage2"}:

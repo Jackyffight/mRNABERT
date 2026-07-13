@@ -44,8 +44,8 @@ a new candidate with an explicit parent.
 terminal node, and two modality branches that rejoin before experiment release:
 
 1. **Program definition and source intake (implemented)**
-2. **Candidate specification and generation**
-3. **Protein structure assessment**
+2. **Candidate specification and generation (manual/provisional specification implemented)**
+3. **Protein structure assessment (exploratory ESMFold2 path implemented)**
 4. **Immune evidence assessment**
 5. **Developability and manufacturability assessment**
 6. **Recombinant protein product design (6A)**
@@ -108,8 +108,8 @@ runtime locations are never inferred from environment variables.
 
 The complete workflow definition is a system blueprint, not a monolithic report.
 Every run writes `workflow.json` as the future UI graph: node IDs, dependencies,
-capabilities, and audit contracts. It says what the complete system will do even
-when only the first node has been implemented.
+capabilities, and audit contracts. It says what the complete system will do while
+implemented evidence accumulates through the first three nodes.
 
 Executed evidence accumulates one node at a time:
 
@@ -156,10 +156,11 @@ immutable; a correction creates a new run or an explicitly versioned node attemp
 - **M0:** sequence intake and reproducible audit, now implemented.
 - **M1:** candidate schema plus manually supplied original and fusion constructs;
   provisional reconciliation is implemented, while grammar and batch approval remain open.
-- **M2:** one structure-prediction adapter and a structure comparison report.
+- **M2:** one structure-prediction adapter and a structure comparison report;
+  exploratory ESMFold2-Fast execution, deterministic geometry, and audited import are implemented.
 - **M3:** developability adapters and transparent multi-objective ranking.
 - **M4:** protein-expression and mRNA-design branches.
 - **M5:** experiment manifest, assay schema, and first closed learning loop.
 
-The immediate next input is the three original proteins. M1 should begin only
-after M0 confirms exactly which nucleotide sequence encodes each supplied protein.
+The next implementation target is residue-level immune evidence and developability
+assessment using the exact Stage 2 candidate IDs and checksum-bound Stage 3 structures.

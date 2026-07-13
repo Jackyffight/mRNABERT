@@ -17,11 +17,15 @@ The current milestone implements source intake and provisional candidate specifi
 - a Stage 2 candidate specification contract for source controls, truncations, and fusions;
 - deterministic AA/CDS terminal-addition, source-range, and component-order inference;
 - immutable continuation runs with sealed Stage 1 provenance;
-- provisional, deduplicated ESMFold2 FASTA export and explicit model handoff state.
+- provisional, deduplicated ESMFold2 FASTA export and explicit model handoff state;
+- checksum-bound ESMFold2-Fast GPU jobs and resumable remote execution;
+- deterministic Stage 3 result import, residue confidence, principal-axis geometry,
+  component/boundary analysis, source-geometry comparisons, and bilingual reports.
 
-It does **not** yet predict antigenicity, safety, expression, structure, or vaccine
-efficacy. Stage 2 prepares exact model inputs but does not run or interpret a
-scientific model. Those later stages remain explicitly marked `not_evaluated`.
+It does **not** yet predict antigenicity, safety, expression, or vaccine efficacy.
+Stage 3 records exploratory structure predictions as computational hypotheses;
+immune, developability, product-design, and experimental stages remain explicitly
+marked `not_evaluated`.
 
 ## First Three Proteins
 
@@ -108,6 +112,19 @@ Prepare the checksum-bound exploratory Stage 3 transfer archive:
 
 Only the resulting `.tar.gz` archive must be transferred to the GPU server. The
 24.4 GiB pinned ESMFold2-Fast/ESMC-6B runtime remains on that server.
+
+Import the returned result archive through code, not through manual extraction or
+interpretation:
+
+```bash
+./vaxflow import-stage3 projects/three-protein/project.json \
+  --from-run /absolute/path/to/verified-stage2-run \
+  --results /absolute/path/to/checksum-bound-results.tar.gz
+```
+
+The importer safely extracts the bounded archive, verifies all remote identities
+and PDB checksums, requires exact PDB/candidate residue correspondence, recomputes
+the versioned geometry rules, and writes an immutable bilingual Stage 3 run.
 
 ## New Project
 

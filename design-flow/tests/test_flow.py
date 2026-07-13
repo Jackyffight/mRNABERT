@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timezone
+import hashlib
 import json
+import math
 from pathlib import Path
 import sys
 import tarfile
@@ -22,6 +24,10 @@ from design_flow.pipeline import analyze_project
 from design_flow.qc import analyze_sequence_pairs, normalize_nucleotide, translate_cds
 from design_flow.reporting import write_run_artifacts
 from design_flow.structure_job import build_structure_job, write_structure_job
+from design_flow.structure_assessment import analyze_structure_results
+from design_flow.structure_reporting import write_structure_run
+from design_flow.structure_job import _document_sha256, _identity
+from design_flow.structure_metrics import ResidueGeometry, geometry_metrics
 from design_flow.verification import build_artifact_index, verify_run
 from design_flow.workflow import (
     CURRENT_STAGE_ID,
@@ -46,6 +52,21 @@ VALID_CDS = [
     FastaRecord("protein_2", "", "ATGAAATTTTGA"),
     FastaRecord("protein_3", "", "ATGGGTCCTTAG"),
 ]
+
+
+class StructureMetricTests(unittest.TestCase):
+    def test_principal_axes_are_deterministic_for_linear_coordinates(self) -> None:
+        residues = [
+            ResidueGeometry("A", index + 1, "", "A", (float(index), 0.0, 0.0), 85.0, 85.0)
+            for index in range(3)
+        ]
+
+        metrics = geometry_metrics(residues)
+
+        self.assertEqual(metrics["principal_axis_extents_angstrom"], [2.0, 0.0, 0.0])
+        self.assertEqual(metrics["principal_axis_vectors"][0], [1.0, 0.0, 0.0])
+        self.assertAlmostEqual(metrics["radius_of_gyration_angstrom"], (2 / 3) ** 0.5, places=6)
+        self.assertEqual(metrics["shape_anisotropy"], 1.0)
 
 
 class FastaTests(unittest.TestCase):
@@ -430,6 +451,111 @@ class EndToEndTests(unittest.TestCase):
 
 
 class CandidateStageEndToEndTests(unittest.TestCase):
+    @staticmethod
+    def _fake_pdb(sequence: str) -> str:
+        names = {
+            "A": "ALA", "R": "ARG", "N": "ASN", "D": "ASP", "C": "CYS",
+            "Q": "GLN", "E": "GLU", "G": "GLY", "H": "HIS", "I": "ILE",
+            "L": "LEU", "K": "LYS", "M": "MET", "F": "PHE", "P": "PRO",
+            "S": "SER", "T": "THR", "W": "TRP", "Y": "TYR", "V": "VAL",
+        }
+        lines = []
+        for index, amino_acid in enumerate(sequence, 1):
+            x = (index - 1) * 3.8
+            y = math.sin(index / 3.0) * 2.0
+            z = math.cos(index / 4.0) * 1.5
+            lines.append(
+                f"ATOM  {index:5d}  CA  {names[amino_acid]:>3s} A{index:4d}    "
+                f"{x:8.3f}{y:8.3f}{z:8.3f}{1.0:6.2f}{85.0:6.2f}           C\n"
+            )
+        return "".join(lines) + "END\n"
+
+    def _write_stage3_result_archive(self, job_dir: Path, archive_path: Path) -> Path:
+        job = json.loads((job_dir / "job-manifest.json").read_text(encoding="utf-8"))
+        result_dir = archive_path.parent / "fake-results"
+        result_dir.mkdir()
+        run_manifest = {
+            "schema_version": "vaxflow.esmfold2-run.v1",
+            "run_identity": "pending",
+            "created_at_utc": "2026-07-14T15:00:00+00:00",
+            "job_identity": job["job_identity"],
+            "job_manifest_sha256": _document_sha256(job),
+            "source": job["source"],
+            "runtime_identity": "fixture-runtime",
+            "model": job["model"],
+            "weight_files": [],
+            "execution": {**job["execution"], "device": "cuda:0", "sequential": True},
+            "candidate_ids": [record["candidate_id"] for record in job["records"]],
+            "limitations": ["fixture exploratory result"],
+        }
+        run_manifest["run_identity"] = _identity(run_manifest, "run_identity")
+        (result_dir / "run-manifest.json").write_text(
+            json.dumps(run_manifest, sort_keys=True), encoding="utf-8"
+        )
+        result_paths = []
+        for record in job["records"]:
+            candidate_id = record["candidate_id"]
+            record_dir = result_dir / "records" / candidate_id
+            record_dir.mkdir(parents=True)
+            pdb_path = record_dir / "prediction.pdb"
+            pdb_path.write_text(self._fake_pdb(record["sequence"]), encoding="ascii")
+            result = {
+                "schema_version": "vaxflow.esmfold2-result.v1",
+                "run_identity": run_manifest["run_identity"],
+                "candidate_id": candidate_id,
+                "candidate_key": record["candidate_key"],
+                "sequence_sha256": record["sequence_sha256"],
+                "length": record["length"],
+                "status": "succeeded",
+                "seed": 42,
+                "started_at_utc": "2026-07-14T15:00:00+00:00",
+                "finished_at_utc": "2026-07-14T15:00:01+00:00",
+                "runtime_seconds": 1.0,
+                "parameters": job["execution"]["parameters"],
+                "metrics": {"mean_plddt": 0.85, "ptm": 0.75},
+                "peak_gpu_memory_allocated_bytes": 1024,
+                "peak_gpu_memory_reserved_bytes": 2048,
+                "artifact": {
+                    "path": f"records/{candidate_id}/prediction.pdb",
+                    "media_type": "chemical/x-pdb",
+                    "bytes": pdb_path.stat().st_size,
+                    "sha256": hashlib.sha256(pdb_path.read_bytes()).hexdigest(),
+                },
+            }
+            (record_dir / "result.json").write_text(
+                json.dumps(result, sort_keys=True), encoding="utf-8"
+            )
+            result_paths.append(f"records/{candidate_id}/result.json")
+        summary = {
+            "schema_version": "vaxflow.esmfold2-summary.v1",
+            "run_identity": run_manifest["run_identity"],
+            "updated_at_utc": "2026-07-14T15:01:00+00:00",
+            "status": "passed",
+            "records": {
+                "selected": len(job["records"]),
+                "succeeded": len(job["records"]),
+                "failed": 0,
+                "pending": 0,
+            },
+            "timing": {
+                "model_load_seconds_this_process": 1.0,
+                "model_load_seconds_max_observed": 1.0,
+                "record_runtime_seconds": float(len(job["records"])),
+                "mean_seconds_per_success": 1.0,
+            },
+            "peak_gpu_memory_allocated_bytes": 1024,
+            "peak_gpu_memory_reserved_bytes": 2048,
+            "result_paths": result_paths,
+        }
+        (result_dir / "summary.json").write_text(
+            json.dumps(summary, sort_keys=True), encoding="utf-8"
+        )
+        with tarfile.open(archive_path, "w:gz") as archive:
+            for path in sorted(result_dir.rglob("*")):
+                if path.is_file():
+                    archive.add(path, arcname=path.relative_to(result_dir).as_posix())
+        return archive_path
+
     def _write_stage2_project(self, root: Path) -> tuple[Path, Path]:
         source_dir = root / "source-project"
         runtime_dir = root / "runtime-project"
@@ -650,6 +776,104 @@ class CandidateStageEndToEndTests(unittest.TestCase):
                     source_run_dir=candidate_run,
                     maximum_sequence_length=8,
                 )
+
+    def test_stage3_result_import_writes_semantically_verified_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, source_run = self._write_stage2_project(root)
+            candidate_run = write_candidate_run(
+                analyze_candidate_specification(config_path, source_run_dir=source_run),
+                now=datetime(2026, 7, 14, 16, 0, tzinfo=timezone.utc),
+            )
+            prepared = write_structure_job(
+                config_path,
+                source_run_dir=candidate_run,
+                output_root=root / "transfer",
+                created_at=datetime(2026, 7, 14, 17, 0, tzinfo=timezone.utc),
+            )
+            archive = self._write_stage3_result_archive(
+                Path(prepared["job_dir"]), root / "stage3-results.tar.gz"
+            )
+            analysis = analyze_structure_results(
+                config_path,
+                result_archive=archive,
+                source_run_dir=candidate_run,
+                job_dir=Path(prepared["job_dir"]),
+            )
+            structure_run = write_structure_run(
+                analysis,
+                now=datetime(2026, 7, 14, 18, 0, tzinfo=timezone.utc),
+            )
+
+            verification = verify_run(structure_run)
+            self.assertEqual(verification["status"], "pass", verification["errors"])
+            self.assertEqual(len(analysis.assessments), 6)
+            self.assertTrue(
+                all(item["confidence_band"] == "higher_confidence" for item in analysis.assessments)
+            )
+            self.assertTrue(
+                (
+                    structure_run
+                    / "nodes/protein_structure_assessment/report.html"
+                ).is_file()
+            )
+
+    def test_stage3_verifier_recomputes_metrics_after_reindex(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, source_run = self._write_stage2_project(root)
+            candidate_run = write_candidate_run(
+                analyze_candidate_specification(config_path, source_run_dir=source_run),
+                now=datetime(2026, 7, 14, 19, 0, tzinfo=timezone.utc),
+            )
+            prepared = write_structure_job(
+                config_path,
+                source_run_dir=candidate_run,
+                output_root=root / "transfer",
+                created_at=datetime(2026, 7, 14, 20, 0, tzinfo=timezone.utc),
+            )
+            archive = self._write_stage3_result_archive(
+                Path(prepared["job_dir"]), root / "stage3-results.tar.gz"
+            )
+            structure_run = write_structure_run(
+                analyze_structure_results(
+                    config_path,
+                    result_archive=archive,
+                    source_run_dir=candidate_run,
+                    job_dir=Path(prepared["job_dir"]),
+                ),
+                now=datetime(2026, 7, 14, 21, 0, tzinfo=timezone.utc),
+            )
+            assessment_path = (
+                structure_run
+                / "nodes/protein_structure_assessment/structure_assessments.json"
+            )
+            document = json.loads(assessment_path.read_text(encoding="utf-8"))
+            document["assessments"][0]["mean_plddt"] = 1.0
+            assessment_path.write_text(
+                json.dumps(document, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            manifest = json.loads(
+                (structure_run / "manifest.json").read_text(encoding="utf-8")
+            )
+            rebuilt = build_artifact_index(
+                structure_run, manifest["project_id"], manifest["run_id"]
+            )
+            (structure_run / "artifact_index.json").write_text(
+                json.dumps(rebuilt, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            verification = verify_run(structure_run)
+            self.assertEqual(verification["status"], "fail")
+            self.assertTrue(
+                any(
+                    "stage3-assessment-reproducibility" in error
+                    for error in verification["errors"]
+                ),
+                verification["errors"],
+            )
 
 
 if __name__ == "__main__":

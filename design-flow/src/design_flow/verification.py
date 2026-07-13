@@ -41,6 +41,7 @@ NODE_ARTIFACT_NAMES = (
     "qc_issues.csv",
 )
 CANDIDATE_STAGE_ID = "candidate_specification"
+STRUCTURE_STAGE_ID = "protein_structure_assessment"
 CANDIDATE_NODE_ARTIFACT_NAMES = (
     "summary.json",
     "report.html",
@@ -214,6 +215,13 @@ def verify_run(run_dir: Path, *, check_external_inputs: bool = True) -> dict[str
         current_manifest = None
     if isinstance(current_manifest, dict) and current_manifest.get("current_stage") == CANDIDATE_STAGE_ID:
         return _verify_candidate_run(
+            run_dir,
+            check_external_inputs=check_external_inputs,
+        )
+    if isinstance(current_manifest, dict) and current_manifest.get("current_stage") == STRUCTURE_STAGE_ID:
+        from .structure_verification import verify_structure_run
+
+        return verify_structure_run(
             run_dir,
             check_external_inputs=check_external_inputs,
         )
