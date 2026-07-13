@@ -19,7 +19,17 @@ from design_flow.pipeline import analyze_project
 from design_flow.qc import analyze_sequence_pairs, normalize_nucleotide, translate_cds
 from design_flow.reporting import write_run_artifacts
 from design_flow.verification import build_artifact_index, verify_run
-from design_flow.workflow import CURRENT_STAGE_ID, FULL_WORKFLOW, validate_workflow
+from design_flow.workflow import (
+    CURRENT_STAGE_ID,
+    FULL_WORKFLOW,
+    SYSTEM_ARCHITECTURE_VERSION,
+    WORKFLOW_ID,
+    WORKFLOW_VERSION,
+    approved_workflow_hash,
+    validate_workflow,
+    workflow_contract,
+    workflow_contract_sha256,
+)
 
 
 VALID_AA = [
@@ -128,6 +138,37 @@ class WorkflowContractTests(unittest.TestCase):
         invalid = replace(FULL_WORKFLOW[1], output_audit=())
         with self.assertRaisesRegex(ValueError, "empty audit contract"):
             validate_workflow((FULL_WORKFLOW[0], invalid, *FULL_WORKFLOW[2:]))
+
+    def test_frozen_machine_contract_matches_executable_workflow(self) -> None:
+        design_flow_root = Path(__file__).resolve().parents[1]
+        frozen_path = design_flow_root / "docs" / f"workflow-v{WORKFLOW_VERSION}.json"
+        frozen = json.loads(frozen_path.read_text(encoding="utf-8"))
+        expected = workflow_contract()
+        expected["contract_sha256"] = workflow_contract_sha256()
+
+        self.assertEqual(frozen, expected)
+        self.assertEqual(approved_workflow_hash(), workflow_contract_sha256())
+
+    def test_human_workflow_document_records_version_hash_and_all_stages(self) -> None:
+        design_flow_root = Path(__file__).resolve().parents[1]
+        document = (
+            design_flow_root / "docs" / f"workflow-v{WORKFLOW_VERSION}.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(f"System architecture version: `{SYSTEM_ARCHITECTURE_VERSION}`", document)
+        self.assertIn(f"Workflow ID: `{WORKFLOW_ID}`", document)
+        self.assertIn(f"Workflow version: `{WORKFLOW_VERSION}`", document)
+        self.assertIn(f"Contract SHA-256: `{workflow_contract_sha256()}`", document)
+        for stage in FULL_WORKFLOW:
+            self.assertIn(f"`{stage.stage_id}`", document)
+
+    def test_architecture_baseline_links_governance_and_adr(self) -> None:
+        design_flow_root = Path(__file__).resolve().parents[1]
+        architecture = (design_flow_root / "ARCHITECTURE.md").read_text(encoding="utf-8")
+
+        self.assertIn("frozen architecture baseline v1", architecture)
+        self.assertIn("docs/audit-automation-and-llm-governance.md", architecture)
+        self.assertIn("docs/adr/0001-hybrid-audited-workflow.md", architecture)
 
 
 class EndToEndTests(unittest.TestCase):

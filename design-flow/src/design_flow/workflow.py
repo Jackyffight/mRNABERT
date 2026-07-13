@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -20,6 +23,12 @@ class StageDefinition:
 
 
 CURRENT_STAGE_ID = "program_and_source_intake"
+WORKFLOW_ID = "vaccine-design-build-test-learn"
+WORKFLOW_VERSION = 1
+SYSTEM_ARCHITECTURE_VERSION = 1
+APPROVED_WORKFLOW_HASHES = {
+    (1, 1): "0c2f4fff63cddcf3ea2851b0501db7dff61ca8a93eea7bf93b0b09a4dc709763",
+}
 
 
 FULL_WORKFLOW = (
@@ -417,6 +426,49 @@ FULL_WORKFLOW = (
 STAGE_BY_ID = {stage.stage_id: stage for stage in FULL_WORKFLOW}
 
 
+def stage_contract(stage: StageDefinition) -> dict[str, Any]:
+    return {
+        "order": stage.order,
+        "stage_id": stage.stage_id,
+        "name": stage.name,
+        "purpose": stage.purpose,
+        "capabilities": list(stage.capabilities),
+        "input_audit_contract": list(stage.input_audit),
+        "process_contract": list(stage.process),
+        "output_audit_contract": list(stage.output_audit),
+        "human_intervention_contract": list(stage.human_intervention),
+        "depends_on": list(stage.depends_on),
+    }
+
+
+def workflow_contract() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "system_architecture_version": SYSTEM_ARCHITECTURE_VERSION,
+        "workflow_id": WORKFLOW_ID,
+        "workflow_version": WORKFLOW_VERSION,
+        "entry_stage": CURRENT_STAGE_ID,
+        "stages": [stage_contract(stage) for stage in FULL_WORKFLOW],
+    }
+
+
+def workflow_contract_sha256() -> str:
+    canonical = json.dumps(
+        workflow_contract(),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def approved_workflow_hash(
+    architecture_version: int = SYSTEM_ARCHITECTURE_VERSION,
+    workflow_version: int = WORKFLOW_VERSION,
+) -> str | None:
+    return APPROVED_WORKFLOW_HASHES.get((architecture_version, workflow_version))
+
+
 def validate_workflow(stages: tuple[StageDefinition, ...] = FULL_WORKFLOW) -> None:
     if not stages:
         raise ValueError("Workflow must contain at least one stage")
@@ -503,3 +555,9 @@ def validate_workflow(stages: tuple[StageDefinition, ...] = FULL_WORKFLOW) -> No
 
 
 validate_workflow()
+
+if approved_workflow_hash() != workflow_contract_sha256():
+    raise RuntimeError(
+        "Executable workflow differs from its approved version/hash; "
+        "create a new workflow version instead of rewriting the frozen contract"
+    )

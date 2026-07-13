@@ -1,5 +1,17 @@
 # Design-Flow Architecture
 
+Status: frozen architecture baseline v1
+
+Normative companion documents:
+
+- [Workflow v1](docs/workflow-v1.md) and its frozen machine contract;
+- [Audit Automation and LLM Governance](docs/audit-automation-and-llm-governance.md);
+- [ADR 0001](docs/adr/0001-hybrid-audited-workflow.md).
+
+The executable workflow is versioned in `src/design_flow/workflow.py`. A semantic
+architecture or workflow change requires a superseding ADR, explicit version
+increment, a new frozen workflow document, migration notes, and updated tests.
+
 ## Goal
 
 Build a reproducible design-build-test-learn system for evaluating original
@@ -50,15 +62,21 @@ inside one run DAG.
 
 ## Deterministic Execution
 
-The production workflow is a deterministic state machine. Stage dependencies,
-status transitions, human gates, artifact identities, and report conclusions are
-computed from structured records. Scientific models run through pinned adapters;
-they do not schedule the workflow or reinterpret its provenance.
+The execution core is a deterministic state machine. Stage dependencies, status
+transitions, hard gates, artifact identities, and canonical records are computed
+from structured evidence. Scientific models run through pinned adapters; they do
+not schedule the workflow or reinterpret provenance.
 
-No ChatGPT, Claude, or other general-purpose language model is required to execute
-or operate the system. An LLM may be added later as an optional sidecar for drafting
-or exploration, but it may not be required for scheduling, release gates, identity
-checks, audit records, or reproducibility.
+The complete product also includes an LLM audit plane for open-ended review of
+unstructured evidence and previously unseen failure modes. It is a first-class
+auditor but not a release authority: its findings remain proposals until evidence
+is attached and they are confirmed, rejected, or waived. Repeated confirmed
+findings should become versioned deterministic rules with regression tests.
+
+The deterministic core can run offline without an LLM and must mark the LLM audit
+as `not_evaluated`. A full offline deployment uses an approved local LLM. See
+[Audit Automation and LLM Governance](docs/audit-automation-and-llm-governance.md)
+for roles, provenance, deployment modes, and the rule-promotion lifecycle.
 
 ## Stage Contract
 

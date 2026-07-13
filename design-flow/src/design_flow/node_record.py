@@ -6,7 +6,12 @@ from typing import Any
 
 from . import __version__
 from .domain import HumanAction, ProjectAnalysis
-from .workflow import CURRENT_STAGE_ID, FULL_WORKFLOW, STAGE_BY_ID
+from .workflow import (
+    CURRENT_STAGE_ID,
+    STAGE_BY_ID,
+    workflow_contract,
+    workflow_contract_sha256,
+)
 
 
 NEXT_STAGE_ID = "candidate_specification"
@@ -326,25 +331,13 @@ def build_node_bundle(analysis: ProjectAnalysis, run_id: str) -> dict[str, Any]:
 
 
 def build_workflow_snapshot(current_node_status: str) -> dict[str, Any]:
-    return {
-        "schema_version": 1,
-        "workflow_id": "vaccine-design-build-test-learn",
-        "workflow_version": 1,
-        "current_stage": CURRENT_STAGE_ID,
-        "stages": [
-            {
-                "order": stage.order,
-                "stage_id": stage.stage_id,
-                "name": stage.name,
-                "purpose": stage.purpose,
-                "capabilities": list(stage.capabilities),
-                "input_audit_contract": list(stage.input_audit),
-                "process_contract": list(stage.process),
-                "output_audit_contract": list(stage.output_audit),
-                "human_intervention_contract": list(stage.human_intervention),
-                "depends_on": list(stage.depends_on),
-                "status": current_node_status if stage.stage_id == CURRENT_STAGE_ID else "not_evaluated",
-            }
-            for stage in FULL_WORKFLOW
-        ],
-    }
+    contract = workflow_contract()
+    contract["contract_sha256"] = workflow_contract_sha256()
+    contract["current_stage"] = CURRENT_STAGE_ID
+    for stage in contract["stages"]:
+        stage["status"] = (
+            current_node_status
+            if stage["stage_id"] == CURRENT_STAGE_ID
+            else "not_evaluated"
+        )
+    return contract

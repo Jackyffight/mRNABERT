@@ -9,7 +9,17 @@ import json
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .workflow import CURRENT_STAGE_ID, FULL_WORKFLOW, validate_workflow
+from .workflow import (
+    CURRENT_STAGE_ID,
+    FULL_WORKFLOW,
+    SYSTEM_ARCHITECTURE_VERSION,
+    WORKFLOW_ID,
+    WORKFLOW_VERSION,
+    approved_workflow_hash,
+    stage_contract,
+    validate_workflow,
+    workflow_contract_sha256,
+)
 
 
 ARTIFACT_INDEX_FILENAME = "artifact_index.json"
@@ -144,23 +154,25 @@ def _candidate_triples(records: Any) -> list[tuple[str, str, str]] | None:
 
 def _workflow_blueprint_matches(workflow: dict[str, Any]) -> bool:
     stages = workflow.get("stages")
-    if not isinstance(stages, list) or len(stages) != len(FULL_WORKFLOW):
+    if (
+        workflow.get("system_architecture_version") != SYSTEM_ARCHITECTURE_VERSION
+        or workflow.get("workflow_id") != WORKFLOW_ID
+        or workflow.get("workflow_version") != WORKFLOW_VERSION
+        or workflow.get("entry_stage") != CURRENT_STAGE_ID
+        or workflow.get("contract_sha256") != workflow_contract_sha256()
+        or workflow.get("contract_sha256")
+        != approved_workflow_hash(
+            workflow.get("system_architecture_version"),
+            workflow.get("workflow_version"),
+        )
+        or not isinstance(stages, list)
+        or len(stages) != len(FULL_WORKFLOW)
+    ):
         return False
     for actual, expected in zip(stages, FULL_WORKFLOW, strict=True):
         if not isinstance(actual, dict):
             return False
-        expected_fields = {
-            "order": expected.order,
-            "stage_id": expected.stage_id,
-            "name": expected.name,
-            "purpose": expected.purpose,
-            "capabilities": list(expected.capabilities),
-            "input_audit_contract": list(expected.input_audit),
-            "process_contract": list(expected.process),
-            "output_audit_contract": list(expected.output_audit),
-            "human_intervention_contract": list(expected.human_intervention),
-            "depends_on": list(expected.depends_on),
-        }
+        expected_fields = stage_contract(expected)
         if any(actual.get(key) != value for key, value in expected_fields.items()):
             return False
     return True

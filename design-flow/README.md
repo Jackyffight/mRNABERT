@@ -108,6 +108,13 @@ PYTHONPATH=src python -m unittest discover -s tests
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design-build-test-learn path.
+The frozen route is recorded in
+[docs/workflow-v1.md](docs/workflow-v1.md) and
+`docs/workflow-v1.json`; CI-style tests prevent those contracts from drifting
+away from the executable DAG.
+The boundary between deterministic rules, LLM review, and human authority is
+defined in
+[docs/audit-automation-and-llm-governance.md](docs/audit-automation-and-llm-governance.md).
 The initial supplied archive review is recorded in
 [docs/supplied-data-audit.md](docs/supplied-data-audit.md); raw sequences are not
 stored in Git.
