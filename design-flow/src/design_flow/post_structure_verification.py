@@ -9,8 +9,14 @@ from typing import Any
 
 from .assessment_specs import DEVELOPABILITY_STAGE_ID, IMMUNE_STAGE_ID
 from .config import load_project_config
+from .continuation_state import (
+    merge_requirement_actions,
+    project_context,
+    reconcile_human_actions,
+)
 from .post_structure_assessment import _developability_analysis, _immune_analysis
 from .structure_metrics import parse_ca_pdb
+from .workflow import action_due_for_handoff
 
 
 REQUIRED_NODE_FILES = {
@@ -174,6 +180,7 @@ def verify_post_structure_run(
             root / "inputs/lineage/stage3_parent_artifact_index.json"
         )
         parent_manifest_snapshot = root / "inputs/lineage/stage3_parent_manifest.json"
+        parent_project_snapshot = root / "inputs/lineage/stage3_parent_project.json"
         parent_index = _load(parent_index_snapshot)
         parent_manifest = _load(parent_manifest_snapshot)
         parent_entries = parent_index["artifacts"]
@@ -183,6 +190,8 @@ def verify_post_structure_run(
             == lineage.get("parent_artifact_index_sha256")
             and sha256_file(parent_manifest_snapshot)
             == parent_entries["manifest.json"]["sha256"]
+            and sha256_file(parent_project_snapshot)
+            == parent_entries["inputs/project.json"]["sha256"]
         )
     except (OSError, ValueError, KeyError, json.JSONDecodeError):
         parent_index = {}
@@ -212,6 +221,23 @@ def verify_post_structure_run(
         "Copied Stage 1-3 artifacts match the parent index",
         "Copied parent artifacts differ from the sealed index",
     )
+    continuation_config_path = root / "inputs/continuation/project.json"
+    try:
+        config = load_project_config(continuation_config_path)
+        config_bound = (
+            sha256_file(continuation_config_path)
+            == manifest.get("inputs", {}).get("project_configuration_sha256")
+            and manifest.get("context") == project_context(config)
+        )
+    except (OSError, ValueError, KeyError, json.JSONDecodeError):
+        config = None
+        config_bound = False
+    verifier.check(
+        "stage4-5-current-project-configuration",
+        config_bound,
+        "Current project decisions and context are checksum-bound",
+        "Current project configuration hash or manifest context differs",
+    )
     if check_external_inputs:
         external_ok = False
         if parent_path.is_dir():
@@ -231,7 +257,8 @@ def verify_post_structure_run(
     immune_node = root / "nodes" / IMMUNE_STAGE_ID
     developability_node = root / "nodes" / DEVELOPABILITY_STAGE_ID
     try:
-        config = load_project_config(root / "inputs/project.json")
+        if config is None:
+            raise ValueError("Current continuation project configuration is invalid")
         candidate_batch_path = root / "nodes/candidate_specification/candidate_batch.json"
         candidate_batch = _load(candidate_batch_path)
         structure_document = _load(
@@ -310,6 +337,89 @@ def verify_post_structure_run(
         semantic_loaded and developability_stored == developability_recomputed,
         "Stored developability assessments exactly match deterministic recomputation",
         "Stored developability assessments differ from deterministic recomputation",
+    )
+    try:
+        if config is None:
+            raise ValueError("Current continuation project configuration is invalid")
+        parent_handoff = _load(
+            root / "nodes/protein_structure_assessment/handoff.json"
+        )
+        parent_actions = reconcile_human_actions(
+            [
+                dict(action)
+                for action in parent_handoff.get("carried_human_actions", [])
+            ],
+            config,
+        )
+        immune_expected = merge_requirement_actions(
+            parent_actions,
+            immune_recomputed["requirements"],
+            required_before_stage="integrated_ranking",
+            question_zh="补充并确认该版本化输入或外部预测结果；在缺失期间保持未评估状态。",
+        )
+        developability_expected = merge_requirement_actions(
+            parent_actions,
+            developability_recomputed["requirements"],
+            required_before_stage="protein_product_design",
+            question_zh="补充并确认该版本化输入或外部预测结果；在缺失期间保持未评估状态。",
+        )
+
+        def action_documents_match(
+            node: Path,
+            expected: list[dict[str, Any]],
+            *,
+            current_stage: str,
+            to_stages: tuple[str, ...],
+        ) -> bool:
+            human_actions = _load(node / "human_actions.json")
+            summary = _load(node / "summary.json")
+            handoff = _load(node / "handoff.json")
+            open_actions = [
+                action for action in expected if action["status"] == "open"
+            ]
+            due_actions = [
+                action
+                for action in open_actions
+                if action_due_for_handoff(
+                    action["required_before_stage"],
+                    current_stage=current_stage,
+                    to_stages=to_stages,
+                )
+            ]
+            return (
+                human_actions.get("actions") == expected
+                and human_actions.get("open_count") == len(open_actions)
+                and summary.get("open_human_actions") == len(open_actions)
+                and summary.get("due_human_actions") == len(due_actions)
+                and handoff.get("blocking_action_ids")
+                == [action["action_id"] for action in due_actions]
+                and handoff.get("carried_human_actions") == open_actions
+                and handoff.get("formal_readiness")
+                == ("needs_human_input" if due_actions else "ready")
+            )
+
+        actions_reconciled = action_documents_match(
+            immune_node,
+            immune_expected,
+            current_stage=IMMUNE_STAGE_ID,
+            to_stages=("integrated_ranking",),
+        ) and action_documents_match(
+            developability_node,
+            developability_expected,
+            current_stage=DEVELOPABILITY_STAGE_ID,
+            to_stages=(
+                "protein_product_design",
+                "mrna_product_design",
+                "integrated_ranking",
+            ),
+        )
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        actions_reconciled = False
+    verifier.check(
+        "stage4-5-human-action-reconciliation",
+        semantic_loaded and actions_reconciled,
+        "Current decisions, generated requirements, and handoff gates reconcile",
+        "Human actions do not reconcile with current project decisions",
     )
     try:
         immune_handoff = _load(immune_node / "handoff.json")

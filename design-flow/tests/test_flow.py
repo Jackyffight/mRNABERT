@@ -1086,6 +1086,96 @@ class CandidateStageEndToEndTests(unittest.TestCase):
             verification = verify_run(continuation)
             self.assertEqual(verification["status"], "pass", verification["errors"])
 
+    def test_stage4_5_reconciles_current_project_decisions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, _ = self._write_stage2_project(root)
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            config["context"]["protein_expression_host"] = "unspecified"
+            config["human_actions"] = [
+                {
+                    "action_id": "project-review",
+                    "question": "Review the project declaration.",
+                    "required_before_stage": "integrated_ranking",
+                    "status": "open",
+                }
+            ]
+            config_path.write_text(
+                json.dumps(config, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            source_run = write_run_artifacts(
+                analyze_project(config_path),
+                now=datetime(2026, 7, 14, 7, 0, tzinfo=timezone.utc),
+            )
+            structure_run = self._write_verified_stage3_run(
+                root, config_path, source_run, hour=7
+            )
+
+            config["context"]["protein_expression_host"] = "CHO cells"
+            config["human_actions"][0].update(
+                {
+                    "status": "resolved",
+                    "owner": "project_owner",
+                    "resolution": "The current versioned project uses CHO cells.",
+                }
+            )
+            config_path.write_text(
+                json.dumps(config, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            initialize_assessment_specifications(
+                config_path, source_run_dir=structure_run
+            )
+            continuation = write_post_structure_run(
+                analyze_post_structure_stages(
+                    config_path, source_run_dir=structure_run
+                ),
+                now=datetime(2026, 7, 15, 8, 0, tzinfo=timezone.utc),
+            )
+
+            manifest = json.loads(
+                (continuation / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                manifest["context"]["protein_expression_host"], "CHO cells"
+            )
+            self.assertEqual(
+                (
+                    continuation / "inputs/continuation/project.json"
+                ).read_bytes(),
+                config_path.read_bytes(),
+            )
+            self.assertEqual(
+                (
+                    continuation
+                    / "inputs/lineage/stage3_parent_project.json"
+                ).read_bytes(),
+                (structure_run / "inputs/project.json").read_bytes(),
+            )
+            actions = json.loads(
+                (
+                    continuation
+                    / "nodes/immune_evidence_assessment/human_actions.json"
+                ).read_text(encoding="utf-8")
+            )["actions"]
+            action_by_id = {action["action_id"]: action for action in actions}
+            self.assertEqual(action_by_id["project-review"]["status"], "resolved")
+            self.assertEqual(
+                action_by_id["select-protein-expression-host"]["status"],
+                "resolved",
+            )
+            blocking = json.loads(
+                (
+                    continuation
+                    / "nodes/immune_evidence_assessment/handoff.json"
+                ).read_text(encoding="utf-8")
+            )["blocking_action_ids"]
+            self.assertNotIn("project-review", blocking)
+            self.assertNotIn("select-protein-expression-host", blocking)
+            verification = verify_run(continuation)
+            self.assertEqual(verification["status"], "pass", verification["errors"])
+
     def test_stage4_5_complete_versioned_inputs_recompute_exactly(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)

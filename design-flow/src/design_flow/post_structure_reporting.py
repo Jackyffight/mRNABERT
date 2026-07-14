@@ -16,6 +16,11 @@ from typing import Any
 
 from . import __version__
 from .assessment_specs import DEVELOPABILITY_STAGE_ID, IMMUNE_STAGE_ID
+from .continuation_state import (
+    merge_requirement_actions,
+    project_context,
+    reconcile_human_actions,
+)
 from .post_structure_assessment import PostStructureAnalysis
 from .post_structure_html import render_developability_report, render_immune_report
 from .verification import ARTIFACT_INDEX_FILENAME, build_artifact_index, sha256_file, verify_run
@@ -60,42 +65,10 @@ def _parent_actions(analysis: PostStructureAnalysis) -> list[dict[str, Any]]:
             / "nodes/protein_structure_assessment/handoff.json"
         ).read_text(encoding="utf-8")
     )
-    return [dict(action) for action in handoff.get("carried_human_actions", [])]
-
-
-def _requirement_action(
-    requirement: dict[str, Any],
-    *,
-    required_before_stage: str,
-) -> dict[str, Any]:
-    return {
-        "action_id": requirement["requirement_id"],
-        "question": requirement["description"],
-        "question_zh": "补充并确认该版本化输入或外部预测结果；在缺失期间保持未评估状态。",
-        "required_before_stage": required_before_stage,
-        "status": "open",
-        "owner": "unassigned",
-        "resolution": "",
-        "resolution_zh": "",
-    }
-
-
-def _merge_actions(
-    parent: list[dict[str, Any]],
-    requirements: list[dict[str, Any]],
-    *,
-    required_before_stage: str,
-) -> list[dict[str, Any]]:
-    actions = [dict(action) for action in parent]
-    known = {action.get("action_id") for action in actions}
-    actions.extend(
-        action
-        for requirement in requirements
-        if (action := _requirement_action(
-            requirement, required_before_stage=required_before_stage
-        ))["action_id"] not in known
+    return reconcile_human_actions(
+        [dict(action) for action in handoff.get("carried_human_actions", [])],
+        analysis.config,
     )
-    return actions
 
 
 def _immune_bundle(
@@ -103,10 +76,11 @@ def _immune_bundle(
     run_id: str,
 ) -> dict[str, Any]:
     result = analysis.immune_result
-    actions = _merge_actions(
+    actions = merge_requirement_actions(
         _parent_actions(analysis),
         result["requirements"],
         required_before_stage="integrated_ranking",
+        question_zh="补充并确认该版本化输入或外部预测结果；在缺失期间保持未评估状态。",
     )
     open_actions = [action for action in actions if action["status"] == "open"]
     due_actions = [
@@ -225,10 +199,11 @@ def _developability_bundle(
     run_id: str,
 ) -> dict[str, Any]:
     result = analysis.developability_result
-    actions = _merge_actions(
+    actions = merge_requirement_actions(
         _parent_actions(analysis),
         result["requirements"],
         required_before_stage="protein_product_design",
+        question_zh="补充并确认该版本化输入或外部预测结果；在缺失期间保持未评估状态。",
     )
     open_actions = [action for action in actions if action["status"] == "open"]
     target_stages = (
@@ -418,6 +393,7 @@ def write_post_structure_run(
         (
             sha256_file(analysis.immune_specification_path)
             + sha256_file(analysis.developability_specification_path)
+            + sha256_file(analysis.config.config_path)
             + analysis.source_manifest["run_id"]
         ).encode("ascii")
     ).hexdigest()
@@ -439,6 +415,16 @@ def write_post_structure_run(
         shutil.copyfile(
             analysis.source_run_dir / ARTIFACT_INDEX_FILENAME,
             lineage_dir / "stage3_parent_artifact_index.json",
+        )
+        shutil.copyfile(
+            analysis.source_run_dir / "inputs/project.json",
+            lineage_dir / "stage3_parent_project.json",
+        )
+        continuation_dir = run_dir / "inputs" / "continuation"
+        continuation_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(
+            analysis.config.config_path,
+            continuation_dir / "project.json",
         )
         immune_bundle = _immune_bundle(analysis, run_id)
         developability_bundle = _developability_bundle(analysis, run_id)
@@ -598,7 +584,7 @@ def write_post_structure_run(
                 "parent_run_path": str(analysis.source_run_dir),
                 "parent_artifact_index_sha256": parent_index_sha,
             },
-            "context": analysis.source_manifest["context"],
+            "context": project_context(analysis.config),
             "counts": {
                 **analysis.source_manifest["counts"],
                 "immune_missing_requirements": len(analysis.immune_result["requirements"]),
@@ -612,6 +598,9 @@ def write_post_structure_run(
             },
             "inputs": {
                 "parent_run_id": analysis.source_manifest["run_id"],
+                "project_configuration_sha256": sha256_file(
+                    analysis.config.config_path
+                ),
                 "immune_specification_sha256": sha256_file(
                     analysis.immune_specification_path
                 ),
