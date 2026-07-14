@@ -157,6 +157,18 @@ The first command creates editable specifications under the external runtime roo
 The second command succeeds when optional datasets or model results are absent, but
 affected categories and node status remain explicit `not_evaluated`/`needs_data`.
 
+Run the implemented GPU-capable Stage 5 sequence-model profile with:
+
+```bash
+/data00/home/wangzhi.wit/models/mRNABERT/design-flow/scripts/install_stage5_sequence_models.sh
+/data00/home/wangzhi.wit/models/mRNABERT/design-flow/scripts/run_stage5_sequence_models.sh
+```
+
+This executes pinned TMbed and metapredict revisions and fills signal peptide,
+transmembrane topology, and disorder evidence. It deliberately leaves solubility
+and aggregation `not_evaluated`; see
+[docs/stage5-toolchain.md](docs/stage5-toolchain.md).
+
 Initialize and run both Stage 6 product branches:
 
 ```bash
@@ -215,6 +227,8 @@ Stage 4-7 implementation details and external input contracts are recorded in
 [docs/stage4-7-computational-pipeline.md](docs/stage4-7-computational-pipeline.md).
 The pinned CPU tools and the reasons for selecting them are recorded in
 [docs/stage4-toolchain.md](docs/stage4-toolchain.md).
+The GPU-capable Stage 5 model profile, open gaps, and provider replacement contract
+are recorded in [docs/stage5-toolchain.md](docs/stage5-toolchain.md).
 The frozen route is recorded in
 [docs/workflow-v1.md](docs/workflow-v1.md) and
 `docs/workflow-v1.json`; CI-style tests prevent those contracts from drifting

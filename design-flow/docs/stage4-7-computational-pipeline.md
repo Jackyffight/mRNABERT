@@ -1,6 +1,6 @@
 # Stage 4-7 Computational Pipeline
 
-Status: implemented exploratory execution path, version `0.11.0`
+Status: implemented exploratory execution path, version `0.12.0`
 
 This document defines the executable path after a verified Stage 3 structure run.
 It does not change workflow v1. Stage 4 and 5 execute together, Stage 6A and 6B
@@ -149,6 +149,20 @@ Data to supply:
 
 Stage 5 adapters use the same residue-evidence envelope as Stage 4. Missing predictor
 results remain `not_evaluated`; intrinsic rules are not substituted for them.
+
+The executable first model profile provides three categories:
+
+- TMbed 1.0.2 produces separate `signal_peptide` and
+  `transmembrane_topology` evidence documents from one pinned local model run;
+- metapredict V3 produces residue-level `disorder` evidence;
+- `solubility` and `aggregation` remain `not_evaluated` rather than being inferred
+  from unrelated models or intrinsic hydrophobicity.
+
+Until the expression and developability policies are approved, predicted signal,
+membrane, and disorder regions have evidence status `context`. They cannot silently
+become hard failures or ranking penalties. Installation, provider choices, exact
+commands, and upgrade boundaries are recorded in
+[stage5-toolchain.md](stage5-toolchain.md).
 
 ## Stage 6A: Recombinant Protein Product
 

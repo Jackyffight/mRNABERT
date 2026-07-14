@@ -39,6 +39,7 @@ from .reporting import write_run_artifacts
 from .structure_job import write_structure_job
 from .structure_assessment import analyze_structure_results
 from .structure_reporting import write_structure_run
+from .stage5_model_adapter import prepare_stage5_sequence_evidence
 from .verification import verify_run
 from .workflow import CURRENT_STAGE_ID
 
@@ -162,6 +163,29 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         required=True,
         help="NetMHCIIpan allele name; repeat for multiple alleles",
+    )
+    prepare_stage5_models_parser = subparsers.add_parser(
+        "prepare-stage5-sequence-models",
+        help="run checksum-bound TMbed and metapredict Stage 5 adapters",
+    )
+    prepare_stage5_models_parser.add_argument("project_config", type=Path)
+    prepare_stage5_models_parser.add_argument("--from-run", type=Path, required=True)
+    prepare_stage5_models_parser.add_argument(
+        "--toolchain-root",
+        type=Path,
+        required=True,
+        help="installed Stage 5 model environment with toolchain.json",
+    )
+    prepare_stage5_models_parser.add_argument(
+        "--device",
+        default="cuda:0",
+        help="cpu, cuda, or cuda:<index>; defaults to cuda:0",
+    )
+    prepare_stage5_models_parser.add_argument(
+        "--tmbed-batch-size",
+        type=int,
+        default=4000,
+        help="TMbed approximate residue batch size",
     )
     init_stage6_parser = subparsers.add_parser(
         "init-stage6",
@@ -442,6 +466,38 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Adapter artifacts: {prepared['output_dir']}")
             print(f"Immune specification: {prepared['immune_specification']}")
             print("Population coverage remains unapproved; this is a technical smoke panel.")
+            return 0
+
+        if args.command == "prepare-stage5-sequence-models":
+            prepared = prepare_stage5_sequence_evidence(
+                args.project_config,
+                source_run_dir=args.from_run,
+                toolchain_root=args.toolchain_root,
+                device=args.device,
+                tmbed_batch_size=args.tmbed_batch_size,
+                progress=lambda message: print(message, flush=True),
+            )
+            counts = prepared["observation_counts"]
+            print(
+                "Stage 5 sequence-model adapters: "
+                f"identity={prepared['identity']} "
+                f"candidates={prepared['candidate_count']}"
+            )
+            print(
+                "Model observations: "
+                f"signal_peptide={counts['signal_peptide']} "
+                f"transmembrane_topology={counts['transmembrane_topology']} "
+                f"disorder={counts['disorder']}"
+            )
+            print(f"Adapter artifacts: {prepared['output_dir']}")
+            print(
+                "Still not evaluated: "
+                + ", ".join(prepared["not_evaluated_adapters"])
+            )
+            print(
+                "Developability specification: "
+                f"{prepared['developability_specification']}"
+            )
             return 0
 
         if args.command == "init-stage6":
