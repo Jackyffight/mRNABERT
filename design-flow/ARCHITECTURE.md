@@ -62,6 +62,44 @@ turning antigens into exact recombinant-protein and mRNA product specifications,
 and producing a provisional evidence-based ordering. Only controlled production
 and wet-lab testing actually cook and evaluate the products.
 
+## Progressive Project Dossier
+
+> [!IMPORTANT]
+> A project is not opened with one exhaustive questionnaire, and it is not steered
+> by an LLM making hidden decisions. Design Flow maintains an executable dossier:
+> a small required intake, versioned conditional profiles, stage-due questions,
+> and traceable proposals for genuinely new issues.
+
+Questions enter the dossier through four controlled routes:
+
+1. **Core intake:** the minimum facts needed to identify the program, host,
+   pathogen, modalities, source records, owners, and Mock or scientific-use policy.
+2. **Conditional profiles:** versioned host, modality, expression, delivery, and
+   assay templates activated only when their applicability conditions are met.
+3. **Stage-triggered requirements:** questions created by deterministic contracts or
+   model results when a downstream stage first needs an answer.
+4. **Emergent audit proposals:** novel contradictions or missing assumptions raised
+   by a human or LLM auditor, with evidence and provenance, but no automatic authority.
+
+Every question has a stable ID, trigger and provenance, owner, current state,
+`required_before_stage`, resolution or waiver, and linked evidence. A question may
+remain open while unrelated work continues. It becomes blocking only at the stage
+whose calculation or release decision actually depends on it. Resolved answers are
+carried forward and are not asked again unless an input or applicable profile changes.
+
+The deterministic system must remain executable without an LLM. In that mode,
+open-ended audit is explicitly `not_evaluated`; known contracts and stage questions
+still work. An LLM may propose and explain a new checkpoint, but a scientist or an
+authorized deterministic rule must confirm, reject, or waive it. Recurring confirmed
+questions should be promoted into the versioned questionnaire, profile registry, or
+rule registry with regression tests.
+
+The current implementation already stores project `human_actions`, stage deadlines,
+states, owners, resolutions, and handoff propagation. The complete product still
+needs action trigger/provenance fields, a conditional question catalog, reusable
+profile registry, guided project UI, and a standard adapter that converts LLM
+findings into reviewable proposed actions.
+
 ## Candidate Lineage
 
 Every candidate receives an immutable ID derived from its normalized sequence and

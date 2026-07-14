@@ -164,6 +164,42 @@ Every LLM audit must preserve:
 This makes the audit traceable even when exact token-for-token reproduction is
 not guaranteed.
 
+## Progressive Question Lifecycle
+
+The project dossier is a staged decision system, not a one-time background-research
+form. Asking every possible biological and product question at intake would burden
+the operator with decisions that have no current evidence. Deferring every question
+to an LLM would instead make workflow behavior unstable and unauditable. Design Flow
+therefore uses progressive disclosure with explicit provenance.
+
+| Question source | When it appears | Authority |
+|---|---|---|
+| Core intake contract | At project creation | Deterministic schema; human supplies or waives the answer |
+| Conditional profile | When host, modality, platform, or assay applicability matches | Versioned profile; human reviews imported defaults |
+| Stage contract or model finding | When the responsible stage runs or becomes due | Deterministic rule or pinned model evidence |
+| Novel human/LLM finding | Whenever new evidence exposes an unmodeled issue | Proposal only until adjudicated |
+
+A complete action record is intended to include `action_id`, source/provenance,
+trigger evidence, owner, status, `required_before_stage`, and resolution or waiver.
+The current schema already carries identity, owner, status, deadline, and resolution;
+general trigger/provenance fields remain an implementation item. An unresolved action
+is carried by node handoffs. It does not block independent calculations, but the
+deterministic state machine prevents it from crossing its declared deadline as an
+approved input or release decision.
+
+The lifecycle is:
+
+1. `proposed` or deterministically `opened`;
+2. evidence attached and owner assigned;
+3. `resolved`, `rejected`, or `waived` by authorized review;
+4. carried into subsequent immutable runs as a versioned decision;
+5. promoted into a reusable profile field or tested rule when the pattern recurs.
+
+Changing a source input or profile applicability may reopen a previously answered
+question, but the previous decision remains in historical runs. The future UI should
+show only currently applicable and stage-relevant questions by default, while keeping
+the complete dossier and provenance available for audit.
+
 ## Reproducibility Definition
 
 Deterministic outputs are expected to be semantically stable for the same input
