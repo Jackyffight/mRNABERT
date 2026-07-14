@@ -21,6 +21,7 @@ from .assessment_specs import (
     initialize_assessment_specifications,
 )
 from .domain import ProjectAnalysis
+from .netmhc_adapter import prepare_stage4_mhc_evidence
 from .pipeline import analyze_project
 from .post_structure_assessment import analyze_post_structure_stages
 from .post_structure_reporting import write_post_structure_run
@@ -141,6 +142,26 @@ def _build_parser() -> argparse.ArgumentParser:
         "--from-run",
         type=Path,
         help="verified Stage 3 run; defaults to the project's latest Stage 3 run",
+    )
+    prepare_stage4_mhc_parser = subparsers.add_parser(
+        "prepare-stage4-mhc",
+        help="run checksum-bound NetMHCpan/NetMHCIIpan Stage 4 adapters",
+    )
+    prepare_stage4_mhc_parser.add_argument("project_config", type=Path)
+    prepare_stage4_mhc_parser.add_argument("--from-run", type=Path, required=True)
+    prepare_stage4_mhc_parser.add_argument("--netmhcpan-root", type=Path, required=True)
+    prepare_stage4_mhc_parser.add_argument("--netmhciipan-root", type=Path, required=True)
+    prepare_stage4_mhc_parser.add_argument(
+        "--class-i-allele",
+        action="append",
+        required=True,
+        help="NetMHCpan allele name; repeat for multiple alleles",
+    )
+    prepare_stage4_mhc_parser.add_argument(
+        "--class-ii-allele",
+        action="append",
+        required=True,
+        help="NetMHCIIpan allele name; repeat for multiple alleles",
     )
     init_stage6_parser = subparsers.add_parser(
         "init-stage6",
@@ -395,6 +416,32 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Run artifacts: {run_dir}")
             print(f"Immune report: {immune_node / 'report.html'}")
             print(f"Developability report: {developability_node / 'report.html'}")
+            return 0
+
+        if args.command == "prepare-stage4-mhc":
+            prepared = prepare_stage4_mhc_evidence(
+                args.project_config,
+                source_run_dir=args.from_run,
+                netmhcpan_root=args.netmhcpan_root,
+                netmhciipan_root=args.netmhciipan_root,
+                class_i_alleles=args.class_i_allele,
+                class_ii_alleles=args.class_ii_allele,
+                progress=lambda message: print(message, flush=True),
+            )
+            print(
+                "Stage 4 MHC adapter: "
+                f"identity={prepared['identity']} "
+                f"candidates={prepared['candidate_count']} "
+                f"observations={prepared['observation_count']}"
+            )
+            print(
+                "Supported observations: "
+                f"class_I={prepared['supported_count_by_class']['I']} "
+                f"class_II={prepared['supported_count_by_class']['II']}"
+            )
+            print(f"Adapter artifacts: {prepared['output_dir']}")
+            print(f"Immune specification: {prepared['immune_specification']}")
+            print("Population coverage remains unapproved; this is a technical smoke panel.")
             return 0
 
         if args.command == "init-stage6":

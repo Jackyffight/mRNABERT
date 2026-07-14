@@ -1,6 +1,6 @@
 # Stage 4-7 Computational Pipeline
 
-Status: implemented exploratory execution path, version `0.9.0`
+Status: implemented exploratory execution path, version `0.11.0`
 
 This document defines the executable path after a verified Stage 3 structure run.
 It does not change workflow v1. Stage 4 and 5 execute together, Stage 6A and 6B
@@ -31,6 +31,12 @@ thresholds, exact product sequences, and experiment release.
 ```bash
 ./vaxflow init-stage4-5 projects/three-protein/project.json \
   --from-run /absolute/path/to/stage3-run
+./vaxflow prepare-stage4-mhc projects/three-protein/project.json \
+  --from-run /absolute/path/to/stage3-run \
+  --netmhcpan-root /absolute/path/to/netMHCpan-4.2 \
+  --netmhciipan-root /absolute/path/to/netMHCIIpan-4.3 \
+  --class-i-allele 'BoLA-1:00901' \
+  --class-ii-allele 'BoLA-DRB3_00101'
 ./vaxflow run-stage4-5 projects/three-protein/project.json \
   --from-run /absolute/path/to/stage3-run
 
@@ -105,6 +111,19 @@ All three adapters use this envelope:
 Allowed observation statuses are `supported`, `risk`, `context`, and
 `not_supported`. Empty observations are valid evaluated results when the pinned tool
 really returned no records; absence of the adapter file is `not_evaluated`.
+
+`prepare-stage4-mhc` is the implemented NetMHC adapter. It invokes the static
+executables directly with explicit environment paths, runs one allele per raw table,
+and verifies every reported peptide against the candidate sequence and residue
+coordinates before writing evidence. Its content identity includes the candidate
+batch, executable and predictor-model hashes, alleles, peptide lengths, and rank
+thresholds. Repeating the same request reuses the verified output directory.
+
+The repository smoke script uses one BoLA-I and one BoLA-DRB3 allele only to verify
+the software path. Its generated panel is marked `technical_smoke_test`, leaves host
+population approval pending, and cannot support population-coverage or release
+claims. Replacing it with a biologically justified versioned panel is a separate
+human decision.
 
 ## Stage 5: Developability
 

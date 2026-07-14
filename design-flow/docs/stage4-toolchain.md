@@ -1,6 +1,6 @@
 # Stage 4 CPU Toolchain
 
-Status: open CPU tools installed locally; licensed DTU predictors pending manual download.
+Status: open CPU tools and licensed DTU predictors installed and executable locally.
 
 This document records why each external tool exists, what evidence it owns, and why
 the existing ESMFold2, Evo 2, and mRNABERT models do not replace it. Tool output is
@@ -14,6 +14,18 @@ The current-machine installation is outside both the repository and project runt
 ```text
 /data00/home/wangzhi.wit/models/design-flow-tools/stage4
 ```
+
+The licensed packages remain in the exact directories supplied by the project owner:
+
+```text
+/data00/home/wangzhi.wit/models/netMHCpan-4.2
+/data00/home/wangzhi.wit/models/netMHCIIpan-4.3
+```
+
+They are not copied into `design-flow-tools`. The installer validates their archives,
+versions, binaries, and checksums, then writes small Bash launchers that reference
+those directories in place. The vendor top-level launchers are not used because they
+require `tcsh` and contain vendor installation paths that do not exist on this host.
 
 Install and verify the open CPU tools with:
 
@@ -41,8 +53,8 @@ Tools are selected only when they satisfy all four constraints:
 | NCBI BLAST+ | 2.17.0+ | Map A33/B5/L1 source controls to downloaded proteins and search candidates against the cattle proteome | Mature CPU search, transparent tabular output, sufficient for three sources and nine candidates | Embedding similarity is not an auditable replacement for explicit local sequence alignments and coverage |
 | MAFFT | 7.525, official source package | Produce one gapped amino-acid alignment for each source protein family | Stable CPU MSA, no root dependency, appropriate for a small viral sequence panel | ESMFold2 predicts one structure and does not estimate isolate-level sequence conservation |
 | IPD-MHC BoLA data | snapshot to be pinned when downloaded | Define valid cattle class I and class II allele sequences and names | Maintained source for BoLA nomenclature and polymorphism | None of the deployed models defines the target cattle population or allele panel |
-| NetMHCpan | 4.2e, pending manual download | Predict peptide binding to BoLA class I | Current DTU pan-allelic predictor explicitly covering cattle BoLA | Evo 2 scores general sequence context; it is not trained or calibrated as a BoLA-I binding predictor |
-| NetMHCIIpan | 4.3k, pending manual download | Predict peptide binding to BoLA-DRB3 class II | Current DTU predictor explicitly supporting BoLA-DRB3 | ESMFold2 structure confidence and mRNABERT embeddings do not predict BoLA-II presentation |
+| NetMHCpan | 4.2e, ready in place | Predict peptide binding to BoLA class I | DTU pan-allelic predictor explicitly covering cattle BoLA, with deterministic CPU batch output | Evo 2 scores general sequence context; it is not trained or calibrated as a BoLA-I binding predictor |
+| NetMHCIIpan | 4.3k, ready in place | Predict peptide binding to BoLA-DRB3 class II | DTU predictor explicitly supporting BoLA-DRB3, with deterministic CPU batch output | ESMFold2 structure confidence and mRNABERT embeddings do not predict BoLA-II presentation |
 
 BLAST+ is preferred over DIAMOND for the first implementation because the current
 workload is very small. DIAMOND becomes useful only when the sequence panel grows
@@ -58,15 +70,18 @@ and mRNABERT remain separate representation and mRNA-model components.
 
 ## Result Flow
 
-After installation, adapter jobs will produce these runtime artifacts:
+After installation, the implemented MHC adapter produces these runtime artifacts:
 
 ```text
-input/stage4/alignments/A33.fasta
-input/stage4/alignments/B5.fasta
-input/stage4/alignments/L1.fasta
-input/stage4/bola-panel.json
-input/stage4/evidence/mhc_binding.json
-input/stage4/evidence/host_similarity.json
+input/stage4/netmhc/<input-and-tool-identity>/
+  candidates.fasta
+  bola-panel.json
+  mhc_binding.json
+  manifest.json
+  raw/class-i-*.xls
+  raw/class-i-*.log
+  raw/class-ii-*.xls
+  raw/class-ii-*.log
 ```
 
 The intended computation is:
@@ -74,26 +89,44 @@ The intended computation is:
 1. NCBI Datasets downloads a checksum-bound LSDV sequence and metadata snapshot.
 2. BLASTP maps each immutable source control to one homolog per accepted genome.
 3. MAFFT aligns each source control with its homolog panel.
-4. NetMHCpan and NetMHCIIpan scan candidate peptides against the approved BoLA panel.
+4. NetMHCpan and NetMHCIIpan scan candidate peptides against the declared BoLA panel.
 5. BLASTP compares candidates with the pinned Bos taurus reference proteome.
 6. Adapters convert raw outputs to `vaxflow.residue-evidence.v1` and Stage 4 reruns.
 
-Installation alone does not change Stage 4 from `not_evaluated`. A category changes
-to `evaluated` only after its raw result, tool version, input identities, and adapter
-JSON are all present and checksum-bound.
+The adapter runs one allele per raw table, validates peptide coordinates against the
+immutable candidate sequence, retains both supported and unsupported observations,
+and uses the predictors' default EL-rank thresholds: class I 0.5/2.0 percent and
+class II 1.0/5.0 percent for strong/weak binders. The generated manifest pins the
+candidate batch, executable hashes, predictor-model hashes, parameters, and every
+raw/output artifact hash.
 
-## Pending Licensed Downloads
+Run the current technical smoke path with:
 
-The DTU packages require the project owner to use the official request pages and
-accept their terms. Download the Linux x86-64 packages without renaming them, then
-record their source URL and SHA256 before installation:
+```bash
+/data00/home/wangzhi.wit/models/mRNABERT/design-flow/scripts/run_stage4_mhc_smoke.sh
+```
 
-- NetMHCpan 4.2e Linux
-- NetMHCIIpan 4.3k Linux
+This deliberately uses one available allele from each predictor,
+`BoLA-1:00901` and `BoLA-DRB3_00101`, to prove executable integration. It does not
+approve a target cattle population, claim breed coverage, or make the exploratory
+MHC signal a release gate. Stage 4 therefore remains `needs_data` until a justified
+population panel, pathogen alignments, the other adapters, and policy approvals are
+supplied.
 
-The local installer for those packages will be finalized against the actual archive
-layout after the files are available. It must not guess paths or bypass the request
-process.
+## Licensed Package Custody
+
+The licensed archives and extracted package trees stay outside Git and outside the
+project runtime. Repository code records only paths and expected checksums:
+
+| Artifact | SHA256 |
+|---|---|
+| `netMHCpan-4.2estatic.Linux.tar.gz` | `9270ddedfc55bce87f86d129c70a21f5e01db38e6a097eba96dca7c9581ec705` |
+| NetMHCpan static binary | `3e7d50f924ed3b9540a6742b2e6bf928d0741b6ba0cc4d5f82cb931c45c6e03d` |
+| `netMHCIIpan-4.3kstatic.Linux.tar.gz` | `e9b01db1a956e560d282bd608358f50158021129a83cfe1112a2d939e011382e` |
+| NetMHCIIpan static binary | `6f40aa115abbef939f7aedef451578b3813ecb8b08d04cff93d4bb7c863a9c7f` |
+
+The project owner remains responsible for the DTU license terms. Neither archives,
+binaries, predictor data, nor generated redistribution bundles may be committed.
 
 ## Meaning of Missing-Evidence Messages
 
