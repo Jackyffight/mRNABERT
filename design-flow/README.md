@@ -207,6 +207,8 @@ PYTHONPATH=src python -m unittest discover -s tests
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design-build-test-learn path.
 Stage 4-7 implementation details and external input contracts are recorded in
 [docs/stage4-7-computational-pipeline.md](docs/stage4-7-computational-pipeline.md).
+The pinned CPU tools and the reasons for selecting them are recorded in
+[docs/stage4-toolchain.md](docs/stage4-toolchain.md).
 The frozen route is recorded in
 [docs/workflow-v1.md](docs/workflow-v1.md) and
 `docs/workflow-v1.json`; CI-style tests prevent those contracts from drifting

@@ -52,6 +52,10 @@ resolve inside `runtime_root`.
 
 ## Stage 4: Immune Evidence
 
+The selected CPU tools, installation paths, selection rationale, model boundaries,
+and planned adapter artifacts are frozen in
+[Stage 4 CPU Toolchain](stage4-toolchain.md).
+
 Specification:
 `input/stage4/immune_evidence_specification.json`
 
