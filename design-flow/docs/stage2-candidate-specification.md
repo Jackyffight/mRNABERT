@@ -65,6 +65,40 @@ All nine have computationally valid AA sequences and are eligible for explorator
 structure inference. None is formally released because the source/control,
 annotation, grammar, and batch-approval gates remain open.
 
+## Why Nine, Not One Hundred? / 为什么是 9 个而不是 100 个？
+
+Nine is an input-derived inventory count, not an optimized scientific target. The
+current batch contains exactly the three immutable source controls, four explicitly
+supplied truncations, and two explicitly supplied fusion constructs. No model chose
+the count, and no combinatorial search established that these nine cover the best
+design space.
+
+当前的 9 个来自输入清单，而不是科学优化结果：3 个全长来源对照、4 个明确提供的截短体、
+2 个明确提供的融合体。没有模型选择“9”这个数量，也没有组合搜索证明它们覆盖了最佳设计空间。
+
+Automatic expansion is intentionally disabled because the project has not approved
+a construct grammar. Generating 100 records responsibly first requires versioned
+rules for:
+
+- allowed source segments and truncation boundaries;
+- allowed component order, repetition, and orientation;
+- linker, signal-peptide, tag, and cleavage-site libraries;
+- maximum length, topology, and expression constraints;
+- duplicate handling, diversity targets, and control requirements;
+- the cheap filters and selection rule used to reduce a larger pool to 100.
+
+Without those rules, 100 candidates would be arbitrary permutations that consume
+compute without improving scientific coverage. A future generation round should
+enumerate a larger grammar-bounded pool, apply inexpensive hard checks, cluster for
+sequence and architecture diversity, and then select a declared number for expensive
+structure and downstream evaluation. One hundred is therefore a possible execution
+budget, not an inherently better scientific number.
+
+For the current Mock milestone, nine is sufficient to exercise all three important
+software paths: full-length controls, truncations, and multi-component fusions. It is
+not sufficient to claim that candidate generation or design-space exploration is
+complete.
+
 Sequence-derived findings include:
 
 - A33.1 maps exactly to `A33:77-193`;

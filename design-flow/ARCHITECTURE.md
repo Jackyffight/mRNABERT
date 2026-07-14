@@ -24,6 +24,44 @@ This repository is an engineering and evidence pipeline. A model score is one
 piece of evidence, not proof of safety or efficacy. Advancement decisions require
 predefined gates and experimental confirmation.
 
+## Central-Kitchen Mental Model
+
+> [!IMPORTANT]
+> The system is a traceable central kitchen, not an autonomous scientist. The
+> current nine records are antigen recipes that can be inspected and processed;
+> they are not nine proven vaccines. A computationally complete recipe is not proof
+> that the physical product can be manufactured, is safe, or is protective.
+>
+> 本系统是一套可追溯的中央厨房，而不是自主科学家。当前 9 条记录是可以审计和加工的
+> 抗原菜谱，不是 9 个已经验证的疫苗。数字菜谱完整，不等于实物一定能生产、安全或有效。
+
+The project owner is the restaurant owner: they define the product objective and
+accept program assumptions. Domain scientists are the chefs: they approve antigen
+boundaries, target populations, evidence policies, product details, and experiments.
+The deterministic workflow is the kitchen line: it checks identities, follows exact
+recipes, operates pinned instruments, records every result, and refuses to turn a
+missing measurement into a favorable conclusion. The LLM is a review assistant; it
+may explain or propose findings, but it cannot invent scientific evidence or release
+a candidate.
+
+| Stage | Kitchen question | What the system can establish | What still requires evidence or authority |
+|---|---|---|---|
+| 1 Source intake | Did the ordered ingredients arrive, and do package and contents agree? | AA/CDS identity, translation, syntax, hashes, and declared provenance gaps | Whether the biological source and program choice are scientifically appropriate |
+| 2 Candidate specification | What exact recipes are on the menu? | Exact full-length, truncation, fusion, component, order, tag, and linker records | Whether boundaries, linkers, combinations, and design-space coverage are desirable |
+| 3 Structure assessment | Does each trial dish appear to hold its intended shape? | Pinned predicted structures, confidence, geometry, boundary flags, and artifact identity | Actual folding, expression, stability, function, and acceptance of structural exceptions |
+| 4 Immune evidence | Can pieces of a dish be presented on the selected customers' immune "plates"? | Reproducible predictions for declared pathogen, host, and MHC inputs | Representative cattle population, evidence policy, biological interpretation, and immune protection |
+
+The Stage 4 smoke run used the complete recipe batch but only one BoLA-I and one
+BoLA-II technical allele. It therefore proves that the kitchen can process every
+recipe type and preserve evidence; it does not prove population coverage or immune
+quality. Missing evidence is frozen as `needs_data` or `not_evaluated`. Later data
+creates a new immutable run rather than rewriting the earlier record.
+
+Stages 5-7 continue the analogy by checking whether recipes look developable,
+turning antigens into exact recombinant-protein and mRNA product specifications,
+and producing a provisional evidence-based ordering. Only controlled production
+and wet-lab testing actually cook and evaluate the products.
+
 ## Candidate Lineage
 
 Every candidate receives an immutable ID derived from its normalized sequence and

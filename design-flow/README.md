@@ -5,6 +5,12 @@ kept separate from the mRNABERT training code so protein design, structure model
 mRNA design, ranking, and wet-lab feedback can evolve without coupling their state
 to a single model implementation.
 
+> [!IMPORTANT]
+> Read the [central-kitchen mental model](ARCHITECTURE.md#central-kitchen-mental-model)
+> before interpreting a run. The workflow can guarantee digital identity,
+> completeness, traceability, and explicit missing evidence; it cannot guarantee
+> manufacturability, safety, immune protection, or efficacy without experiments.
+
 The current milestone implements the reproducible computational path from source
 intake through provisional integrated ranking:
 
