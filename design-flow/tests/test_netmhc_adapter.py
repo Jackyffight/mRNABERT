@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from design_flow.netmhc_adapter import (
     _preserve_failed_output,
+    _short_tool_path,
     build_mhc_observations,
     parse_netmhciipan_xls,
     parse_netmhcpan_xls,
@@ -17,6 +18,21 @@ from design_flow.netmhc_adapter import (
 
 
 class NetMHCAdapterTests(unittest.TestCase):
+    def test_predictor_receives_short_paths_relative_to_working_directory(self) -> None:
+        working_directory = Path("/very/long/runtime/path/.identity.partial")
+
+        self.assertEqual(
+            _short_tool_path(
+                working_directory / "raw/class-i-000-BoLA-1_00901.xls",
+                working_directory,
+            ),
+            "raw/class-i-000-BoLA-1_00901.xls",
+        )
+        self.assertEqual(
+            _short_tool_path(working_directory / "candidates.fasta", working_directory),
+            "candidates.fasta",
+        )
+
     def test_failed_adapter_output_is_preserved_with_diagnostic_record(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)

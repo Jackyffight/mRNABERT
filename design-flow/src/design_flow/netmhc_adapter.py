@@ -242,22 +242,21 @@ def _run_prediction(
     package_variable: str,
     arguments: list[str],
     output_log: Path,
-    temporary_root: Path,
+    working_directory: Path,
 ) -> None:
     environment = os.environ.copy()
     environment.update(
         {
             "NMHOME": tool.package_root,
             package_variable: str(Path(tool.package_root) / "Linux_x86_64"),
-            "TMPDIR": str(temporary_root),
+            "TMPDIR": "/tmp",
         }
     )
-    temporary_root.mkdir(parents=True, exist_ok=True)
     with output_log.open("w", encoding="utf-8") as handle:
         try:
             subprocess.run(
                 [tool.binary_path, *arguments],
-                cwd=tool.package_root,
+                cwd=working_directory,
                 env=environment,
                 stdout=handle,
                 stderr=subprocess.STDOUT,
@@ -274,6 +273,18 @@ def _run_prediction(
                 f"{tool.name} failed with exit code {error.returncode}.\n"
                 f"Predictor log tail:\n{log_tail}"
             ) from error
+
+
+def _short_tool_path(path: Path, working_directory: Path) -> str:
+    try:
+        relative = path.relative_to(working_directory).as_posix()
+    except ValueError as error:
+        raise ValueError(
+            f"Predictor file must be inside its working directory: {path}"
+        ) from error
+    if len(relative) > 96:
+        raise ValueError(f"Predictor-relative path is too long: {relative}")
+    return relative
 
 
 def _binding_level(prediction: NetMHCPrediction) -> str:
@@ -522,7 +533,6 @@ def prepare_stage4_mhc_evidence(
         if failed.exists():
             shutil.rmtree(failed)
         raw_root = partial / "raw"
-        temporary_root = partial / "tmp"
         raw_root.mkdir(parents=True)
         fasta_path = partial / "candidates.fasta"
         fasta_path.write_text(fasta_text, encoding="utf-8")
@@ -550,12 +560,12 @@ def prepare_stage4_mhc_evidence(
                         "-99.9",
                         "-xls",
                         "-xlsfile",
-                        str(table),
+                        _short_tool_path(table, partial),
                         "-f",
-                        str(fasta_path),
+                        _short_tool_path(fasta_path, partial),
                     ],
                     output_log=log,
-                    temporary_root=temporary_root,
+                    working_directory=partial,
                 )
                 parsed = parse_netmhcpan_xls(table, allele)
                 predictions.extend(parsed)
@@ -581,12 +591,12 @@ def prepare_stage4_mhc_evidence(
                         ",".join(str(length) for length in CLASS_II_LENGTHS),
                         "-xls",
                         "-xlsfile",
-                        str(table),
+                        _short_tool_path(table, partial),
                         "-f",
-                        str(fasta_path),
+                        _short_tool_path(fasta_path, partial),
                     ],
                     output_log=log,
-                    temporary_root=temporary_root,
+                    working_directory=partial,
                 )
                 parsed = parse_netmhciipan_xls(table, allele)
                 predictions.extend(parsed)
@@ -642,7 +652,6 @@ def prepare_stage4_mhc_evidence(
             }
             panel_path = partial / "bola-panel.json"
             _write_json(panel_path, panel)
-            shutil.rmtree(temporary_root, ignore_errors=True)
 
             artifacts = {
                 path.relative_to(partial).as_posix(): sha256_file(path)

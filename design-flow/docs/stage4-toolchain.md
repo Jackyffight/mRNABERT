@@ -100,6 +100,12 @@ class II 1.0/5.0 percent for strong/weak binders. The generated manifest pins th
 candidate batch, executable hashes, predictor-model hashes, parameters, and every
 raw/output artifact hash.
 
+The legacy predictor binaries receive only short paths relative to the adapter work
+directory, while their scratch directory is `/tmp`. This is required because
+NetMHCpan 4.2e aborts in its native argument handling when long runtime paths are
+passed to `-f` or `-xlsfile`. Final and failed artifacts remain under the configured
+project runtime; only predictor scratch files use `/tmp`.
+
 Run the current technical smoke path with:
 
 ```bash
