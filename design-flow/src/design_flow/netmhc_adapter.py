@@ -265,8 +265,14 @@ def _run_prediction(
                 check=True,
             )
         except subprocess.CalledProcessError as error:
+            handle.flush()
+            log_lines = output_log.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
+            log_tail = "\n".join(log_lines[-40:]) or "<empty predictor log>"
             raise ValueError(
-                f"{tool.name} failed with exit code {error.returncode}; see {output_log}"
+                f"{tool.name} failed with exit code {error.returncode}.\n"
+                f"Predictor log tail:\n{log_tail}"
             ) from error
 
 
@@ -401,6 +407,31 @@ def _verify_existing_output(output_dir: Path, identity: str) -> dict[str, Any]:
     return manifest
 
 
+def _preserve_failed_output(
+    partial: Path,
+    failed: Path,
+    *,
+    identity: str,
+    error: Exception,
+) -> Path:
+    if failed.exists():
+        shutil.rmtree(failed)
+    if partial.exists():
+        partial.rename(failed)
+    else:
+        failed.mkdir(parents=True)
+    _write_json(
+        failed / "failure.json",
+        {
+            "schema_version": ADAPTER_SCHEMA,
+            "identity": identity,
+            "error_type": type(error).__name__,
+            "error": str(error),
+        },
+    )
+    return failed
+
+
 def _update_immune_specification(
     config: ProjectConfig,
     *,
@@ -485,8 +516,11 @@ def prepare_stage4_mhc_evidence(
         manifest = _verify_existing_output(output_dir, identity)
     else:
         partial = output_parent / f".{identity}.partial"
+        failed = output_parent / f"{identity}.failed"
         if partial.exists():
             shutil.rmtree(partial)
+        if failed.exists():
+            shutil.rmtree(failed)
         raw_root = partial / "raw"
         temporary_root = partial / "tmp"
         raw_root.mkdir(parents=True)
@@ -646,9 +680,16 @@ def prepare_stage4_mhc_evidence(
             }
             _write_json(partial / "manifest.json", manifest)
             partial.rename(output_dir)
-        except Exception:
-            shutil.rmtree(partial, ignore_errors=True)
-            raise
+        except Exception as error:
+            failed = _preserve_failed_output(
+                partial,
+                failed,
+                identity=identity,
+                error=error,
+            )
+            raise ValueError(
+                f"{error}\nFailed adapter artifacts preserved at: {failed}"
+            ) from error
 
     evidence_path = output_dir / "mhc_binding.json"
     panel_path = output_dir / "bola-panel.json"

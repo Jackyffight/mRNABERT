@@ -9,6 +9,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from design_flow.netmhc_adapter import (
+    _preserve_failed_output,
     build_mhc_observations,
     parse_netmhciipan_xls,
     parse_netmhcpan_xls,
@@ -16,6 +17,31 @@ from design_flow.netmhc_adapter import (
 
 
 class NetMHCAdapterTests(unittest.TestCase):
+    def test_failed_adapter_output_is_preserved_with_diagnostic_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            partial = root / ".identity.partial"
+            failed = root / "identity.failed"
+            log = partial / "raw/class-i.log"
+            log.parent.mkdir(parents=True)
+            log.write_text("predictor failure\n", encoding="utf-8")
+
+            preserved = _preserve_failed_output(
+                partial,
+                failed,
+                identity="identity",
+                error=ValueError("fixture failure"),
+            )
+
+            self.assertEqual(preserved, failed)
+            self.assertFalse(partial.exists())
+            self.assertEqual(
+                (failed / "raw/class-i.log").read_text(encoding="utf-8"),
+                "predictor failure\n",
+            )
+            failure = (failed / "failure.json").read_text(encoding="utf-8")
+            self.assertIn('"error": "fixture failure"', failure)
+
     def test_parses_both_predictors_and_binds_peptides_to_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)

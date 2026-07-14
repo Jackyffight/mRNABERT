@@ -113,6 +113,11 @@ MHC signal a release gate. Stage 4 therefore remains `needs_data` until a justif
 population panel, pathogen alignments, the other adapters, and policy approvals are
 supplied.
 
+If a predictor exits unsuccessfully, the CLI prints the final 40 log lines and moves
+the complete partial job to `input/stage4/netmhc/<identity>.failed`, including a
+machine-readable `failure.json`. Failed diagnostics are never deleted before the
+operator can inspect them.
+
 ## Licensed Package Custody
 
 The licensed archives and extracted package trees stay outside Git and outside the
