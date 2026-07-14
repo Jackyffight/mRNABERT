@@ -9,6 +9,7 @@ from .domain import HumanAction, ProjectAnalysis
 from .workflow import (
     CURRENT_STAGE_ID,
     STAGE_BY_ID,
+    action_due_for_handoff,
     workflow_contract,
     workflow_contract_sha256,
 )
@@ -253,7 +254,11 @@ def build_node_bundle(analysis: ProjectAnalysis, run_id: str) -> dict[str, Any]:
     due_actions = [
         action
         for action in open_actions
-        if action.required_before_stage in {CURRENT_STAGE_ID, NEXT_STAGE_ID}
+        if action_due_for_handoff(
+            action.required_before_stage,
+            current_stage=CURRENT_STAGE_ID,
+            to_stages=(NEXT_STAGE_ID,),
+        )
     ]
     if analysis.status == "fail":
         readiness = "blocked"

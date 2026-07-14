@@ -48,6 +48,7 @@ from design_flow.workflow import (
     SYSTEM_ARCHITECTURE_VERSION,
     WORKFLOW_ID,
     WORKFLOW_VERSION,
+    action_due_for_handoff,
     approved_workflow_hash,
     validate_workflow,
     workflow_contract,
@@ -208,6 +209,39 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("docs/audit-automation-and-llm-governance.md", architecture)
         self.assertIn("docs/adr/0001-hybrid-audited-workflow.md", architecture)
 
+    def test_human_actions_block_only_when_due_for_handoff(self) -> None:
+        self.assertFalse(
+            action_due_for_handoff(
+                "experiment_release",
+                current_stage="protein_structure_assessment",
+                to_stages=(
+                    "immune_evidence_assessment",
+                    "developability_assessment",
+                ),
+            )
+        )
+        self.assertTrue(
+            action_due_for_handoff(
+                "candidate_specification",
+                current_stage="protein_structure_assessment",
+                to_stages=("immune_evidence_assessment",),
+            )
+        )
+        self.assertTrue(
+            action_due_for_handoff(
+                "integrated_ranking",
+                current_stage="mrna_product_design",
+                to_stages=("integrated_ranking",),
+            )
+        )
+        self.assertTrue(
+            action_due_for_handoff(
+                "experiment_release",
+                current_stage="integrated_ranking",
+                to_stages=("experiment_release",),
+            )
+        )
+
 
 class EndToEndTests(unittest.TestCase):
     def _write_project(self, root: Path) -> Path:
@@ -241,6 +275,9 @@ class EndToEndTests(unittest.TestCase):
                 "product_modalities": ["recombinant_protein", "mrna"],
                 "protein_expression_host": "test expression host",
                 "mrna_target_species": "test host",
+                "project_mode": "mock_workflow_validation",
+                "scientific_release_allowed": False,
+                "mrna_manufacturing_method": "in_vitro_transcription",
             },
         }
         source_dir.mkdir(parents=True)
@@ -289,6 +326,14 @@ class EndToEndTests(unittest.TestCase):
                 (root / "runtime-project" / "runs" / "latest.json").read_text(encoding="utf-8")
             )
             self.assertEqual(manifest["status"], "complete")
+            self.assertEqual(
+                manifest["context"]["project_mode"], "mock_workflow_validation"
+            )
+            self.assertFalse(manifest["context"]["scientific_release_allowed"])
+            self.assertEqual(
+                manifest["context"]["mrna_manufacturing_method"],
+                "in_vitro_transcription",
+            )
             self.assertEqual(manifest["runtime_root"], str(root / "runtime-project"))
             self.assertEqual(manifest["nodes"][CURRENT_STAGE_ID]["status"], "complete")
             self.assertEqual(summary["computational_audit_status"], "pass")
@@ -1358,6 +1403,37 @@ class CandidateStageEndToEndTests(unittest.TestCase):
                     "delivery_platform": "fixture-lnp",
                 }
             )
+            mrna["manufacturing_context"].update(
+                {"status": "approved", "method": "in_vitro_transcription"}
+            )
+            candidate_batch = json.loads(
+                (
+                    stage5_run
+                    / "nodes/candidate_specification/candidate_batch.json"
+                ).read_text(encoding="utf-8")
+            )
+            provided_binding = mrna["selection"]["candidates"][0]
+            provided_candidate = next(
+                candidate
+                for candidate in candidate_batch["candidates"]
+                if candidate["candidate_id"] == provided_binding["candidate_id"]
+            )
+            provided_path = runtime_root / "input/stage6/mock-provided-control.fasta"
+            provided_path.write_text(
+                f">mock-control\n{provided_candidate['nucleotide_sequence']}\n",
+                encoding="utf-8",
+            )
+            mrna["provided_coding_sequences"] = [
+                {
+                    "control_id": "fixture-mock-control-v1",
+                    "candidate_id": provided_candidate["candidate_id"],
+                    "sequence_path": str(provided_path.relative_to(runtime_root)),
+                    "evidence_class": "mock",
+                    "provenance_status": "user_declared",
+                    "intended_use": "mock_reference_control",
+                    "source_description": "Synthetic test fixture",
+                }
+            ]
             mrna["generation"].update({"status": "enabled", "designs_per_candidate": 2})
             mrna["constraints"].update(
                 {
@@ -1381,6 +1457,14 @@ class CandidateStageEndToEndTests(unittest.TestCase):
             mrna_path.write_text(
                 json.dumps(mrna, indent=2, sort_keys=True) + "\n", encoding="utf-8"
             )
+
+            provided_content = provided_path.read_text(encoding="utf-8")
+            provided_path.write_text(">wrong-control\nATGTAA\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError, "does not translate to"
+            ):
+                analyze_product_designs(config_path, source_run_dir=stage5_run)
+            provided_path.write_text(provided_content, encoding="utf-8")
 
             provisional = analyze_product_designs(config_path, source_run_dir=stage5_run)
             for adapter_id in ("structure_recheck", "expression_support"):
@@ -1454,7 +1538,17 @@ class CandidateStageEndToEndTests(unittest.TestCase):
                 for design in analysis.mrna_result["designs"]
                 if design["design_type"].startswith("synonymous_")
             ]
+            provided = [
+                design
+                for design in analysis.mrna_result["designs"]
+                if design["design_type"] == "provided_cds_control"
+            ]
             self.assertEqual(len(optimized), 12)
+            self.assertEqual(len(provided), 1)
+            self.assertEqual(provided[0]["provenance"]["evidence_class"], "mock")
+            self.assertEqual(
+                provided[0]["provenance"]["provenance_status"], "user_declared"
+            )
             self.assertTrue(all(design["translation_verified"] for design in optimized))
             self.assertTrue(all(design["full_mrna_sequence"] for design in optimized))
             self.assertTrue(

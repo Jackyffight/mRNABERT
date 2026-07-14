@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import re
 from typing import Any
 
 from .config import ProjectConfig, load_project_config
@@ -30,6 +31,7 @@ from .verification import sha256_file
 PROTEIN_RULESET_ID = "protein-product-audit-rules-v1"
 MRNA_RULESET_ID = "mrna-synonymous-design-rules-v1"
 SENSE_CODONS = {codon: amino_acid for codon, amino_acid in CODON_TABLE.items() if amino_acid != "*"}
+CONTROL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 @dataclass
@@ -507,6 +509,23 @@ def _coding_metrics(
     }
 
 
+def _coding_metrics_without_usage(
+    cds: str,
+    constraints: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "cai_proxy": None,
+        "gc_fraction": round(sum(base in "GC" for base in cds) / len(cds), 6),
+        "gc_target_deviation": None,
+        "longest_homopolymer": _longest_homopolymer(cds),
+        "forbidden_motif_hits": [
+            motif.upper().replace("U", "T")
+            for motif in constraints["forbidden_motifs"]
+            if motif.upper().replace("U", "T") in cds
+        ],
+    }
+
+
 def _passes_coding_constraints(metrics: dict[str, Any], constraints: dict[str, Any]) -> bool:
     return (
         constraints["minimum_gc_fraction"] <= metrics["gc_fraction"] <= constraints["maximum_gc_fraction"]
@@ -669,6 +688,22 @@ def _mrna_analysis(
             "status": "missing",
             "description": "Approve target species/cell context and delivery platform assumptions.",
         })
+    manufacturing_context = spec.get("manufacturing_context")
+    if manufacturing_context is not None:
+        if not isinstance(manufacturing_context, dict):
+            raise ValueError("mRNA manufacturing_context must be an object")
+        manufacturing_method = manufacturing_context.get("method")
+        if (
+            manufacturing_context.get("status") != "approved"
+            or not isinstance(manufacturing_method, str)
+            or not manufacturing_method.strip()
+            or manufacturing_method.strip().lower() == "unspecified"
+        ):
+            requirements.append({
+                "requirement_id": "approve-mrna-manufacturing-context",
+                "status": "missing",
+                "description": "Approve the mRNA manufacturing method separately from the delivery platform.",
+            })
     if generation.get("status") != "enabled" or codon_usage is None:
         requirements.append({
             "requirement_id": "provide-and-enable-mrna-codon-design",
@@ -690,6 +725,65 @@ def _mrna_analysis(
         })
     designs: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
+    raw_provided_controls = spec.get("provided_coding_sequences", [])
+    if not isinstance(raw_provided_controls, list):
+        raise ValueError("mRNA provided_coding_sequences must be an array")
+    provided_by_candidate: dict[str, list[dict[str, Any]]] = {}
+    provided_control_ids: set[str] = set()
+    selected_by_id = {candidate["candidate_id"]: candidate for candidate in selected}
+    for index, declaration in enumerate(raw_provided_controls):
+        if not isinstance(declaration, dict):
+            raise ValueError(
+                f"mRNA provided_coding_sequences[{index}] must be an object"
+            )
+        control_id = declaration.get("control_id")
+        candidate_id = declaration.get("candidate_id")
+        evidence_class = declaration.get("evidence_class")
+        provenance_status = declaration.get("provenance_status")
+        intended_use = declaration.get("intended_use")
+        if (
+            not isinstance(control_id, str)
+            or not CONTROL_ID_PATTERN.fullmatch(control_id)
+            or control_id in provided_control_ids
+            or candidate_id not in selected_by_id
+            or evidence_class
+            not in {"mock", "literature", "vendor", "experimental", "other"}
+            or provenance_status not in {"user_declared", "documented", "verified"}
+            or not isinstance(intended_use, str)
+            or not intended_use.strip()
+        ):
+            raise ValueError(f"Invalid provided mRNA coding control at index {index}")
+        sequence_path = resolve_runtime_input(
+            config,
+            declaration.get("sequence_path"),
+            f"provided_coding_sequences[{index}].sequence_path",
+        )
+        if sequence_path is None or not sequence_path.is_file():
+            raise ValueError(f"Provided mRNA coding control is missing: {control_id}")
+        cds = _read_sequence(sequence_path)
+        candidate = selected_by_id[candidate_id]
+        if not _translation_matches(
+            cds, candidate["amino_acid_sequence"], f"{candidate_id}:{control_id}"
+        ):
+            raise ValueError(
+                f"Provided mRNA coding control does not translate to {candidate_id}: "
+                f"{control_id}"
+            )
+        provided_control_ids.add(control_id)
+        input_paths[f"mrna_control:{control_id}"] = sequence_path
+        provided_by_candidate.setdefault(candidate_id, []).append({
+            "coding_sequence_dna": cds,
+            "provenance": {
+                "control_id": control_id,
+                "evidence_class": evidence_class,
+                "provenance_status": provenance_status,
+                "intended_use": intended_use.strip(),
+                "source_description": str(
+                    declaration.get("source_description", "")
+                ).strip(),
+                "input_sha256": sha256_file(sequence_path),
+            },
+        })
     synonymous = _synonymous_codons(codon_usage) if codon_usage is not None else None
     for candidate in selected:
         candidate_id = candidate["candidate_id"]
@@ -699,17 +793,7 @@ def _mrna_analysis(
             source_metrics = (
                 _coding_metrics(source_cds, amino_acid_sequence, codon_usage, constraints)
                 if codon_usage is not None
-                else {
-                    "cai_proxy": None,
-                    "gc_fraction": round(sum(base in "GC" for base in source_cds) / len(source_cds), 6),
-                    "gc_target_deviation": None,
-                    "longest_homopolymer": _longest_homopolymer(source_cds),
-                    "forbidden_motif_hits": [
-                        motif.upper().replace("U", "T")
-                        for motif in constraints["forbidden_motifs"]
-                        if motif.upper().replace("U", "T") in source_cds
-                    ],
-                }
+                else _coding_metrics_without_usage(source_cds, constraints)
             )
             designs.append(
                 _mrna_design_record(
@@ -719,6 +803,26 @@ def _mrna_analysis(
                     source_metrics,
                     noncoding,
                     selection_basis="source_control",
+                )
+            )
+        for control in provided_by_candidate.get(candidate_id, []):
+            provided_cds = control["coding_sequence_dna"]
+            provided_metrics = (
+                _coding_metrics(
+                    provided_cds, amino_acid_sequence, codon_usage, constraints
+                )
+                if codon_usage is not None
+                else _coding_metrics_without_usage(provided_cds, constraints)
+            )
+            designs.append(
+                _mrna_design_record(
+                    candidate,
+                    provided_cds,
+                    "provided_cds_control",
+                    provided_metrics,
+                    noncoding,
+                    selection_basis="provided_control",
+                    provenance=control["provenance"],
                 )
             )
         if generation.get("status") != "enabled" or synonymous is None or codon_usage is None:
@@ -798,7 +902,7 @@ def _mrna_analysis(
                 "status": "missing",
                 "description": f"Provide checksum-bound {adapter_id} evidence for the mRNA design batch.",
             })
-    return {
+    result = {
         "schema_version": 1,
         "stage_id": MRNA_PRODUCT_STAGE_ID,
         "mode": "exploratory",
@@ -822,6 +926,9 @@ def _mrna_analysis(
             "Every coding design is accepted only after exact translation-identity verification.",
         ],
     }
+    if manufacturing_context is not None:
+        result["manufacturing_context"] = manufacturing_context
+    return result
 
 
 def _mrna_design_record(
@@ -832,6 +939,7 @@ def _mrna_design_record(
     noncoding: dict[str, Any],
     *,
     selection_basis: str,
+    provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not _translation_matches(cds, candidate["amino_acid_sequence"], candidate["candidate_id"]):
         raise ValueError(f"mRNA coding design translation mismatch: {candidate['candidate_id']}")
@@ -849,8 +957,9 @@ def _mrna_design_record(
         "design_type": design_type,
         "selection_basis": selection_basis,
         "full_mrna_sha256": _sha256_text(full_mrna) if full_mrna else None,
+        **({"provenance": provenance} if provenance is not None else {}),
     }
-    return {
+    record = {
         "design_id": f"mrna-{_canonical_json_sha256(identity)[:16]}",
         "candidate_id": candidate["candidate_id"],
         "candidate_key": candidate["candidate_key"],
@@ -865,6 +974,9 @@ def _mrna_design_record(
         "full_mrna_sha256": _sha256_text(full_mrna) if full_mrna else None,
         "status": "full_construct_audited" if full_mrna else "coding_only",
     }
+    if provenance is not None:
+        record["provenance"] = provenance
+    return record
 
 
 def analyze_product_designs(

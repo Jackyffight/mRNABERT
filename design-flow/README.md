@@ -221,6 +221,9 @@ The three stage-1 decisions that remain open after deferring later-branch questi
 are recorded in
 [docs/three-protein-stage-1-open-decisions.md](docs/three-protein-stage-1-open-decisions.md),
 including their blocking scope, machine-inference boundary, and minimum human input.
+The current project-owner declarations, Mock-only release policy, CHO/IVT context,
+and strict boundary on LLM decisions are recorded in
+[docs/three-protein-mock-project-policy.md](docs/three-protein-mock-project-policy.md).
 The implemented Stage 2 contract, current deterministic findings, artifacts, and
 model launch order are documented in
 [docs/stage2-candidate-specification.md](docs/stage2-candidate-specification.md).

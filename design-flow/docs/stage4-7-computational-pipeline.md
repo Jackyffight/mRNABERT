@@ -175,6 +175,17 @@ a codon table is supplied and generation is enabled, the system:
 5. retranslates every selected CDS and requires exact antigen identity;
 6. assembles a full mRNA only after exact non-coding elements are approved.
 
+Additional externally supplied coding controls may be declared in
+`provided_coding_sequences`. Each declaration binds a stable `control_id` and exact
+candidate ID to a runtime-local sequence file, evidence class, provenance status,
+and intended use. The pipeline hashes the file and requires exact translation before
+emitting a `provided_cds_control`; an LLM description cannot satisfy this check.
+
+`manufacturing_context.method` is recorded independently from
+`target_context.delivery_platform`. For example, IVT describes how mRNA is made,
+whereas an LNP or another delivery system describes how it is delivered. The
+workflow does not infer one from the other.
+
 The codon table contract is:
 
 ```json

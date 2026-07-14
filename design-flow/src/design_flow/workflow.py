@@ -424,6 +424,33 @@ FULL_WORKFLOW = (
 
 
 STAGE_BY_ID = {stage.stage_id: stage for stage in FULL_WORKFLOW}
+STAGE_POSITION_BY_ID = {
+    stage.stage_id: index for index, stage in enumerate(FULL_WORKFLOW)
+}
+
+
+def action_due_for_handoff(
+    required_before_stage: str,
+    *,
+    current_stage: str,
+    to_stages: tuple[str, ...],
+) -> bool:
+    """Return whether an open action must block this handoff.
+
+    Actions due at an earlier stage remain overdue. Future actions are carried
+    forward without blocking until their declared stage is an immediate target.
+    """
+    if (
+        required_before_stage not in STAGE_POSITION_BY_ID
+        or current_stage not in STAGE_POSITION_BY_ID
+        or any(stage_id not in STAGE_POSITION_BY_ID for stage_id in to_stages)
+    ):
+        return True
+    return (
+        STAGE_POSITION_BY_ID[required_before_stage]
+        <= STAGE_POSITION_BY_ID[current_stage]
+        or required_before_stage in to_stages
+    )
 
 
 def stage_contract(stage: StageDefinition) -> dict[str, Any]:

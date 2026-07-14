@@ -136,7 +136,15 @@ def render_mrna_product_report(
         ruleset_id=result["ruleset_id"],
         metrics=[
             (str(len(result["designs"])), "Audited designs / 已审计设计"),
-            (str(sum(item["design_type"] != "source_cds_control" for item in result["designs"])), "Synonymous designs / 同义设计"),
+            (
+                str(
+                    sum(
+                        item["design_type"].startswith("synonymous_")
+                        for item in result["designs"]
+                    )
+                ),
+                "Synonymous designs / 同义设计",
+            ),
             (str(len(result["rejected_designs"])), "Rejected trials / 拒绝试验"),
             (str(len(result["requirements"])), "Missing requirements / 缺失要求"),
         ],

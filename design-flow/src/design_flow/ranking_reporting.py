@@ -19,7 +19,12 @@ from .ranking import RankingAnalysis
 from .ranking_html import render_ranking_report
 from .ranking_specs import RANKING_STAGE_ID
 from .verification import ARTIFACT_INDEX_FILENAME, build_artifact_index, sha256_file, verify_run
-from .workflow import STAGE_BY_ID, workflow_contract, workflow_contract_sha256
+from .workflow import (
+    STAGE_BY_ID,
+    action_due_for_handoff,
+    workflow_contract,
+    workflow_contract_sha256,
+)
 
 
 def _atomic_write(path: Path, content: str) -> None:
@@ -133,13 +138,26 @@ def write_ranking_run(
         shutil.copyfile(analysis.ranking_specification_path, spec_snapshot)
         actions = _actions(analysis)
         open_actions = [action for action in actions if action["status"] == "open"]
+        due_actions = [
+            action
+            for action in open_actions
+            if action_due_for_handoff(
+                action["required_before_stage"],
+                current_stage=RANKING_STAGE_ID,
+                to_stages=("experiment_release",),
+            )
+        ]
         summary = {
             "schema_version": 1,
             "run_id": run_id,
             "created_at_utc": created_at,
             "stage_id": RANKING_STAGE_ID,
             "stage_name": STAGE_BY_ID[RANKING_STAGE_ID].name,
-            "status": "needs_data" if analysis.result["requirements"] else "needs_human_input",
+            "status": (
+                "needs_data"
+                if analysis.result["requirements"]
+                else "needs_human_input" if due_actions else "complete"
+            ),
             "computational_audit_status": "pass",
             "mode": "exploratory",
             "ruleset_id": analysis.result["ruleset_id"],
@@ -151,6 +169,7 @@ def write_ranking_run(
             "formal_selection_count": 0,
             "missing_requirement_count": len(analysis.result["requirements"]),
             "open_human_actions": len(open_actions),
+            "due_human_actions": len(due_actions),
         }
         input_audit = {
             "stage_id": RANKING_STAGE_ID,
@@ -208,7 +227,7 @@ def write_ranking_run(
             "to_stage": "experiment_release",
             "readiness": "needs_data" if analysis.result["requirements"] else "needs_human_input",
             "formal_readiness": "not_released",
-            "blocking_action_ids": [action["action_id"] for action in open_actions],
+            "blocking_action_ids": [action["action_id"] for action in due_actions],
             "carried_human_actions": open_actions,
             "carried_forward": {"ranking_result_sha256": None},
             "limitations": analysis.result["limitations"],

@@ -1,29 +1,27 @@
 # Three-Protein Stage-1 Open Decisions
 
-Status: discussion record, pending human adjudication
+Status: project-owner adjudication recorded on 2026-07-14
 
-This document records the three unresolved decisions that are relevant before the
-three-protein project formally releases a `candidate_specification` batch. It does
-not resolve those actions and does not replace the canonical statuses in
-`projects/three-protein/project.json`.
+This document preserves the reasoning behind three Stage-1 decisions. Canonical
+statuses are in `projects/three-protein/project.json`; the current project is a Mock
+workflow-validation run and cannot be scientifically released.
 
-本文记录三个蛋白项目在正式放行 `candidate_specification` 候选批次前仍需处理的
-三个决策。本文不代表这些事项已经解决；正式状态仍以
-`projects/three-protein/project.json` 为准。
+本文保留三个 Stage-1 决策的推理过程。正式状态以
+`projects/three-protein/project.json` 为准；当前项目属于 Mock 工作流验证，不能
+作为科学或实验放行。
 
 ## Scope And Blocking Semantics / 范围与阻塞语义
 
-Two other open actions are deliberately deferred because they are required only by
-later branches:
+The later-branch actions now have these dispositions:
 
-- `resolve-b5-optimized-cds`: the mislabeled supplied sequence remains quarantined
-  and must be resolved before `mrna_product_design` uses a B5 optimized CDS;
-- `select-protein-expression-host`: this is required before
-  `developability_assessment` and the recombinant-protein product branch.
+- `resolve-b5-optimized-cds`: resolved by a replacement Mock CDS whose exact B5
+  translation and hash are checked by code;
+- `select-protein-expression-host`: resolved as a CHO-cell Mock assumption;
+- mRNA manufacturing is declared as IVT, independently of the still-unresolved
+  delivery platform.
 
-另外两项在本轮明确延后：B5 误标的优化 CDS 继续隔离，到 mRNA 产品设计前处理；
-重组蛋白表达宿主到可开发性评估和重组蛋白产品分支前确定。二者不属于本文所说的
-三个当前问题。
+后续分支中，B5 误标优化 CDS 已由通过确定性翻译审计的新 Mock 文件替换；蛋白表达
+宿主采用 CHO 细胞作为 Mock 假设；mRNA 制备方式声明为 IVT，但递送平台仍未确定。
 
 The word "blocking" is split into three meanings:
 
@@ -39,9 +37,9 @@ The word "blocking" is split into three meanings:
 
 | Action | Current conclusion | What the system can infer | Minimum human decision |
 |---|---|---|---|
-| `confirm-source-provenance` | Not compute-blocking; stage-release-blocking under the current v1 contract | Generate exact sequence hashes and search for likely accessions or strains, but sequence similarity cannot prove provenance or ownership | Confirm accession, source revision, isolate/strain, and data owner for A33, B5, and L1 |
-| `confirm-reference-controls` | Not compute-blocking; stage-release-blocking and likely low-effort to resolve | Propose the supplied full-length AA plus matching original CDS as immutable controls because all three pairs pass exact translation audit | Approve that proposal or nominate replacement controls, then freeze their hashes |
-| `confirm-manual-construct-annotations` | Not globally compute-blocking; manual candidates are release-blocked until confirmed | Align constructs to source proteins and infer ranges, order, initiator methionine, FLAG tag, and literal linker sequence with confidence/evidence | Approve or correct the generated component manifest and declare intended construct semantics |
+| `confirm-source-provenance` | Waived for Mock workflow validation | Hash-defined local identity only; no accession, isolate, or custody claim | Reopen only before real scientific use |
+| `confirm-reference-controls` | Resolved | Full-length AA/CDS pairs are immutable source controls; literature-inspired truncations are separate provisional Mock references | No additional input for exploratory computation |
+| `confirm-manual-construct-annotations` | Deferred to `experiment_release` | Alignments may propose components, but cannot recover design intent | Approve or correct only if these manual constructs are selected for release |
 
 ## 1. Source Provenance / 来源溯源
 
@@ -64,9 +62,9 @@ database revision, and retrieval date. This is evidence for review, not an
 automatic provenance decision: identical sequences may occur in multiple records,
 and a close match does not identify the supplied file's actual source.
 
-**Release gate:** under the current v1 project contract this action blocks formal
-release into `candidate_specification`. A human must confirm the selected record or
-explicitly approve an "unknown provenance, hash-defined local reference" waiver.
+**Current disposition:** the project owner approved an "unknown provenance,
+hash-defined local reference" waiver for this Mock run. Real scientific use must
+reopen provenance review.
 
 ## 2. Immutable Reference Controls / 不可变参照对照
 
@@ -89,9 +87,10 @@ matching original CDS. The system cannot infer whether the project owner intende
 different isolate, truncation, optimized CDS, or manual construct to be the business
 reference.
 
-**Release gate:** a human must approve the proposed manifest or provide replacements.
-After approval, any sequence change creates a new control version and candidate ID;
-it must never silently overwrite the approved reference.
+**Current disposition:** the project owner approved full-length AA/CDS pairs as
+immutable source controls and classified the literature-inspired truncations as
+separate provisional Mock reference constructs. Any sequence change still creates a
+new control version and candidate ID.
 
 ## 3. Manual Construct Annotations / 手工构建体注释
 
@@ -118,12 +117,10 @@ recover undocumented design intent, prove that a boundary is biologically correc
 or decide whether an observed difference is intentional rather than a labeling
 error.
 
-**Release gate:** a human must approve or correct the inferred component manifest.
-The current v1 configuration models this as a whole-stage gate before
-`candidate_specification`. The intended finer policy is candidate-scoped: unresolved
-manual constructs remain quarantined while unrelated, fully specified candidates
-may proceed. That narrower behavior is a proposed implementation change, not yet a
-property of the current executable gate.
+**Current disposition:** this decision is deferred to `experiment_release`.
+Unresolved manual constructs remain quarantined while unrelated deterministic
+computation may proceed. They cannot be selected for synthesis or used as confirmed
+like-for-like controls until their component manifest is approved.
 
 ## Required Follow-Up Artifact / 后续应生成的产物
 

@@ -20,7 +20,12 @@ from .candidate_specification import (
     CandidateBatchAnalysis,
 )
 from .verification import ARTIFACT_INDEX_FILENAME, build_artifact_index, sha256_file, verify_run
-from .workflow import STAGE_BY_ID, workflow_contract, workflow_contract_sha256
+from .workflow import (
+    STAGE_BY_ID,
+    action_due_for_handoff,
+    workflow_contract,
+    workflow_contract_sha256,
+)
 
 
 SOURCE_STAGE_ID = "program_and_source_intake"
@@ -147,7 +152,11 @@ def build_candidate_node_bundle(
     due_actions = [
         action
         for action in open_actions
-        if action["required_before_stage"] in {CANDIDATE_STAGE_ID, NEXT_STAGE_ID}
+        if action_due_for_handoff(
+            action["required_before_stage"],
+            current_stage=CANDIDATE_STAGE_ID,
+            to_stages=(NEXT_STAGE_ID,),
+        )
     ]
     if analysis.computational_status == "fail":
         status, readiness = "blocked", "blocked"

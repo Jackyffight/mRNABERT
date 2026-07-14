@@ -19,7 +19,12 @@ from .assessment_specs import DEVELOPABILITY_STAGE_ID, IMMUNE_STAGE_ID
 from .post_structure_assessment import PostStructureAnalysis
 from .post_structure_html import render_developability_report, render_immune_report
 from .verification import ARTIFACT_INDEX_FILENAME, build_artifact_index, sha256_file, verify_run
-from .workflow import STAGE_BY_ID, workflow_contract, workflow_contract_sha256
+from .workflow import (
+    STAGE_BY_ID,
+    action_due_for_handoff,
+    workflow_contract,
+    workflow_contract_sha256,
+)
 
 
 def _atomic_write(path: Path, content: str) -> None:
@@ -104,12 +109,25 @@ def _immune_bundle(
         required_before_stage="integrated_ranking",
     )
     open_actions = [action for action in actions if action["status"] == "open"]
+    due_actions = [
+        action
+        for action in open_actions
+        if action_due_for_handoff(
+            action["required_before_stage"],
+            current_stage=IMMUNE_STAGE_ID,
+            to_stages=("integrated_ranking",),
+        )
+    ]
     summary = {
         "schema_version": 1,
         "run_id": run_id,
         "stage_id": IMMUNE_STAGE_ID,
         "stage_name": STAGE_BY_ID[IMMUNE_STAGE_ID].name,
-        "status": "needs_data" if result["requirements"] else "needs_human_input",
+        "status": (
+            "needs_data"
+            if result["requirements"]
+            else "needs_human_input" if due_actions else "complete"
+        ),
         "computational_audit_status": "pass",
         "mode": "exploratory",
         "ruleset_id": result["ruleset_id"],
@@ -120,6 +138,7 @@ def _immune_bundle(
         ),
         "missing_requirement_count": len(result["requirements"]),
         "open_human_actions": len(open_actions),
+        "due_human_actions": len(due_actions),
     }
     input_audit = {
         "stage_id": IMMUNE_STAGE_ID,
@@ -181,8 +200,8 @@ def _immune_bundle(
         "from_stage": IMMUNE_STAGE_ID,
         "to_stage": "integrated_ranking",
         "readiness": "needs_data" if result["requirements"] else "exploratory_ready",
-        "formal_readiness": "needs_human_input",
-        "blocking_action_ids": [action["action_id"] for action in open_actions],
+        "formal_readiness": "needs_human_input" if due_actions else "ready",
+        "blocking_action_ids": [action["action_id"] for action in due_actions],
         "carried_human_actions": open_actions,
         "carried_forward": {
             "candidate_ids": [item["candidate_id"] for item in result["candidates"]],
@@ -212,6 +231,20 @@ def _developability_bundle(
         required_before_stage="protein_product_design",
     )
     open_actions = [action for action in actions if action["status"] == "open"]
+    target_stages = (
+        "protein_product_design",
+        "mrna_product_design",
+        "integrated_ranking",
+    )
+    due_actions = [
+        action
+        for action in open_actions
+        if action_due_for_handoff(
+            action["required_before_stage"],
+            current_stage=DEVELOPABILITY_STAGE_ID,
+            to_stages=target_stages,
+        )
+    ]
     review_count = sum(
         item["review_liability_count"] for item in result["candidates"]
     )
@@ -220,7 +253,11 @@ def _developability_bundle(
         "run_id": run_id,
         "stage_id": DEVELOPABILITY_STAGE_ID,
         "stage_name": STAGE_BY_ID[DEVELOPABILITY_STAGE_ID].name,
-        "status": "needs_data" if result["requirements"] else "needs_human_input",
+        "status": (
+            "needs_data"
+            if result["requirements"]
+            else "needs_human_input" if due_actions else "complete"
+        ),
         "computational_audit_status": "pass",
         "mode": "exploratory",
         "ruleset_id": result["ruleset_id"],
@@ -231,6 +268,7 @@ def _developability_bundle(
         ),
         "missing_requirement_count": len(result["requirements"]),
         "open_human_actions": len(open_actions),
+        "due_human_actions": len(due_actions),
     }
     relevant_adapter_names = {
         f"adapter:{adapter_id}" for adapter_id in result["adapter_states"]
@@ -290,10 +328,10 @@ def _developability_bundle(
         "schema_version": 1,
         "run_id": run_id,
         "from_stage": DEVELOPABILITY_STAGE_ID,
-        "to_stages": ["protein_product_design", "mrna_product_design", "integrated_ranking"],
+        "to_stages": list(target_stages),
         "readiness": "intrinsic_evidence_ready",
-        "formal_readiness": "needs_human_input",
-        "blocking_action_ids": [action["action_id"] for action in open_actions],
+        "formal_readiness": "needs_human_input" if due_actions else "ready",
+        "blocking_action_ids": [action["action_id"] for action in due_actions],
         "carried_human_actions": open_actions,
         "carried_forward": {
             "candidate_ids": [item["candidate_id"] for item in result["candidates"]],

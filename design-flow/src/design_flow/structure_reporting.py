@@ -18,7 +18,12 @@ from .structure_assessment import STRUCTURE_STAGE_ID, StructureAssessmentAnalysi
 from .structure_html_report import render_structure_report
 from .structure_metrics import RULESET_ID
 from .verification import ARTIFACT_INDEX_FILENAME, build_artifact_index, sha256_file, verify_run
-from .workflow import STAGE_BY_ID, workflow_contract, workflow_contract_sha256
+from .workflow import (
+    STAGE_BY_ID,
+    action_due_for_handoff,
+    workflow_contract,
+    workflow_contract_sha256,
+)
 
 
 CANDIDATE_STAGE_ID = "candidate_specification"
@@ -186,6 +191,15 @@ def build_structure_node_bundle(
         item["raw_result_path"] = f"model_results/records/{candidate_id}/result.json"
     actions = _human_actions(analysis)
     open_actions = [action for action in actions if action["status"] == "open"]
+    due_actions = [
+        action
+        for action in open_actions
+        if action_due_for_handoff(
+            action["required_before_stage"],
+            current_stage=STRUCTURE_STAGE_ID,
+            to_stages=NEXT_STAGES,
+        )
+    ]
     band_counts = {
         band: sum(item["confidence_band"] == band for item in assessments)
         for band in ("higher_confidence", "mixed_confidence", "low_confidence")
@@ -195,7 +209,7 @@ def build_structure_node_bundle(
         "run_id": run_id,
         "stage_id": STRUCTURE_STAGE_ID,
         "stage_name": STAGE_BY_ID[STRUCTURE_STAGE_ID].name,
-        "status": "needs_human_input" if open_actions else "complete",
+        "status": "needs_human_input" if due_actions else "complete",
         "computational_audit_status": "pass",
         "mode": "exploratory",
         "ruleset_id": RULESET_ID,
@@ -205,6 +219,7 @@ def build_structure_node_bundle(
         "low_confidence_count": band_counts["low_confidence"],
         "review_flag_count": sum(len(item["review_flags"]) for item in assessments),
         "open_human_actions": len(open_actions),
+        "due_human_actions": len(due_actions),
         "next_stages": list(NEXT_STAGES),
     }
     input_audit = {
@@ -321,8 +336,8 @@ def build_structure_node_bundle(
         "from_stage": STRUCTURE_STAGE_ID,
         "to_stages": list(NEXT_STAGES),
         "readiness": "exploratory_ready",
-        "formal_readiness": "needs_human_input" if open_actions else "ready",
-        "blocking_action_ids": [action["action_id"] for action in open_actions],
+        "formal_readiness": "needs_human_input" if due_actions else "ready",
+        "blocking_action_ids": [action["action_id"] for action in due_actions],
         "carried_human_actions": open_actions,
         "carried_forward": {
             "project_id": analysis.config.project_id,

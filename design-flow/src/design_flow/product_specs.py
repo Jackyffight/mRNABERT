@@ -145,6 +145,16 @@ def default_mrna_product_specification(
             "cell_context": "unspecified",
             "delivery_platform": "unspecified",
         },
+        "manufacturing_context": {
+            "status": (
+                "declared"
+                if config.mrna_manufacturing_method
+                and config.mrna_manufacturing_method.lower() != "unspecified"
+                else "pending"
+            ),
+            "method": config.mrna_manufacturing_method or "unspecified",
+        },
+        "provided_coding_sequences": [],
         "codon_usage_table_path": None,
         "generation": {
             "status": "disabled",

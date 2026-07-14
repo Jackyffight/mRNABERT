@@ -29,6 +29,9 @@ class ProjectConfig:
     product_modalities: tuple[str, ...]
     protein_expression_host: str
     mrna_target_species: str
+    project_mode: str | None
+    scientific_release_allowed: bool | None
+    mrna_manufacturing_method: str | None
     human_actions: tuple[HumanAction, ...]
     config_path: Path
 

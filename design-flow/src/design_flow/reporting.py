@@ -336,6 +336,27 @@ def write_run_artifacts(
             "product_modalities": list(analysis.config.product_modalities),
             "protein_expression_host": analysis.config.protein_expression_host,
             "mrna_target_species": analysis.config.mrna_target_species,
+            **(
+                {"project_mode": analysis.config.project_mode}
+                if analysis.config.project_mode is not None
+                else {}
+            ),
+            **(
+                {
+                    "scientific_release_allowed":
+                        analysis.config.scientific_release_allowed
+                }
+                if analysis.config.scientific_release_allowed is not None
+                else {}
+            ),
+            **(
+                {
+                    "mrna_manufacturing_method":
+                        analysis.config.mrna_manufacturing_method
+                }
+                if analysis.config.mrna_manufacturing_method is not None
+                else {}
+            ),
         },
         "inputs": bundle["input_audit"]["inputs"],
         "nodes": {

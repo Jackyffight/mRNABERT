@@ -81,6 +81,10 @@ def _rewrite_mrna_paths(
         rewritten["codon_usage_table_path"] = str(
             _snapshot_path(node, inputs["mrna_codon_usage"])
         )
+    for declaration in rewritten.get("provided_coding_sequences", []):
+        key = f"mrna_control:{declaration.get('control_id')}"
+        if key in inputs:
+            declaration["sequence_path"] = str(_snapshot_path(node, inputs[key]))
     for adapter_id, declaration in rewritten["external_adapters"].items():
         key = f"mrna_adapter:{adapter_id}"
         if key in inputs:

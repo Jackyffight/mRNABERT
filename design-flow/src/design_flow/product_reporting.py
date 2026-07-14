@@ -19,7 +19,12 @@ from .product_design import ProductDesignAnalysis
 from .product_html import render_mrna_product_report, render_protein_product_report
 from .product_specs import MRNA_PRODUCT_STAGE_ID, PROTEIN_PRODUCT_STAGE_ID
 from .verification import ARTIFACT_INDEX_FILENAME, build_artifact_index, sha256_file, verify_run
-from .workflow import STAGE_BY_ID, workflow_contract, workflow_contract_sha256
+from .workflow import (
+    STAGE_BY_ID,
+    action_due_for_handoff,
+    workflow_contract,
+    workflow_contract_sha256,
+)
 
 
 def _atomic_write(path: Path, content: str) -> None:
@@ -104,19 +109,33 @@ def _bundle(
         required_before_stage="integrated_ranking",
     )
     open_actions = [action for action in actions if action["status"] == "open"]
+    due_actions = [
+        action
+        for action in open_actions
+        if action_due_for_handoff(
+            action["required_before_stage"],
+            current_stage=stage_id,
+            to_stages=("integrated_ranking",),
+        )
+    ]
     item_name = "products" if stage_id == PROTEIN_PRODUCT_STAGE_ID else "designs"
     summary = {
         "schema_version": 1,
         "run_id": run_id,
         "stage_id": stage_id,
         "stage_name": STAGE_BY_ID[stage_id].name,
-        "status": "needs_data" if result["requirements"] else "needs_human_input",
+        "status": (
+            "needs_data"
+            if result["requirements"]
+            else "needs_human_input" if due_actions else "complete"
+        ),
         "computational_audit_status": "pass",
         "mode": "exploratory",
         "ruleset_id": result["ruleset_id"],
         "design_count": len(result[item_name]),
         "missing_requirement_count": len(result["requirements"]),
         "open_human_actions": len(open_actions),
+        "due_human_actions": len(due_actions),
     }
     relevant_prefix = "protein_" if stage_id == PROTEIN_PRODUCT_STAGE_ID else "mrna_"
     specification_name = f"{relevant_prefix}specification"
@@ -155,6 +174,7 @@ def _bundle(
                 else [
                     "bind_antigen_candidate_hashes",
                     "retain_source_cds_controls",
+                    "import_declared_coding_controls_with_exact_translation_audit",
                     "generate_seeded_synonymous_trials_when_enabled",
                     "apply_hard_sequence_constraints",
                     "select_deterministic_pareto_designs",
@@ -184,8 +204,8 @@ def _bundle(
             "from_stage": stage_id,
             "to_stage": "integrated_ranking",
             "readiness": "needs_data" if result["requirements"] else "exploratory_ready",
-            "formal_readiness": "needs_human_input",
-            "blocking_action_ids": [action["action_id"] for action in open_actions],
+            "formal_readiness": "needs_human_input" if due_actions else "ready",
+            "blocking_action_ids": [action["action_id"] for action in due_actions],
             "carried_human_actions": open_actions,
             "carried_forward": {"result_sha256": None},
             "limitations": result["limitations"],

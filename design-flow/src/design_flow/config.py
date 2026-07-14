@@ -143,6 +143,25 @@ def load_project_config(path: Path) -> ProjectConfig:
     ):
         raise ValueError("context.product_modalities must be an array of non-empty strings")
 
+    project_mode = context.get("project_mode")
+    if project_mode is not None and (
+        not isinstance(project_mode, str) or not project_mode.strip()
+    ):
+        raise ValueError("context.project_mode must be a non-empty string when provided")
+    scientific_release_allowed = context.get("scientific_release_allowed")
+    if scientific_release_allowed is not None and not isinstance(
+        scientific_release_allowed, bool
+    ):
+        raise ValueError("context.scientific_release_allowed must be a boolean")
+    mrna_manufacturing_method = context.get("mrna_manufacturing_method")
+    if mrna_manufacturing_method is not None and (
+        not isinstance(mrna_manufacturing_method, str)
+        or not mrna_manufacturing_method.strip()
+    ):
+        raise ValueError(
+            "context.mrna_manufacturing_method must be a non-empty string when provided"
+        )
+
     return ProjectConfig(
         schema_version=schema_version,
         project_id=project_id,
@@ -157,6 +176,13 @@ def load_project_config(path: Path) -> ProjectConfig:
         product_modalities=tuple(modality.strip() for modality in modalities_value),
         protein_expression_host=str(context.get("protein_expression_host", "unspecified")),
         mrna_target_species=str(context.get("mrna_target_species", "unspecified")),
+        project_mode=project_mode.strip() if isinstance(project_mode, str) else None,
+        scientific_release_allowed=scientific_release_allowed,
+        mrna_manufacturing_method=(
+            mrna_manufacturing_method.strip()
+            if isinstance(mrna_manufacturing_method, str)
+            else None
+        ),
         human_actions=_human_actions(data.get("human_actions")),
         config_path=path,
     )

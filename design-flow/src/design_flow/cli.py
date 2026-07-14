@@ -232,6 +232,9 @@ def _init_project(
             "product_modalities": [],
             "protein_expression_host": "unspecified",
             "mrna_target_species": "unspecified",
+            "project_mode": "unspecified",
+            "scientific_release_allowed": False,
+            "mrna_manufacturing_method": "unspecified",
         },
     }
     config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")

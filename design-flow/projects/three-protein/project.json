@@ -18,8 +18,11 @@
       "recombinant_protein",
       "mrna"
     ],
-    "protein_expression_host": "unspecified",
-    "mrna_target_species": "cattle (Bos taurus)"
+    "protein_expression_host": "CHO cells",
+    "mrna_target_species": "cattle (Bos taurus)",
+    "project_mode": "mock_workflow_validation",
+    "scientific_release_allowed": false,
+    "mrna_manufacturing_method": "in_vitro_transcription"
   },
   "human_actions": [
     {
@@ -27,32 +30,38 @@
       "question": "Provide the accession, source version, isolate or strain, and owner for each A33, B5, and L1 source sequence.",
       "question_zh": "补充 A33、B5 和 L1 各自的数据库登录号、来源版本、分离株或毒株以及数据负责人。",
       "required_before_stage": "candidate_specification",
-      "status": "open",
-      "owner": "unassigned"
+      "status": "waived",
+      "owner": "project_owner",
+      "resolution": "This is a mock workflow-validation project. The supplied sequences were adapted from public literature, but exact accession, isolate, and custody claims are intentionally out of scope. Sequence hashes remain authoritative only for local identity.",
+      "resolution_zh": "本项目用于 Mock 工作流验证。输入序列来自公开文献的模拟整理，但不主张具体登录号、分离株或真实保管链；本地身份仅以序列哈希为准。"
     },
     {
       "action_id": "confirm-reference-controls",
-      "question": "Confirm that the supplied full-length A33, B5, and L1 proteins with original CDS are the immutable reference controls.",
-      "question_zh": "确认当前全长 A33、B5、L1 蛋白及其原始 CDS 是后续不可静默修改的参照对照。",
+      "question": "Classify the immutable full-length source controls separately from literature-inspired provisional reference constructs.",
+      "question_zh": "区分不可变的全长来源对照与参考公开论文思路的暂定参考构建体。",
       "required_before_stage": "candidate_specification",
-      "status": "open",
-      "owner": "unassigned"
+      "status": "resolved",
+      "owner": "project_owner",
+      "resolution": "The full-length A33, B5, and L1 pairs remain immutable source controls. The supplied literature-inspired extracellular truncations are separate provisional mock reference constructs and must not be mislabeled as full-length source controls.",
+      "resolution_zh": "全长 A33、B5、L1 蛋白及原始 CDS 保留为不可变来源对照。来自公开论文思路的胞外截短构建体属于独立的暂定 Mock 参考构建体，不得与全长来源对照混淆。"
     },
     {
       "action_id": "resolve-b5-optimized-cds",
       "question": "Replace or formally reject the supplied B5 optimized CDS, which currently translates exactly to the supplied A33 protein.",
       "question_zh": "替换或正式弃用当前 B5 密码子优化 CDS；该文件实际翻译结果与 A33 全长蛋白完全一致。",
       "required_before_stage": "mrna_product_design",
-      "status": "open",
-      "owner": "unassigned"
+      "status": "resolved",
+      "owner": "project_owner",
+      "resolution": "The mislabeled file was replaced by input/reference-controls/b5_full_length_company_optimized_mock.fasta (SHA-256 b914cca16948af42730717920951a3df563ac9ec3b9a5f141a8fdebc6af438c7). Deterministic audit confirms a 678-nt CDS with terminal stop that translates exactly to the 225-aa B5 source protein. It remains a user-declared mock company-optimized control, not experimental evidence.",
+      "resolution_zh": "误标文件已替换为 input/reference-controls/b5_full_length_company_optimized_mock.fasta（SHA-256 b914cca16948af42730717920951a3df563ac9ec3b9a5f141a8fdebc6af438c7）。确定性审计确认其为 678 nt、带终止密码子的 CDS，并与 225 aa 的 B5 来源蛋白完全一致。该文件仍是用户声明的 Mock 公司优化对照，不是实验数据。"
     },
     {
       "action_id": "confirm-manual-construct-annotations",
       "question": "Confirm truncation boundaries, initiator methionines, FLAG tag, linker identities, and domain order for the supplied manual constructs.",
       "question_zh": "确认手工构建体的截短边界、起始甲硫氨酸、FLAG 标签、连接肽身份和结构域顺序。",
-      "required_before_stage": "candidate_specification",
+      "required_before_stage": "experiment_release",
       "status": "open",
-      "owner": "unassigned"
+      "owner": "project_owner"
     },
     {
       "action_id": "define-target-indication",
