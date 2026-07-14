@@ -984,6 +984,16 @@ class CandidateStageEndToEndTests(unittest.TestCase):
                     / "nodes/protein_structure_assessment/report.html"
                 ).is_file()
             )
+            report_html = (
+                structure_run
+                / "nodes/protein_structure_assessment/report.html"
+            ).read_text(encoding="utf-8")
+            self.assertIn("6/6 checksum-bound candidates", report_html)
+            self.assertIn("not a calibrated probability or release gate", report_html)
+            self.assertIn("Combined band /", report_html)
+            self.assertIn("Release state /", report_html)
+            self.assertIn("Due now /", report_html)
+            self.assertIn("fixture exploratory result", report_html)
 
     def test_stage3_verifier_recomputes_metrics_after_reindex(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:

@@ -16,9 +16,9 @@ def _number(value: Any, digits: int = 2) -> str:
 
 def _band_label(value: str) -> str:
     return {
-        "higher_confidence": "Higher confidence / 较高置信",
-        "mixed_confidence": "Mixed confidence / 混合置信",
-        "low_confidence": "Low confidence / 低置信",
+        "higher_confidence": "Higher combined confidence / 较高综合置信",
+        "mixed_confidence": "Mixed combined confidence / 混合综合置信",
+        "low_confidence": "Lower combined confidence / 较低综合置信",
     }.get(value, value)
 
 
@@ -29,6 +29,7 @@ def render_structure_report(
     created_at: str,
 ) -> str:
     summary = bundle["summary"]
+    succeeded_count = analysis.result_summary["records"]["succeeded"]
     rows = []
     details = []
     for assessment in analysis.assessments:
@@ -39,8 +40,9 @@ def render_structure_report(
             f"<span>{escape(assessment['candidate_id'])}</span></td>"
             f"<td>{assessment['length']}</td>"
             f"<td>{_number(assessment['mean_plddt'])}</td>"
-            f"<td>{_number(assessment['ptm'], 3)}</td>"
+            f"<td>{_number(assessment['ptm'], 4)}</td>"
             f"<td>{escape(_band_label(assessment['confidence_band']))}</td>"
+            f"<td>{escape(assessment['release_status'])}</td>"
             f"<td>{len(flags)}</td>"
             "</tr>"
         )
@@ -72,7 +74,7 @@ def render_structure_report(
             "<details>"
             f"<summary>{escape(assessment['candidate_key'])} · "
             f"pLDDT {_number(assessment['mean_plddt'])} · "
-            f"pTM {_number(assessment['ptm'], 3)}</summary>"
+            f"pTM {_number(assessment['ptm'], 4)}</summary>"
             "<div class='detail-grid'>"
             "<section><h4>Geometry / 几何</h4>"
             f"<p>Radius of gyration / 回转半径: <b>{_number(geometry['radius_of_gyration_angstrom'])} A</b></p>"
@@ -92,13 +94,29 @@ def render_structure_report(
             f"<ul>{comparison_rows}</ul>"
             "</details>"
         )
+    blocking_action_ids = set(bundle["handoff"]["blocking_action_ids"])
     actions = "".join(
         "<tr>"
         f"<td><code>{escape(action['action_id'])}</code></td>"
         f"<td>{escape(action['question'])}<span>{escape(action['question_zh'])}</span></td>"
         f"<td>{escape(action['status'])}</td>"
+        f"<td>{'yes / 是' if action['action_id'] in blocking_action_ids else 'no / 否'}</td>"
         "</tr>"
         for action in bundle["human_actions"]["actions"]
+    )
+    lower_confidence = [
+        assessment["candidate_key"]
+        for assessment in analysis.assessments
+        if assessment["confidence_band"] == "low_confidence"
+    ]
+    quarantined = [
+        assessment["candidate_key"]
+        for assessment in analysis.assessments
+        if assessment["release_status"] == "quarantined"
+    ]
+    limitations = "".join(
+        f"<li>{escape(str(item))}</li>"
+        for item in analysis.result_run_manifest.get("limitations", [])
     )
     return f"""<!doctype html>
 <html lang="zh-CN">
@@ -146,17 +164,20 @@ footer {{ color:var(--muted); font-size:12px; margin-top:32px; }}
 <main>
 <section class="summary">
 <div class="metric"><b>{summary['candidate_count']}</b><span>Assessed / 已评估</span></div>
-<div class="metric"><b>{summary['higher_confidence_count']}</b><span>Higher confidence / 较高置信</span></div>
-<div class="metric"><b>{summary['mixed_confidence_count']}</b><span>Mixed confidence / 混合置信</span></div>
-<div class="metric"><b>{summary['low_confidence_count']}</b><span>Low confidence / 低置信</span></div>
+<div class="metric"><b>{summary['higher_confidence_count']}</b><span>Higher combined / 较高综合置信</span></div>
+<div class="metric"><b>{summary['mixed_confidence_count']}</b><span>Mixed combined / 混合综合置信</span></div>
+<div class="metric"><b>{summary['low_confidence_count']}</b><span>Lower combined / 较低综合置信</span></div>
 </section>
-<div class="notice"><strong>Scope / 边界：</strong> These are single-sequence computational hypotheses. The rules create review flags only; they do not establish folding, immunogenicity, safety, or efficacy. / 这些是单序列计算假设；规则只产生复核标记，不证明折叠、免疫原性、安全性或有效性。</div>
+<div class="notice"><strong>Scope / 边界：</strong> These are single-sequence computational hypotheses. The combined band is a local review heuristic: higher requires mean pLDDT &gt;= 80 and pTM &gt;= 0.70; mixed requires mean pLDDT &gt;= 70 and pTM &gt;= 0.50; all others enter the lower review band. It is not a calibrated probability or release gate. / 这些是单序列计算假设。综合分层只是本地复核规则：较高层要求平均 pLDDT &gt;= 80 且 pTM &gt;= 0.70，混合层要求平均 pLDDT &gt;= 70 且 pTM &gt;= 0.50，其余进入较低复核层；它不是校准概率或放行门槛。</div>
+<h2>Current conclusions / 当前结论</h2>
+<div class="notice"><strong>Technical result / 技术结果：</strong> {succeeded_count}/{summary['candidate_count']} checksum-bound candidates were assessed and the computational audit passed. Lower combined review band: {escape(', '.join(lower_confidence) or 'none')}. Quarantined by upstream candidate status: {escape(', '.join(quarantined) or 'none')}. No candidate is approved, rejected, or experimentally released by Stage 3. / 本节点完成全部候选的校验绑定结构评估；较低综合复核层和上游隔离状态只决定后续复核优先级，不代表实验成败或放行。</div>
+<h3>Model limitations / 模型限制</h3><ul>{limitations}</ul>
 <h2>Batch result / 批次结果</h2>
-<div class="table-wrap"><table><thead><tr><th>Candidate / 候选</th><th>AA</th><th>pLDDT</th><th>pTM</th><th>Band / 分层</th><th>Flags / 标记</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>Candidate / 候选</th><th>AA</th><th>pLDDT</th><th>pTM</th><th>Combined band / 综合分层</th><th>Release state / 放行状态</th><th>Flags / 标记</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>
 <h2>Candidate details / 候选详情</h2>
 {''.join(details)}
 <h2>Human review / 人工复核</h2>
-<div class="table-wrap"><table><thead><tr><th>Action</th><th>Question / 问题</th><th>Status</th></tr></thead><tbody>{actions}</tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>Action</th><th>Question / 问题</th><th>Status</th><th>Due now / 当前到期</th></tr></thead><tbody>{actions}</tbody></table></div>
 <h2>Process provenance / 过程溯源</h2>
 <p>Model: ESMFold2-Fast <code>{escape(analysis.job_manifest['model']['structure_revision'])}</code></p>
 <p>ESMC-6B: <code>{escape(analysis.job_manifest['model']['language_model_revision'])}</code></p>
