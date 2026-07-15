@@ -50,6 +50,11 @@ The installer writes `toolchain.json` and a full `requirements.freeze.txt`. Veri
 /data00/home/wangzhi.wit/models/mRNABERT/design-flow/scripts/verify_stage5_sequence_models.sh
 ```
 
+The installer does not require root access or the Debian `python3.11-venv`
+package. If the system Python lacks `ensurepip`, it bootstraps pinned
+`virtualenv==20.39.1` inside the external tool directory and replaces any
+incomplete environment left by a failed standard-library `venv` attempt.
+
 When direct GitHub cloning is too slow, download either pinned source ZIP on a
 networked workstation and place it at the exact cache path below. The installer
 prefers a present ZIP over cloning, safely extracts it, records the archive SHA256

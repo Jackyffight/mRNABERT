@@ -7,6 +7,8 @@ DOWNLOAD_ROOT="${INSTALL_ROOT}/downloads"
 VENV_ROOT="${INSTALL_ROOT}/venv"
 MODEL_ROOT="${INSTALL_ROOT}/models/tmbed-prott5-xl-u50"
 PYTHON_BOOTSTRAP="/usr/bin/python3.11"
+VIRTUALENV_VERSION="20.39.1"
+VIRTUALENV_ROOT="${INSTALL_ROOT}/bootstrap/virtualenv-${VIRTUALENV_VERSION}"
 TMBED_REVISION="8cee893523eb655bc9485c00c65336d27a236191"
 METAPREDICT_REVISION="34ddeefba8285c57fb5307792ce5f6789f860bef"
 TMBED_SOURCE="${SOURCE_ROOT}/TMbed-${TMBED_REVISION}"
@@ -173,8 +175,49 @@ materialize_revision \
   "${METAPREDICT_SOURCE}" \
   "${METAPREDICT_ARCHIVE}"
 
-if [[ ! -x "${VENV_PYTHON}" ]]; then
-  "${PYTHON_BOOTSTRAP}" -m venv --system-site-packages "${VENV_ROOT}"
+venv_is_healthy() {
+  [[ -x "${VENV_PYTHON}" ]] \
+    && "${VENV_PYTHON}" -m pip --version >/dev/null 2>&1
+}
+
+install_virtualenv_bootstrap() {
+  local observed_version=""
+
+  if [[ -d "${VIRTUALENV_ROOT}" ]]; then
+    observed_version="$(
+      PYTHONPATH="${VIRTUALENV_ROOT}" \
+        "${PYTHON_BOOTSTRAP}" -c \
+          'import importlib.metadata; print(importlib.metadata.version("virtualenv"))' \
+          2>/dev/null || true
+    )"
+  fi
+  if [[ "${observed_version}" == "${VIRTUALENV_VERSION}" ]]; then
+    return
+  fi
+
+  rm -rf "${VIRTUALENV_ROOT}.partial"
+  "${PYTHON_BOOTSTRAP}" -m pip install \
+    --disable-pip-version-check \
+    --target "${VIRTUALENV_ROOT}.partial" \
+    "virtualenv==${VIRTUALENV_VERSION}"
+  rm -rf "${VIRTUALENV_ROOT}"
+  mv "${VIRTUALENV_ROOT}.partial" "${VIRTUALENV_ROOT}"
+}
+
+if ! venv_is_healthy; then
+  printf 'Creating isolated Stage 5 environment with virtualenv %s\n' \
+    "${VIRTUALENV_VERSION}"
+  install_virtualenv_bootstrap
+  rm -rf "${VENV_ROOT}.partial" "${VENV_ROOT}"
+  PYTHONPATH="${VIRTUALENV_ROOT}" \
+    "${PYTHON_BOOTSTRAP}" -m virtualenv \
+      --system-site-packages \
+      "${VENV_ROOT}.partial"
+  mv "${VENV_ROOT}.partial" "${VENV_ROOT}"
+fi
+if ! venv_is_healthy; then
+  printf 'Stage 5 virtual environment is incomplete: %s\n' "${VENV_ROOT}" >&2
+  exit 1
 fi
 
 "${VENV_PYTHON}" -m pip install --upgrade "pip>=24" "setuptools>=70" wheel
@@ -194,7 +237,8 @@ fi
   "${MODEL_ROOT}" \
   "${INSTALL_ROOT}/requirements.freeze.txt" \
   "${TMBED_REVISION}" \
-  "${METAPREDICT_REVISION}" <<'PY'
+  "${METAPREDICT_REVISION}" \
+  "${VIRTUALENV_VERSION}" <<'PY'
 import hashlib
 import json
 from pathlib import Path
@@ -209,6 +253,7 @@ import sys
     freeze_path,
     tmbed_revision,
     metapredict_revision,
+    virtualenv_version,
 ) = sys.argv[1:]
 document = {
     "schema_version": "vaxflow.stage5-sequence-toolchain.v1",
@@ -226,6 +271,7 @@ document = {
     "installation_profile": {
         "gpu_supported": True,
         "system_site_packages": True,
+        "environment_builder": f"virtualenv=={virtualenv_version}",
         "tmbed_encoder": "Rostlab/prot_t5_xl_half_uniref50-enc",
         "metapredict_model": "V3",
     },
