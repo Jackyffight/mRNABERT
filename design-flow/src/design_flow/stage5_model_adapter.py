@@ -125,6 +125,35 @@ def _git_revision(source_root: Path) -> str:
     return revision
 
 
+def _source_revision(source_root: Path) -> str:
+    if (source_root / ".git").is_dir():
+        return _git_revision(source_root)
+
+    provenance_path = source_root / ".source-provenance.json"
+    if not provenance_path.is_file():
+        raise ValueError(f"Unable to read source revision: {source_root}")
+    provenance = _load_json(provenance_path)
+    if provenance.get("schema_version") != "vaxflow.source-archive.v1":
+        raise ValueError(f"Unsupported source provenance: {provenance_path}")
+    revision = provenance.get("revision")
+    if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise ValueError(f"Invalid archive source revision: {provenance_path}")
+    files = provenance.get("files")
+    if not isinstance(files, dict) or not files:
+        raise ValueError(f"Archive source inventory is empty: {provenance_path}")
+
+    resolved_root = source_root.resolve()
+    for relative_path, expected_sha256 in files.items():
+        if not isinstance(relative_path, str) or not isinstance(expected_sha256, str):
+            raise ValueError(f"Invalid archive source inventory: {provenance_path}")
+        source_file = (resolved_root / relative_path).resolve()
+        if not source_file.is_relative_to(resolved_root) or not source_file.is_file():
+            raise ValueError(f"Archive source file is missing: {relative_path}")
+        if sha256_file(source_file) != expected_sha256:
+            raise ValueError(f"Archive source checksum mismatch: {relative_path}")
+    return revision
+
+
 def _directory_inventory(root: Path) -> tuple[str, dict[str, str]]:
     files = {
         path.relative_to(root).as_posix(): sha256_file(path)
@@ -179,9 +208,9 @@ def _load_toolchain(toolchain_root: Path) -> dict[str, Any]:
     for name in ("tmbed_source_root", "metapredict_source_root", "tmbed_model_dir"):
         if not paths[name].is_dir():
             raise ValueError(f"Stage 5 toolchain path is unavailable: {paths[name]}")
-    if _git_revision(paths["tmbed_source_root"]) != TMBED_REVISION:
+    if _source_revision(paths["tmbed_source_root"]) != TMBED_REVISION:
         raise ValueError("TMbed source checkout has the wrong revision")
-    if _git_revision(paths["metapredict_source_root"]) != METAPREDICT_REVISION:
+    if _source_revision(paths["metapredict_source_root"]) != METAPREDICT_REVISION:
         raise ValueError("metapredict source checkout has the wrong revision")
 
     probe = subprocess.run(

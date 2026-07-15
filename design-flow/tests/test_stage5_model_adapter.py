@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -9,6 +11,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from design_flow.stage5_model_adapter import (
+    _source_revision,
     build_disorder_observations,
     build_tmbed_observations,
     parse_tmbed_three_line,
@@ -24,6 +27,48 @@ def _candidate(sequence: str = "AAAAAAAAAAAAAAAA") -> dict[str, str]:
 
 
 class Stage5ModelAdapterTests(unittest.TestCase):
+    def test_accepts_checksum_verified_archive_source_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            source_file = root / "package.py"
+            source_file.write_text("VALUE = 1\n", encoding="utf-8")
+            revision = "a" * 40
+            (root / ".source-provenance.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "vaxflow.source-archive.v1",
+                        "revision": revision,
+                        "files": {
+                            "package.py": hashlib.sha256(
+                                source_file.read_bytes()
+                            ).hexdigest()
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(_source_revision(root), revision)
+
+    def test_rejects_modified_archive_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            source_file = root / "package.py"
+            source_file.write_text("VALUE = 1\n", encoding="utf-8")
+            (root / ".source-provenance.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "vaxflow.source-archive.v1",
+                        "revision": "a" * 40,
+                        "files": {"package.py": "0" * 64},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                _source_revision(root)
+
     def test_parses_tmbed_and_builds_two_distinct_evidence_types(self) -> None:
         labels = "SSS..HHH...bbb.."
         sequence = "A" * len(labels)
