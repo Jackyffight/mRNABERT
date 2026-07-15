@@ -50,6 +50,19 @@ The installer writes `toolchain.json` and a full `requirements.freeze.txt`. Veri
 /data00/home/wangzhi.wit/models/mRNABERT/design-flow/scripts/verify_stage5_sequence_models.sh
 ```
 
+When direct GitHub cloning is too slow, download either pinned source ZIP on a
+networked workstation and place it at the exact cache path below. The installer
+prefers a present ZIP over cloning, safely extracts it, records the archive SHA256
+and an extracted-file inventory, and verifies that inventory on later runs.
+
+```text
+https://github.com/BernhoferM/TMbed/archive/8cee893523eb655bc9485c00c65336d27a236191.zip
+/data00/home/wangzhi.wit/models/design-flow-tools/stage5/downloads/TMbed-8cee893523eb655bc9485c00c65336d27a236191.zip
+
+https://github.com/idptools/metapredict/archive/34ddeefba8285c57fb5307792ce5f6789f860bef.zip
+/data00/home/wangzhi.wit/models/design-flow-tools/stage5/downloads/metapredict-34ddeefba8285c57fb5307792ce5f6789f860bef.zip
+```
+
 Run all nine current candidates on the present CPU host, register the three evidence
 files, rerun the combined Stage 4/5 node, and verify the immutable run:
 

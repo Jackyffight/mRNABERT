@@ -15,27 +15,55 @@ for required_path in \
   "${INSTALL_ROOT}/requirements.freeze.txt" \
   "${VENV_PYTHON}" \
   "${MODEL_ROOT}/config.json" \
-  "${TMBED_SOURCE}/.git" \
-  "${METAPREDICT_SOURCE}/.git"; do
+  "${TMBED_SOURCE}" \
+  "${METAPREDICT_SOURCE}"; do
   if [[ ! -e "${required_path}" ]]; then
     printf 'Missing Stage 5 toolchain artifact: %s\n' "${required_path}" >&2
     exit 1
   fi
 done
 
-if [[ "$(git -C "${TMBED_SOURCE}" rev-parse HEAD)" != "${TMBED_REVISION}" ]]; then
-  printf 'TMbed source revision mismatch\n' >&2
-  exit 1
-fi
-if [[ "$(git -C "${METAPREDICT_SOURCE}" rev-parse HEAD)" != "${METAPREDICT_REVISION}" ]]; then
-  printf 'metapredict source revision mismatch\n' >&2
-  exit 1
-fi
-if ! git -C "${TMBED_SOURCE}" diff --quiet \
-  || ! git -C "${METAPREDICT_SOURCE}" diff --quiet; then
-  printf 'Stage 5 source checkout contains tracked modifications\n' >&2
-  exit 1
-fi
+verify_source() {
+  local source_root="$1"
+  local expected_revision="$2"
+
+  if [[ -d "${source_root}/.git" ]]; then
+    if [[ "$(git -C "${source_root}" rev-parse HEAD)" != "${expected_revision}" ]]; then
+      printf 'Source revision mismatch: %s\n' "${source_root}" >&2
+      exit 1
+    fi
+    if ! git -C "${source_root}" diff --quiet; then
+      printf 'Source checkout contains tracked modifications: %s\n' "${source_root}" >&2
+      exit 1
+    fi
+    return
+  fi
+
+  "${VENV_PYTHON}" - "${source_root}" "${expected_revision}" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+expected_revision = sys.argv[2]
+provenance_path = root / ".source-provenance.json"
+if not provenance_path.is_file():
+    raise SystemExit(f"Missing source provenance: {provenance_path}")
+provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+if provenance.get("revision") != expected_revision:
+    raise SystemExit(f"Source revision mismatch: {root}")
+for relative_path, expected_sha256 in provenance.get("files", {}).items():
+    source_file = root / relative_path
+    if not source_file.is_file():
+        raise SystemExit(f"Source file is missing: {source_file}")
+    if hashlib.sha256(source_file.read_bytes()).hexdigest() != expected_sha256:
+        raise SystemExit(f"Source file checksum mismatch: {source_file}")
+PY
+}
+
+verify_source "${TMBED_SOURCE}" "${TMBED_REVISION}"
+verify_source "${METAPREDICT_SOURCE}" "${METAPREDICT_REVISION}"
 
 "${VENV_PYTHON}" - <<'PY'
 import importlib.metadata
