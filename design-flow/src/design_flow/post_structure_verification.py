@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from .design_loop import validate_redesign_request_document
-from .assessment_specs import DEVELOPABILITY_STAGE_ID, IMMUNE_STAGE_ID
+from .assessment_specs import (
+    DEVELOPABILITY_STAGE_ID,
+    IMMUNE_STAGE_ID,
+    load_structure_candidate_scope,
+)
 from .config import load_project_config
 from .continuation_state import (
     merge_requirement_actions,
@@ -260,8 +264,8 @@ def verify_post_structure_run(
     try:
         if config is None:
             raise ValueError("Current continuation project configuration is invalid")
-        candidate_batch_path = root / "nodes/candidate_specification/candidate_batch.json"
-        candidate_batch = _load(candidate_batch_path)
+        candidate_scope = load_structure_candidate_scope(root)
+        candidate_batch = candidate_scope["candidate_batch"]
         structure_document = _load(
             root / "nodes/protein_structure_assessment/structure_assessments.json"
         )
@@ -294,7 +298,8 @@ def verify_post_structure_run(
             developability_node,
         )
         recompute_inputs: dict[str, Path] = {}
-        candidate_batch_sha = sha256_file(candidate_batch_path)
+        candidate_batch_sha = candidate_scope["candidate_batch_sha256"]
+        candidate_set_sha = candidate_scope["candidate_set_sha256"]
         immune_recomputed = _immune_analysis(
             config,
             immune_spec,
@@ -303,6 +308,8 @@ def verify_post_structure_run(
             structures,
             recompute_inputs,
             candidate_batch_sha,
+            candidate_set_sha,
+            candidate_scope["is_subset"],
         )
         developability_recomputed = _developability_analysis(
             config,
@@ -311,6 +318,8 @@ def verify_post_structure_run(
             structure_by_id,
             recompute_inputs,
             candidate_batch_sha,
+            candidate_set_sha,
+            candidate_scope["is_subset"],
         )
         semantic_loaded = True
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):

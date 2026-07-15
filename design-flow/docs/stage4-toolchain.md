@@ -50,7 +50,7 @@ Tools are selected only when they satisfy all four constraints:
 | Tool | Pinned version | Stage 4 responsibility | Why selected | Why an existing model is insufficient |
 |---|---|---|---|---|
 | NCBI Datasets and Dataformat | Datasets 18.33.1, checksum-pinned Dataformat companion | Download versioned LSDV genomes, proteins, CDS, and metadata | Authoritative accession-oriented acquisition with machine-readable metadata | Evo 2 can represent a supplied sequence but cannot define or retrieve the authoritative isolate panel |
-| NCBI BLAST+ | 2.17.0+ | Map A33/B5/L1 source controls to downloaded proteins and search candidates against the cattle proteome | Mature CPU search, transparent tabular output, sufficient for three sources and nine candidates | Embedding similarity is not an auditable replacement for explicit local sequence alignments and coverage |
+| NCBI BLAST+ | 2.17.0+ | Map A33/B5/L1 source controls to downloaded proteins and search candidates against the cattle proteome | Mature CPU search, transparent tabular output, sufficient for three sources and the active candidate set | Embedding similarity is not an auditable replacement for explicit local sequence alignments and coverage |
 | MAFFT | 7.525, official source package | Produce one gapped amino-acid alignment for each source protein family | Stable CPU MSA, no root dependency, appropriate for a small viral sequence panel | ESMFold2 predicts one structure and does not estimate isolate-level sequence conservation |
 | IPD-MHC BoLA data | snapshot to be pinned when downloaded | Define valid cattle class I and class II allele sequences and names | Maintained source for BoLA nomenclature and polymorphism | None of the deployed models defines the target cattle population or allele panel |
 | NetMHCpan | 4.2e, ready in place | Predict peptide binding to BoLA class I | DTU pan-allelic predictor explicitly covering cattle BoLA, with deterministic CPU batch output | Evo 2 scores general sequence context; it is not trained or calibrated as a BoLA-I binding predictor |
@@ -64,7 +64,7 @@ future evidence sources; they are not required to validate the Stage 4 control f
 ## Hardware Boundary
 
 All selected core tools run on CPU. They do not require CUDA or reserve an A100.
-The alignment and search workload for the current nine candidates should run on the
+The alignment and search workload for the active Stage 3 candidate set runs on the
 same CPU host as `design-flow`. ESMFold2 remains the GPU structure stage, while Evo 2
 and mRNABERT remain separate representation and mRNA-model components.
 
@@ -97,8 +97,13 @@ The adapter runs one allele per raw table, validates peptide coordinates against
 immutable candidate sequence, retains both supported and unsupported observations,
 and uses the predictors' default EL-rank thresholds: class I 0.5/2.0 percent and
 class II 1.0/5.0 percent for strong/weak binders. The generated manifest pins the
-candidate batch, executable hashes, predictor-model hashes, parameters, and every
-raw/output artifact hash.
+full candidate batch, active Stage 3 candidate set, executable hashes,
+predictor-model hashes, parameters, and every raw/output artifact hash.
+
+The first complete active-set run evaluated 384 candidates and emitted 881,853 raw
+peptide-allele observations. These remain in the adapter artifact; the workflow node
+stores only checksum-bound candidate-level aggregates, avoiding a second copy of the
+large observation array while preserving semantic recomputation.
 
 The legacy predictor binaries receive only short paths relative to the adapter work
 directory, while their scratch directory is `/tmp`. This is required because
@@ -109,7 +114,8 @@ project runtime; only predictor scratch files use `/tmp`.
 Run the current technical smoke path with:
 
 ```bash
-/data00/home/wangzhi.wit/models/mRNABERT/design-flow/scripts/run_stage4_mhc_smoke.sh
+/data00/home/wangzhi.wit/models/mRNABERT/design-flow/scripts/run_stage4_mhc_smoke.sh \
+  /absolute/path/to/verified-stage3-run
 ```
 
 This deliberately uses one available allele from each predictor,

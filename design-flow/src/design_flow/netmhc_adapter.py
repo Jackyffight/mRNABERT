@@ -19,6 +19,7 @@ from .assessment_specs import (
     _atomic_json,
     _resolve_structure_run,
     initialize_assessment_specifications,
+    load_structure_candidate_scope,
     load_residue_evidence,
 )
 from .config import ProjectConfig, load_project_config
@@ -378,6 +379,7 @@ def _identity_payload(
     *,
     project_id: str,
     candidate_batch_sha256: str,
+    candidate_set_sha256: str,
     netmhcpan: ToolIdentity,
     netmhciipan: ToolIdentity,
     class_i_alleles: tuple[str, ...],
@@ -387,6 +389,7 @@ def _identity_payload(
         "schema_version": ADAPTER_SCHEMA,
         "project_id": project_id,
         "candidate_batch_sha256": candidate_batch_sha256,
+        "candidate_set_sha256": candidate_set_sha256,
         "tools": {
             "netmhcpan": asdict(netmhcpan),
             "netmhciipan": asdict(netmhciipan),
@@ -504,13 +507,15 @@ def prepare_stage4_mhc_evidence(
         expected_version=NETMHCIIPAN_VERSION,
         binary_relative=NETMHCIIPAN_BINARY,
     )
-    candidate_batch_path = source / "nodes/candidate_specification/candidate_batch.json"
-    candidate_batch = _load_json(candidate_batch_path)
-    candidate_batch_sha256 = sha256_file(candidate_batch_path)
+    candidate_scope = load_structure_candidate_scope(source)
+    candidate_batch = candidate_scope["candidate_batch"]
+    candidate_batch_sha256 = candidate_scope["candidate_batch_sha256"]
+    candidate_set_sha256 = candidate_scope["candidate_set_sha256"]
     fasta_text, record_map = _candidate_records(candidate_batch)
     identity_payload = _identity_payload(
         project_id=config.project_id,
         candidate_batch_sha256=candidate_batch_sha256,
+        candidate_set_sha256=candidate_set_sha256,
         netmhcpan=netmhcpan,
         netmhciipan=netmhciipan,
         class_i_alleles=class_i,
@@ -608,6 +613,7 @@ def prepare_stage4_mhc_evidence(
                 "schema_version": EVIDENCE_SCHEMA,
                 "adapter_id": "mhc_binding",
                 "candidate_batch_sha256": candidate_batch_sha256,
+                "candidate_set_sha256": candidate_set_sha256,
                 "tool": {
                     "name": "NetMHCpan+NetMHCIIpan",
                     "version": f"{NETMHCPAN_VERSION}+{NETMHCIIPAN_VERSION}",
@@ -710,6 +716,8 @@ def prepare_stage4_mhc_evidence(
         adapter_id="mhc_binding",
         candidate_by_id=candidate_by_id,
         candidate_batch_sha256=candidate_batch_sha256,
+        candidate_set_sha256=candidate_set_sha256,
+        require_candidate_set_identity=candidate_scope["is_subset"],
     )
     specification_path = _update_immune_specification(
         config,

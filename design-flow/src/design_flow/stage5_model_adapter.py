@@ -18,6 +18,7 @@ from .assessment_specs import (
     _atomic_json,
     _resolve_structure_run,
     initialize_assessment_specifications,
+    load_structure_candidate_scope,
     load_residue_evidence,
 )
 from .config import ProjectConfig, load_project_config
@@ -438,6 +439,7 @@ def _evidence_document(
     *,
     adapter_id: str,
     candidate_batch_sha256: str,
+    candidate_set_sha256: str,
     tool: dict[str, str],
     policy: dict[str, Any],
     observations: list[dict[str, Any]],
@@ -446,6 +448,7 @@ def _evidence_document(
         "schema_version": EVIDENCE_SCHEMA,
         "adapter_id": adapter_id,
         "candidate_batch_sha256": candidate_batch_sha256,
+        "candidate_set_sha256": candidate_set_sha256,
         "tool": tool,
         "classification_policy": policy,
         "observations": observations,
@@ -546,9 +549,10 @@ def prepare_stage5_sequence_evidence(
     if use_gpu and not toolchain["environment"].get("cuda_available"):
         raise ValueError("Stage 5 toolchain cannot see a CUDA device")
 
-    candidate_batch_path = source / "nodes/candidate_specification/candidate_batch.json"
-    candidate_batch = _load_json(candidate_batch_path)
-    candidate_batch_sha256 = sha256_file(candidate_batch_path)
+    candidate_scope = load_structure_candidate_scope(source)
+    candidate_batch = candidate_scope["candidate_batch"]
+    candidate_batch_sha256 = candidate_scope["candidate_batch_sha256"]
+    candidate_set_sha256 = candidate_scope["candidate_set_sha256"]
     fasta_text, record_map = _candidate_records(candidate_batch)
     worker_path = Path(__file__).resolve().parents[2] / "scripts/stage5_metapredict_worker.py"
     if not worker_path.is_file():
@@ -557,6 +561,7 @@ def prepare_stage5_sequence_evidence(
         "schema_version": ADAPTER_SCHEMA,
         "project_id": config.project_id,
         "candidate_batch_sha256": candidate_batch_sha256,
+        "candidate_set_sha256": candidate_set_sha256,
         "adapter_sha256": sha256_file(Path(__file__).resolve()),
         "toolchain_manifest_sha256": toolchain["manifest_sha256"],
         "tmbed_revision": TMBED_REVISION,
@@ -683,6 +688,7 @@ def prepare_stage5_sequence_evidence(
                 "signal_peptide": _evidence_document(
                     adapter_id="signal_peptide",
                     candidate_batch_sha256=candidate_batch_sha256,
+                    candidate_set_sha256=candidate_set_sha256,
                     tool=tmbed_tool,
                     policy={
                         "source": "TMbed directed segment decoder",
@@ -693,6 +699,7 @@ def prepare_stage5_sequence_evidence(
                 "transmembrane_topology": _evidence_document(
                     adapter_id="transmembrane_topology",
                     candidate_batch_sha256=candidate_batch_sha256,
+                    candidate_set_sha256=candidate_set_sha256,
                     tool=tmbed_tool,
                     policy={
                         "source": "TMbed directed segment decoder",
@@ -703,6 +710,7 @@ def prepare_stage5_sequence_evidence(
                 "disorder": _evidence_document(
                     adapter_id="disorder",
                     candidate_batch_sha256=candidate_batch_sha256,
+                    candidate_set_sha256=candidate_set_sha256,
                     tool=metapredict_tool,
                     policy={
                         "model": METAPREDICT_MODEL_VERSION,
@@ -767,6 +775,8 @@ def prepare_stage5_sequence_evidence(
             adapter_id=adapter_id,
             candidate_by_id=candidate_by_id,
             candidate_batch_sha256=candidate_batch_sha256,
+            candidate_set_sha256=candidate_set_sha256,
+            require_candidate_set_identity=candidate_scope["is_subset"],
         )
     specification_path = _update_developability_specification(config, evidence_paths)
     return {

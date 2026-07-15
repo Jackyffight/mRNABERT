@@ -13,6 +13,7 @@ from .assessment_specs import (
     DEVELOPABILITY_STAGE_ID,
     IMMUNE_STAGE_ID,
     _resolve_structure_run,
+    load_structure_candidate_scope,
     load_developability_specification,
     load_immune_specification,
     load_residue_evidence,
@@ -33,6 +34,7 @@ KYTE_DOOLITTLE = {
     "W": -0.9, "Y": -1.3, "P": -1.6, "H": -3.2, "E": -3.5,
     "Q": -3.5, "D": -3.5, "N": -3.5, "K": -3.9, "R": -4.5,
 }
+EVIDENCE_STATUSES = ("supported", "risk", "context", "not_supported")
 
 
 @dataclass
@@ -198,6 +200,8 @@ def _adapter_state(
     *,
     candidate_by_id: dict[str, dict[str, Any]],
     candidate_batch_sha256: str,
+    candidate_set_sha256: str,
+    require_candidate_set_identity: bool,
     input_paths: dict[str, Path],
 ) -> dict[str, Any]:
     if not isinstance(declaration, dict):
@@ -219,22 +223,40 @@ def _adapter_state(
         adapter_id=adapter_id,
         candidate_by_id=candidate_by_id,
         candidate_batch_sha256=candidate_batch_sha256,
+        candidate_set_sha256=candidate_set_sha256,
+        require_candidate_set_identity=require_candidate_set_identity,
     )
     input_paths[f"adapter:{adapter_id}"] = result_path
-    by_candidate = {}
+    summaries = {
+        candidate_id: {
+            "observation_count": 0,
+            **{f"{status}_count": 0 for status in EVIDENCE_STATUSES},
+        }
+        for candidate_id in candidate_by_id
+    }
     for observation in document["observations"]:
-        by_candidate.setdefault(observation["candidate_id"], []).append(observation)
+        summary = summaries[observation["candidate_id"]]
+        summary["observation_count"] += 1
+        summary[f"{observation['status']}_count"] += 1
     return {
         "adapter_id": adapter_id,
         "status": "evaluated",
         "tool": document["tool"],
         "result_sha256": sha256_file(result_path),
         "observation_count": len(document["observations"]),
-        "candidate_observation_counts": {
-            candidate_id: len(observations)
-            for candidate_id, observations in sorted(by_candidate.items())
-        },
-        "observations": document["observations"],
+        "candidate_observation_summaries": summaries,
+    }
+
+
+def _candidate_observation_summary(
+    state: dict[str, Any], candidate_id: str
+) -> dict[str, int]:
+    summary = state.get("candidate_observation_summaries", {}).get(candidate_id)
+    if summary is not None:
+        return summary
+    return {
+        "observation_count": 0,
+        **{f"{status}_count": 0 for status in EVIDENCE_STATUSES},
     }
 
 
@@ -246,6 +268,8 @@ def _immune_analysis(
     structures: dict[str, ParsedStructure],
     input_paths: dict[str, Path],
     candidate_batch_sha256: str,
+    candidate_set_sha256: str,
+    require_candidate_set_identity: bool,
 ) -> dict[str, Any]:
     candidates = candidate_batch["candidates"]
     candidate_by_id = {candidate["candidate_id"]: candidate for candidate in candidates}
@@ -343,6 +367,8 @@ def _immune_analysis(
             declaration,
             candidate_by_id=candidate_by_id,
             candidate_batch_sha256=candidate_batch_sha256,
+            candidate_set_sha256=candidate_set_sha256,
+            require_candidate_set_identity=require_candidate_set_identity,
             input_paths=input_paths,
         )
         adapter_states[adapter_id] = state
@@ -434,24 +460,10 @@ def _immune_analysis(
             },
         }
         for adapter_id, state in adapter_states.items():
-            observations = (
-                [
-                    observation
-                    for observation in state.get("observations", [])
-                    if observation["candidate_id"] == candidate_id
-                ]
-                if state["status"] == "evaluated"
-                else []
-            )
+            summary = _candidate_observation_summary(state, candidate_id)
             categories[adapter_id] = {
                 "status": state["status"],
-                "observation_count": len(observations),
-                "supported_count": sum(
-                    observation["status"] == "supported" for observation in observations
-                ),
-                "risk_count": sum(
-                    observation["status"] == "risk" for observation in observations
-                ),
+                **summary,
             }
         evaluated_categories = sum(
             category["status"] == "evaluated" for category in categories.values()
@@ -476,6 +488,7 @@ def _immune_analysis(
         "mode": "exploratory",
         "ruleset_id": IMMUNE_RULESET_ID,
         "specification_id": spec["specification_id"],
+        "candidate_set_sha256": candidate_set_sha256,
         "status": "needs_data" if requirements else "evaluated",
         "release_gate_enabled": False,
         "requirements": requirements,
@@ -576,6 +589,8 @@ def _developability_analysis(
     structure_by_id: dict[str, dict[str, Any]],
     input_paths: dict[str, Path],
     candidate_batch_sha256: str,
+    candidate_set_sha256: str,
+    require_candidate_set_identity: bool,
 ) -> dict[str, Any]:
     candidates = candidate_batch["candidates"]
     candidate_by_id = {candidate["candidate_id"]: candidate for candidate in candidates}
@@ -615,6 +630,8 @@ def _developability_analysis(
             declaration,
             candidate_by_id=candidate_by_id,
             candidate_batch_sha256=candidate_batch_sha256,
+            candidate_set_sha256=candidate_set_sha256,
+            require_candidate_set_identity=require_candidate_set_identity,
             input_paths=input_paths,
         )
         adapter_states[adapter_id] = state
@@ -759,9 +776,8 @@ def _developability_analysis(
                 "external_evidence": {
                     adapter_id: {
                         "status": state["status"],
-                        "observation_count": sum(
-                            observation["candidate_id"] == candidate["candidate_id"]
-                            for observation in state.get("observations", [])
+                        **_candidate_observation_summary(
+                            state, candidate["candidate_id"]
                         ),
                     }
                     for adapter_id, state in adapter_states.items()
@@ -774,6 +790,7 @@ def _developability_analysis(
         "mode": "exploratory",
         "ruleset_id": DEVELOPABILITY_RULESET_ID,
         "specification_id": spec["specification_id"],
+        "candidate_set_sha256": candidate_set_sha256,
         "status": "needs_data" if requirements else "evaluated",
         "release_gate_enabled": False,
         "expression_context": context,
@@ -800,10 +817,9 @@ def analyze_post_structure_stages(
         Path(source_run_dir) if source_run_dir is not None else None,
     )
     source_manifest = _load_json(source_run / "manifest.json")
-    candidate_batch_path = (
-        source_run / "nodes/candidate_specification/candidate_batch.json"
-    )
-    candidate_batch = _load_json(candidate_batch_path)
+    candidate_scope = load_structure_candidate_scope(source_run)
+    candidate_batch_path = candidate_scope["candidate_batch_path"]
+    candidate_batch = candidate_scope["candidate_batch"]
     structure_document = _load_json(
         source_run
         / "nodes/protein_structure_assessment/structure_assessments.json"
@@ -829,7 +845,8 @@ def analyze_post_structure_stages(
         "immune_specification": immune_path,
         "developability_specification": developability_path,
     }
-    candidate_batch_sha = sha256_file(candidate_batch_path)
+    candidate_batch_sha = candidate_scope["candidate_batch_sha256"]
+    candidate_set_sha = candidate_scope["candidate_set_sha256"]
     immune_result = _immune_analysis(
         config,
         immune_spec,
@@ -838,6 +855,8 @@ def analyze_post_structure_stages(
         structures,
         input_paths,
         candidate_batch_sha,
+        candidate_set_sha,
+        candidate_scope["is_subset"],
     )
     developability_result = _developability_analysis(
         config,
@@ -846,6 +865,8 @@ def analyze_post_structure_stages(
         structure_by_id,
         input_paths,
         candidate_batch_sha,
+        candidate_set_sha,
+        candidate_scope["is_subset"],
     )
     return PostStructureAnalysis(
         config=config,

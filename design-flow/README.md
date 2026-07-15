@@ -214,7 +214,8 @@ Run the implemented GPU-capable Stage 5 sequence-model profile with:
 
 ```bash
 /data00/home/wangzhi.wit/models/mRNABERT/design-flow/scripts/install_stage5_sequence_models.sh
-/data00/home/wangzhi.wit/models/mRNABERT/design-flow/scripts/run_stage5_sequence_models.sh
+/data00/home/wangzhi.wit/models/mRNABERT/design-flow/scripts/run_stage4_5_full.sh \
+  /absolute/path/to/verified-stage3-run cpu
 ```
 
 This executes pinned TMbed and metapredict revisions and fills signal peptide,

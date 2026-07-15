@@ -25,6 +25,8 @@ Candidate routing follows evidence cost and complementarity:
 1. All 384 Stage 3 candidates proceed through Stage 4 immune assessment and Stage 5
    sequence/developability assessment. Missing external evidence remains explicit;
    it is never converted into a favorable score.
+   The complete 2,276-record Stage 2 batch remains archived for lineage, while the
+   verified Stage 3 handoff is authoritative for this 384-record active set.
 2. No candidate is removed from lineage or future reconsideration solely because its
    Stage 3 confidence band is low.
 3. Expensive follow-up uses three versioned lanes:
@@ -50,3 +52,8 @@ immune evidence, and developability evidence to influence the decision.
 The current 27-record priority count is run-specific, not a permanent quota. The
 diversity-rescue size and expensive-compute budgets must be added as versioned policy
 before the next costly model round; they must not be chosen ad hoc from the report.
+
+The first full active-set Stage 4/5 execution subsequently completed for all 384
+candidates. This validates the all-candidate low-cost route. It does not alter the
+decision that Stage 6 generation and later expensive model calls require an explicit
+priority/diversity/archive routing manifest.

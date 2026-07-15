@@ -1,6 +1,6 @@
 # Stage 4-7 Computational Pipeline
 
-Status: implemented exploratory execution path, version `0.13.0`
+Status: implemented exploratory execution path, version `0.16.0`
 
 This document defines the executable path after a verified Stage 3 structure run.
 Under workflow v2, these evaluators also emit structured next-round redesign
@@ -16,6 +16,14 @@ Stage 4 and Stage 5 evaluate the complete checksum-bound Stage 3 candidate set. 
 must not prefilter to higher/mixed ESMFold2 confidence because immune and sequence
 developability evidence is complementary, comparatively inexpensive, and may rescue
 long or multi-domain candidates penalized by global structure confidence.
+
+The Stage 3 continuation intentionally retains the complete Stage 2 candidate batch
+for lineage. Its structure handoff defines the active evaluated subset. Consumers
+must therefore resolve candidates from the verified Stage 3 handoff and assessment
+order, not by iterating every record in `candidate_batch.json`. Adapter identities
+bind both the full candidate-batch SHA256 and a canonical active-candidate-set
+SHA256. This permits two selections from the same Stage 2 pool without evidence
+collision or accidental full-pool execution.
 
 After Stage 4/5, expensive follow-up uses the priority, diversity-rescue, and archive
 lanes defined in [ADR 0004](adr/0004-post-structure-candidate-routing.md). A low
@@ -70,6 +78,34 @@ runtime JSON, add the required data files under `runtime_root`, and rerun the ma
 stage command. Absolute and runtime-relative paths are accepted, but every input must
 resolve inside `runtime_root`.
 
+For the installed technical MHC panel and Stage 5 sequence-model profile, prepare
+both adapters against one exact Stage 3 run before executing the combined node:
+
+```bash
+/data00/home/wangzhi.wit/models/mRNABERT/design-flow/scripts/run_stage4_5_full.sh \
+  /absolute/path/to/verified-stage3-run cpu
+```
+
+This ordering prevents one adapter from being evaluated against a stale candidate
+batch while the other adapter is being regenerated.
+
+### Current 384-candidate validation
+
+The 2026-07-15 continuation from Stage 3 completed for the complete active set of
+384 candidates and passed all 17 integrity and semantic-verification checks.
+
+- NetMHCpan/NetMHCIIpan produced 881,853 peptide-allele observations. The technical
+  one-allele-per-class panel labeled 12,454 class-I and 7,056 class-II observations
+  as supported under the pinned predictor thresholds.
+- TMbed found 2 signal-peptide regions and 3 transmembrane regions; metapredict found
+  290 disorder regions.
+- Stage 4 remained `needs_data` with 8 explicit requirements. Stage 5 remained
+  `needs_data` with 4 explicit requirements.
+
+These counts validate execution and evidence plumbing, not cattle population
+coverage, immunogenicity, secretion, expression yield, or product release. In
+particular, the one-allele MHC panel is still a technical smoke panel.
+
 ## Stage 4: Immune Evidence
 
 The selected CPU tools, installation paths, selection rationale, model boundaries,
@@ -104,6 +140,7 @@ All three adapters use this envelope:
   "schema_version": "vaxflow.residue-evidence.v1",
   "adapter_id": "mhc_binding",
   "candidate_batch_sha256": "<candidate_batch.json sha256>",
+  "candidate_set_sha256": "<ordered active Stage 3 candidate-set sha256>",
   "tool": {
     "name": "<tool>",
     "version": "<version>",
@@ -125,6 +162,13 @@ All three adapters use this envelope:
 Allowed observation statuses are `supported`, `risk`, `context`, and
 `not_supported`. Empty observations are valid evaluated results when the pinned tool
 really returned no records; absence of the adapter file is `not_evaluated`.
+
+Raw residue observations remain in the immutable adapter artifact and its
+checksum-bound run input snapshot. Stage 4/5 node results retain tool identity,
+artifact SHA256, total counts, and per-candidate status counts rather than duplicating
+the entire raw observation array. Stage 7 consumes these exact aggregates. The
+verifier reloads the raw snapshot and recomputes them, so compact storage does not
+weaken traceability.
 
 `prepare-stage4-mhc` is the implemented NetMHC adapter. It invokes the static
 executables directly with explicit environment paths, runs one allele per raw table,

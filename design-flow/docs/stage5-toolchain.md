@@ -72,21 +72,24 @@ https://github.com/idptools/metapredict/archive/34ddeefba8285c57fb5307792ce5f678
 /data00/home/wangzhi.wit/models/design-flow-tools/stage5/downloads/metapredict-34ddeefba8285c57fb5307792ce5f6789f860bef.zip
 ```
 
-Run all nine current candidates on the present CPU host, register the three evidence
-files, rerun the combined Stage 4/5 node, and verify the immutable run:
+Run the complete candidate set from an explicit verified Stage 3 run on the present
+CPU host, register the three evidence files, rerun the combined Stage 4/5 node, and
+verify the immutable run:
 
 ```bash
-/data00/home/wangzhi.wit/models/mRNABERT/design-flow/scripts/run_stage5_sequence_models.sh
+/data00/home/wangzhi.wit/models/mRNABERT/design-flow/scripts/run_stage5_sequence_models.sh \
+  /absolute/path/to/verified-stage3-run
 ```
 
 Where the same absolute toolchain and runtime paths are mounted on a GPU host, select
 the GPU explicitly:
 
 ```bash
-/data00/home/wangzhi.wit/models/mRNABERT/design-flow/scripts/run_stage5_sequence_models.sh cuda:0
+/data00/home/wangzhi.wit/models/mRNABERT/design-flow/scripts/run_stage5_sequence_models.sh \
+  /absolute/path/to/verified-stage3-run cuda:0
 ```
 
-The model runner is sequential because both models share one small candidate batch.
+The model runner is sequential because both models share one active candidate set.
 A requested GPU failure does not silently fall back to CPU. The current `/data00`
 host has no visible GPU; using the CPU there changes runtime, not the model or evidence
 contract.
@@ -107,11 +110,12 @@ input/stage5/sequence-models/<input-tool-parameter-identity>/
 ```
 
 Every evidence file uses `vaxflow.residue-evidence.v1`, binds to the immutable
-candidate-batch SHA256 and candidate sequence SHA256, and carries 1-based residue
-coordinates. The manifest identity also includes source revisions, TMbed model-file
-digest, worker checksum, device, and model parameters. Repeating an identical call
-reuses only a fully hash-verified output. Failed jobs are preserved beside the final
-directory with `failure.json` and raw logs.
+full candidate-batch SHA256, active-candidate-set SHA256, and candidate sequence
+SHA256, and carries 1-based residue coordinates. The manifest identity also includes
+source revisions, TMbed model-file digest, worker checksum, device, and model
+parameters. Repeating an identical call reuses only a fully hash-verified output.
+Failed jobs are preserved beside the final directory with `failure.json` and raw
+logs.
 
 The runner updates only the three corresponding entries in
 `input/stage5/developability_specification.json`. It never marks `solubility` or

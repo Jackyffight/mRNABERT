@@ -114,8 +114,6 @@ def _feature_values(
     developability: dict[str, dict[str, Any]],
     protein_products: dict[str, dict[str, Any]],
     mrna_designs: dict[str, list[dict[str, Any]]],
-    immune_document: dict[str, Any],
-    developability_document: dict[str, Any],
     protein_document: dict[str, Any],
     mrna_document: dict[str, Any],
 ) -> dict[str, dict[str, float | None]]:
@@ -134,22 +132,10 @@ def _feature_values(
             for row in mrna_rows
             if row["metrics"].get("cai_proxy") is not None
         ]
-        mhc_observations = [
-            observation
-            for observation in immune_document["adapter_states"]
-            .get("mhc_binding", {})
-            .get("observations", [])
-            if observation["candidate_id"] == candidate_id
-        ]
+        mhc_summary = immune_row["categories"].get("mhc_binding", {})
         developability_states = list(
-            developability_document.get("adapter_states", {}).values()
+            developability_row.get("external_evidence", {}).values()
         )
-        developability_observations = [
-            observation
-            for state in developability_states
-            for observation in state.get("observations", [])
-            if observation["candidate_id"] == candidate_id
-        ]
         expression_observations = [
             observation
             for observation in protein_document["adapter_states"]
@@ -186,13 +172,14 @@ def _feature_values(
                 "pathogen_conservation"
             ]["mean_conservation_fraction"],
             "immune_mhc_supported_fraction": (
-                sum(item["status"] == "supported" for item in mhc_observations)
-                / len(mhc_observations)
-                if mhc_observations
+                float(mhc_summary["supported_count"])
+                / float(mhc_summary["observation_count"])
+                if mhc_summary.get("status") == "evaluated"
+                and mhc_summary.get("observation_count", 0) > 0
                 else None
             ),
             "developability_external_risk_count": (
-                float(sum(item["status"] == "risk" for item in developability_observations))
+                float(sum(state["risk_count"] for state in developability_states))
                 if developability_states
                 and all(state.get("status") == "evaluated" for state in developability_states)
                 else None
@@ -532,8 +519,6 @@ def _compute_ranking_result(
         developability,
         protein_products,
         mrna_designs,
-        immune_document,
-        developability_document,
         protein_document,
         mrna_document,
     )

@@ -36,7 +36,7 @@ from design_flow.proposal_generation import (
     verify_proposal_generation,
     write_proposal_generation,
 )
-from design_flow.ranking import analyze_integrated_ranking
+from design_flow.ranking import _feature_values, analyze_integrated_ranking
 from design_flow.ranking_reporting import write_ranking_run
 from design_flow.ranking_specs import initialize_ranking_specification
 from design_flow.qc import CODON_TABLE, analyze_sequence_pairs, normalize_nucleotide, translate_cds
@@ -1771,6 +1771,23 @@ class CandidateStageEndToEndTests(unittest.TestCase):
             )
             self.assertEqual(len(analysis.assessments), 2)
 
+            structure_run = write_structure_run(
+                analysis,
+                now=datetime(2026, 7, 14, 14, 0, tzinfo=timezone.utc),
+            )
+            initialize_assessment_specifications(
+                config_path,
+                source_run_dir=structure_run,
+            )
+            post_structure = analyze_post_structure_stages(
+                config_path,
+                source_run_dir=structure_run,
+            )
+            self.assertGreater(len(batch["candidates"]), 2)
+            self.assertEqual(len(post_structure.candidate_batch["candidates"]), 2)
+            self.assertEqual(len(post_structure.immune_result["candidates"]), 2)
+            self.assertEqual(len(post_structure.developability_result["candidates"]), 2)
+
     def test_stage3_job_rejects_candidates_over_backend_limit(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
@@ -2076,6 +2093,22 @@ class CandidateStageEndToEndTests(unittest.TestCase):
                     adapter_id=adapter_id,
                     candidate_batch_sha256=batch_sha,
                 )
+                if adapter_id == "mhc_binding":
+                    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+                    candidate = batch["candidates"][0]
+                    evidence["observations"] = [
+                        {
+                            "evidence_id": "fixture-mhc-supported",
+                            "candidate_id": candidate["candidate_id"],
+                            "sequence_sha256": candidate["amino_acid_sha256"],
+                            "residue_start": 1,
+                            "residue_end": 1,
+                            "status": "supported",
+                        }
+                    ]
+                    evidence_path.write_text(
+                        json.dumps(evidence, sort_keys=True), encoding="utf-8"
+                    )
                 immune["adapters"][adapter_id] = {
                     "status": "provided",
                     "result_path": str(evidence_path.relative_to(runtime_root)),
@@ -2126,8 +2159,67 @@ class CandidateStageEndToEndTests(unittest.TestCase):
             self.assertEqual(analysis.developability_result["status"], "evaluated")
             self.assertEqual(analysis.immune_result["requirements"], [])
             self.assertEqual(analysis.developability_result["requirements"], [])
+            mhc_state = analysis.immune_result["adapter_states"]["mhc_binding"]
+            self.assertNotIn("observations", mhc_state)
+            candidate_id = batch["candidates"][0]["candidate_id"]
+            self.assertEqual(
+                mhc_state["candidate_observation_summaries"][candidate_id],
+                {
+                    "context_count": 0,
+                    "not_supported_count": 0,
+                    "observation_count": 1,
+                    "risk_count": 0,
+                    "supported_count": 1,
+                },
+            )
+            self.assertEqual(
+                analysis.immune_result["candidates"][0]["categories"]["mhc_binding"][
+                    "supported_count"
+                ],
+                1,
+            )
             verification = verify_run(continuation)
             self.assertEqual(verification["status"], "pass", verification["errors"])
+
+    def test_ranking_uses_compact_stage4_5_adapter_summaries(self) -> None:
+        values = _feature_values(
+            [{"candidate_id": "candidate-1"}],
+            {"candidate-1": {"mean_plddt": 90.0, "ptm": 0.8}},
+            {
+                "candidate-1": {
+                    "categories": {
+                        "surface_accessibility_proxy": {"exposed_fraction": 0.5},
+                        "pathogen_conservation": {"mean_conservation_fraction": 0.75},
+                        "mhc_binding": {
+                            "status": "evaluated",
+                            "observation_count": 4,
+                            "supported_count": 3,
+                        },
+                    }
+                }
+            },
+            {
+                "candidate-1": {
+                    "review_liability_count": 2,
+                    "external_evidence": {
+                        "signal_peptide": {"status": "evaluated", "risk_count": 1},
+                        "disorder": {"status": "evaluated", "risk_count": 2},
+                    },
+                }
+            },
+            {},
+            {},
+            {"adapter_states": {"expression_support": {"observations": []}}},
+            {
+                "adapter_states": {
+                    "evo2_sequence_score": {"observations": []},
+                    "rna_structure": {"observations": []},
+                }
+            },
+        )
+
+        self.assertEqual(values["candidate-1"]["immune_mhc_supported_fraction"], 0.75)
+        self.assertEqual(values["candidate-1"]["developability_external_risk_count"], 3.0)
 
     def test_stage5_verifier_detects_semantic_tampering_after_reindex(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:

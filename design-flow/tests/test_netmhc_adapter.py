@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -15,9 +16,49 @@ from design_flow.netmhc_adapter import (
     parse_netmhciipan_xls,
     parse_netmhcpan_xls,
 )
+from design_flow.assessment_specs import load_residue_evidence
 
 
 class NetMHCAdapterTests(unittest.TestCase):
+    def test_selected_candidate_evidence_requires_candidate_set_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            path = Path(temporary_dir) / "evidence.json"
+            document = {
+                "schema_version": "vaxflow.residue-evidence.v1",
+                "adapter_id": "mhc_binding",
+                "candidate_batch_sha256": "a" * 64,
+                "tool": {"name": "fixture", "version": "1", "revision": "r1"},
+                "observations": [],
+            }
+            path.write_text(json.dumps(document), encoding="utf-8")
+            candidate = {
+                "candidate_id": "candidate-fixture",
+                "amino_acid_sequence": "AAAA",
+                "amino_acid_sha256": "b" * 64,
+            }
+
+            with self.assertRaisesRegex(ValueError, "must bind"):
+                load_residue_evidence(
+                    path,
+                    adapter_id="mhc_binding",
+                    candidate_by_id={"candidate-fixture": candidate},
+                    candidate_batch_sha256="a" * 64,
+                    candidate_set_sha256="c" * 64,
+                    require_candidate_set_identity=True,
+                )
+
+            document["candidate_set_sha256"] = "c" * 64
+            path.write_text(json.dumps(document), encoding="utf-8")
+            loaded = load_residue_evidence(
+                path,
+                adapter_id="mhc_binding",
+                candidate_by_id={"candidate-fixture": candidate},
+                candidate_batch_sha256="a" * 64,
+                candidate_set_sha256="c" * 64,
+                require_candidate_set_identity=True,
+            )
+            self.assertEqual(loaded["candidate_set_sha256"], "c" * 64)
+
     def test_predictor_receives_short_paths_relative_to_working_directory(self) -> None:
         working_directory = Path("/very/long/runtime/path/.identity.partial")
 

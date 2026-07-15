@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,7 +12,7 @@ from typing import Any
 
 from .config import ProjectConfig, load_project_config
 from .structure_job import _load_json
-from .verification import verify_run
+from .verification import sha256_file, verify_run
 
 
 IMMUNE_STAGE_ID = "immune_evidence_assessment"
@@ -75,13 +76,97 @@ def _resolve_structure_run(config: ProjectConfig, source_run_dir: Path | None) -
     return source
 
 
-def _source_protein_ids(structure_run: Path) -> list[str]:
-    batch = _load_json(
-        structure_run
-        / "nodes"
-        / "candidate_specification"
-        / "candidate_batch.json"
+def _candidate_set_sha256(candidates: list[dict[str, Any]]) -> str:
+    bindings = [
+        {
+            "candidate_id": candidate["candidate_id"],
+            "candidate_key": candidate["candidate_key"],
+            "amino_acid_sha256": candidate["amino_acid_sha256"],
+        }
+        for candidate in candidates
+    ]
+    encoded = json.dumps(
+        bindings,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def load_structure_candidate_scope(structure_run: Path) -> dict[str, Any]:
+    candidate_batch_path = (
+        structure_run / "nodes/candidate_specification/candidate_batch.json"
     )
+    assessment_path = (
+        structure_run
+        / "nodes/protein_structure_assessment/structure_assessments.json"
+    )
+    handoff_path = structure_run / "nodes/protein_structure_assessment/handoff.json"
+    candidate_batch = _load_json(candidate_batch_path)
+    assessments = _load_json(assessment_path).get("assessments")
+    handoff = _load_json(handoff_path).get("carried_forward")
+    candidates = candidate_batch.get("candidates")
+    if (
+        not isinstance(candidates, list)
+        or not candidates
+        or not isinstance(assessments, list)
+        or not assessments
+        or not isinstance(handoff, dict)
+    ):
+        raise ValueError("Stage 3 candidate scope inputs are incomplete")
+
+    candidate_ids = handoff.get("candidate_ids")
+    assessment_ids = [
+        assessment.get("candidate_id")
+        for assessment in assessments
+        if isinstance(assessment, dict)
+    ]
+    batch_sha256 = sha256_file(candidate_batch_path)
+    if (
+        not isinstance(candidate_ids, list)
+        or not candidate_ids
+        or len(candidate_ids) != len(set(candidate_ids))
+        or candidate_ids != assessment_ids
+        or handoff.get("candidate_batch_sha256") != batch_sha256
+        or handoff.get("structure_assessments_sha256") != sha256_file(assessment_path)
+    ):
+        raise ValueError("Stage 3 handoff does not bind the assessed candidate scope")
+
+    candidate_by_id = {
+        candidate.get("candidate_id"): candidate
+        for candidate in candidates
+        if isinstance(candidate, dict)
+    }
+    selected = []
+    for assessment in assessments:
+        candidate_id = assessment["candidate_id"]
+        candidate = candidate_by_id.get(candidate_id)
+        if (
+            candidate is None
+            or assessment.get("candidate_key") != candidate.get("candidate_key")
+            or assessment.get("sequence_sha256")
+            != candidate.get("amino_acid_sha256")
+        ):
+            raise ValueError(
+                f"Stage 3 assessment differs from candidate batch: {candidate_id}"
+            )
+        selected.append(candidate)
+
+    scoped_batch = {**candidate_batch, "candidates": selected}
+    return {
+        "candidate_batch": scoped_batch,
+        "candidate_batch_path": candidate_batch_path,
+        "candidate_batch_sha256": batch_sha256,
+        "candidate_set_sha256": _candidate_set_sha256(selected),
+        "selected_count": len(selected),
+        "source_count": len(candidates),
+        "is_subset": len(selected) != len(candidates),
+    }
+
+
+def _source_protein_ids(structure_run: Path) -> list[str]:
+    batch = load_structure_candidate_scope(structure_run)["candidate_batch"]
     source_ids = []
     for candidate in batch.get("candidates", []):
         if candidate.get("candidate_type") != "source_control":
@@ -256,6 +341,8 @@ def load_residue_evidence(
     adapter_id: str,
     candidate_by_id: dict[str, dict[str, Any]],
     candidate_batch_sha256: str,
+    candidate_set_sha256: str | None = None,
+    require_candidate_set_identity: bool = False,
 ) -> dict[str, Any]:
     document = _load_json(path)
     if (
@@ -264,6 +351,16 @@ def load_residue_evidence(
         or document.get("candidate_batch_sha256") != candidate_batch_sha256
     ):
         raise ValueError(f"Evidence identity mismatch for adapter {adapter_id}")
+    observed_candidate_set = document.get("candidate_set_sha256")
+    if (
+        candidate_set_sha256 is not None
+        and observed_candidate_set not in {None, candidate_set_sha256}
+    ):
+        raise ValueError(f"Evidence candidate set mismatch for adapter {adapter_id}")
+    if require_candidate_set_identity and observed_candidate_set != candidate_set_sha256:
+        raise ValueError(
+            f"Adapter {adapter_id} must bind the selected Stage 3 candidate set"
+        )
     tool = document.get("tool")
     if not isinstance(tool, dict) or not all(
         isinstance(tool.get(name), str) and tool[name].strip()
