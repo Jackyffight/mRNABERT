@@ -10,6 +10,18 @@ round feedback. Each command writes
 a new immutable continuation run and publishes `latest.json` only after integrity
 and semantic recomputation pass.
 
+## Candidate Routing Policy
+
+Stage 4 and Stage 5 evaluate the complete checksum-bound Stage 3 candidate set. They
+must not prefilter to higher/mixed ESMFold2 confidence because immune and sequence
+developability evidence is complementary, comparatively inexpensive, and may rescue
+long or multi-domain candidates penalized by global structure confidence.
+
+After Stage 4/5, expensive follow-up uses the priority, diversity-rescue, and archive
+lanes defined in [ADR 0004](adr/0004-post-structure-candidate-routing.md). A low
+structure-confidence label remains evidence and a review trigger, not an implicit
+rejection or deletion.
+
 ## System Boundary
 
 The deterministic core owns:

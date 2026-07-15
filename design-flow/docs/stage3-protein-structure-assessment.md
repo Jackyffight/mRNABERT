@@ -45,6 +45,43 @@ binds every candidate key, AA hash, length, selection tier, search identity, and
 budget. The importer revalidates the same snapshot against the immutable Stage 2
 candidate batch before accepting any PDB.
 
+## Three-Protein Mock Result
+
+Run `20260715T153913241225Z-stage3-7d0bd68b` imported all 384 selected
+ESMFold2-Fast results with 384 successes, zero failures, and a clean 17-check
+immutable-run verification. Ruleset `structure-exploratory-rules-v1` assigned:
+
+- 9 higher-confidence structures;
+- 18 mixed-confidence structures;
+- 357 low-confidence structures.
+
+These bands are deterministic combinations of global mean pLDDT and pTM. They are
+model-confidence labels, not experimental stability, immunogenicity, efficacy, or
+release decisions.
+
+The nine original source/manual recipes produced one higher-confidence candidate
+(`b5-trunc`), two mixed-confidence candidates, and six low-confidence candidates.
+The other eight higher-confidence candidates were newly enumerated B5 boundary
+variants from the `atomic_boundary_panel`; none of the evaluated fusion candidates
+entered the higher-confidence band. This supports expanding boundary hypotheses,
+but it does not establish that B5 is the best antigen or that fusion candidates are
+biologically inferior. Global pTM and single-sequence folding confidence can
+systematically penalize long, flexible, or multi-domain fusion constructs.
+
+In the central-kitchen analogy, the original nine records were handwritten recipes.
+ESMFold2 judged whether each trial dish had a clearly predictable shape. One original
+B5 cut and eight machine-enumerated B5 cuts held a clearer predicted shape. This says
+which dishes the plating station understands; it does not say which dish tastes best,
+serves the intended diner, or can be manufactured reliably.
+
+## Downstream Routing
+
+Stage 4 immune evidence and Stage 5 sequence/developability assessment process all
+384 candidates because they are comparatively inexpensive and provide evidence that
+is complementary to structure confidence. Stage 3 low confidence alone never deletes
+a candidate. Expensive structure reruns, model redesign, and eventual experimental
+budgets use the three-lane policy in ADR 0004: priority, diversity rescue, and archive.
+
 ## LLM Role
 
 No LLM is required to reproduce Stage 3 artifacts or conclusions. An LLM may
