@@ -29,6 +29,7 @@ ADAPTER_SCHEMA = "vaxflow.stage5-sequence-model-adapter.v1"
 TOOLCHAIN_SCHEMA = "vaxflow.stage5-sequence-toolchain.v1"
 TMBED_VERSION = "1.0.2"
 TMBED_REVISION = "8cee893523eb655bc9485c00c65336d27a236191"
+TRANSFORMERS_VERSION = "4.57.6"
 METAPREDICT_MODEL_VERSION = "V3"
 METAPREDICT_REVISION = "34ddeefba8285c57fb5307792ce5f6789f860bef"
 DISORDER_THRESHOLD = 0.5
@@ -219,10 +220,11 @@ def _load_toolchain(toolchain_root: Path) -> dict[str, Any]:
             "-c",
             (
                 "import importlib.metadata as m,json,torch;"
-                "import metapredict,tmbed;"
+                "import metapredict,tmbed,transformers;"
                 "print(json.dumps({'torch':torch.__version__,"
                 "'cuda_available':torch.cuda.is_available(),"
                 "'tmbed':m.version('tmbed'),"
+                "'transformers':transformers.__version__,"
                 "'tmbed_file':tmbed.__file__,"
                 "'metapredict':m.version('metapredict'),"
                 "'metapredict_file':metapredict.__file__},sort_keys=True))"
@@ -240,6 +242,11 @@ def _load_toolchain(toolchain_root: Path) -> dict[str, Any]:
         raise ValueError(
             f"TMbed version mismatch: expected {TMBED_VERSION}, "
             f"got {environment_probe.get('tmbed')}"
+        )
+    if environment_probe.get("transformers") != TRANSFORMERS_VERSION:
+        raise ValueError(
+            f"Transformers version mismatch: expected {TRANSFORMERS_VERSION}, "
+            f"got {environment_probe.get('transformers')}"
         )
     for package_name, source_name in (
         ("tmbed", "tmbed_source_root"),

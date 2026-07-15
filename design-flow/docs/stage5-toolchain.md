@@ -30,6 +30,10 @@ The current local installation lives outside the repository and project runtime:
 | `solubility` | none | `not_evaluated` | No provider has yet been accepted for the declared CHO context | NetSolP is explicitly trained for proteins expressed in *E. coli* and is not relabeled as CHO evidence |
 | `aggregation` | none | `not_evaluated` | A structure-aware provider should consume the Stage 3 structures; packaging, license, and output contract remain to be validated | Intrinsic hydrophobic windows are retained separately and are not called an aggregation prediction |
 
+The environment pins `transformers==4.57.6`. TMbed 1.0.2 uses the legacy
+`T5Tokenizer.batch_encode_plus` API, which is no longer available in Transformers
+5.x; the installer, verifier, and runtime loader all reject an incompatible version.
+
 TMbed and metapredict were chosen as the first executable profile, not declared the
 permanent best models. SignalP 6.0 and DeepTMHMM are valid stronger provider
 candidates where their package/API terms and exact output contract are acceptable.

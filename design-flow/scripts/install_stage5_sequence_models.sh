@@ -9,6 +9,7 @@ MODEL_ROOT="${INSTALL_ROOT}/models/tmbed-prott5-xl-u50"
 PYTHON_BOOTSTRAP="/usr/bin/python3.11"
 VIRTUALENV_VERSION="20.39.1"
 VIRTUALENV_ROOT="${INSTALL_ROOT}/bootstrap/virtualenv-${VIRTUALENV_VERSION}"
+TRANSFORMERS_VERSION="4.57.6"
 TMBED_REVISION="8cee893523eb655bc9485c00c65336d27a236191"
 METAPREDICT_REVISION="34ddeefba8285c57fb5307792ce5f6789f860bef"
 TMBED_SOURCE="${SOURCE_ROOT}/TMbed-${TMBED_REVISION}"
@@ -221,6 +222,7 @@ if ! venv_is_healthy; then
 fi
 
 "${VENV_PYTHON}" -m pip install --upgrade "pip>=24" "setuptools>=70" wheel
+"${VENV_PYTHON}" -m pip install "transformers==${TRANSFORMERS_VERSION}"
 "${VENV_PYTHON}" -m pip install --editable "${TMBED_SOURCE}"
 "${VENV_PYTHON}" -m pip install --editable "${METAPREDICT_SOURCE}"
 
@@ -238,7 +240,8 @@ fi
   "${INSTALL_ROOT}/requirements.freeze.txt" \
   "${TMBED_REVISION}" \
   "${METAPREDICT_REVISION}" \
-  "${VIRTUALENV_VERSION}" <<'PY'
+  "${VIRTUALENV_VERSION}" \
+  "${TRANSFORMERS_VERSION}" <<'PY'
 import hashlib
 import json
 from pathlib import Path
@@ -254,6 +257,7 @@ import sys
     tmbed_revision,
     metapredict_revision,
     virtualenv_version,
+    transformers_version,
 ) = sys.argv[1:]
 document = {
     "schema_version": "vaxflow.stage5-sequence-toolchain.v1",
@@ -272,6 +276,7 @@ document = {
         "gpu_supported": True,
         "system_site_packages": True,
         "environment_builder": f"virtualenv=={virtualenv_version}",
+        "transformers": transformers_version,
         "tmbed_encoder": "Rostlab/prot_t5_xl_half_uniref50-enc",
         "metapredict_model": "V3",
     },

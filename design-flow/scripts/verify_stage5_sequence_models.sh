@@ -7,6 +7,7 @@ VENV_PYTHON="${INSTALL_ROOT}/venv/bin/python"
 MODEL_ROOT="${INSTALL_ROOT}/models/tmbed-prott5-xl-u50"
 TMBED_REVISION="8cee893523eb655bc9485c00c65336d27a236191"
 METAPREDICT_REVISION="34ddeefba8285c57fb5307792ce5f6789f860bef"
+TRANSFORMERS_VERSION="4.57.6"
 TMBED_SOURCE="${INSTALL_ROOT}/sources/TMbed-${TMBED_REVISION}"
 METAPREDICT_SOURCE="${INSTALL_ROOT}/sources/metapredict-${METAPREDICT_REVISION}"
 
@@ -71,15 +72,22 @@ import json
 import torch
 import metapredict
 import tmbed
+import transformers
+from transformers import T5Tokenizer
 
 versions = {
     "cuda_available": torch.cuda.is_available(),
     "metapredict": importlib.metadata.version("metapredict"),
     "tmbed": importlib.metadata.version("tmbed"),
     "torch": torch.__version__,
+    "transformers": transformers.__version__,
 }
 if versions["tmbed"] != "1.0.2":
     raise SystemExit(f"TMbed version mismatch: {versions['tmbed']}")
+if versions["transformers"] != "4.57.6":
+    raise SystemExit(f"Transformers version mismatch: {versions['transformers']}")
+if not hasattr(T5Tokenizer, "batch_encode_plus"):
+    raise SystemExit("Transformers T5Tokenizer lacks TMbed's required API")
 print(json.dumps(versions, sort_keys=True))
 PY
 
