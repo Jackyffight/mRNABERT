@@ -35,8 +35,10 @@ class ManualCandidateSpec:
     candidate_key: str
     display_name: str
     candidate_type: str
-    amino_acid_fasta: Path
+    amino_acid_fasta: Path | None
+    amino_acid_sequence: str | None
     nucleotide_fasta: Path | None
+    nucleotide_sequence: str | None
     claimed_source_id: str | None
     claimed_source_start: int | None
     claimed_source_end: int | None
@@ -247,17 +249,47 @@ def load_candidate_specification(
             raise ValueError(
                 f"{field_name}.annotation_status must be one of {sorted(ANNOTATION_STATUSES)}"
             )
-        aa_path = _runtime_input_path(
-            config,
-            _text(candidate, "amino_acid_fasta", field_name),
-            f"{field_name}.amino_acid_fasta",
-        )
+        aa_path_value = candidate.get("amino_acid_fasta")
+        aa_sequence_value = candidate.get("amino_acid_sequence")
+        if (aa_path_value is None) == (aa_sequence_value is None):
+            raise ValueError(
+                f"{field_name} must declare exactly one of amino_acid_fasta "
+                "or amino_acid_sequence"
+            )
+        aa_path = None
+        aa_sequence = None
+        if aa_path_value is not None:
+            if not isinstance(aa_path_value, str) or not aa_path_value.strip():
+                raise ValueError(f"{field_name}.amino_acid_fasta must be a non-empty path")
+            aa_path = _runtime_input_path(
+                config,
+                aa_path_value,
+                f"{field_name}.amino_acid_fasta",
+            )
+        else:
+            if not isinstance(aa_sequence_value, str) or not aa_sequence_value.strip():
+                raise ValueError(
+                    f"{field_name}.amino_acid_sequence must be a non-empty sequence"
+                )
+            aa_sequence = aa_sequence_value.strip()
         cds_value = candidate.get("nucleotide_fasta")
+        cds_sequence_value = candidate.get("nucleotide_sequence")
+        if cds_value is not None and cds_sequence_value is not None:
+            raise ValueError(
+                f"{field_name} cannot declare both nucleotide_fasta and nucleotide_sequence"
+            )
         cds_path = None
+        cds_sequence = None
         if cds_value is not None:
             if not isinstance(cds_value, str) or not cds_value.strip():
                 raise ValueError(f"{field_name}.nucleotide_fasta must be a non-empty path")
             cds_path = _runtime_input_path(config, cds_value, f"{field_name}.nucleotide_fasta")
+        elif cds_sequence_value is not None:
+            if not isinstance(cds_sequence_value, str) or not cds_sequence_value.strip():
+                raise ValueError(
+                    f"{field_name}.nucleotide_sequence must be a non-empty sequence"
+                )
+            cds_sequence = cds_sequence_value.strip()
         claimed_components = candidate.get("claimed_component_keys", [])
         if not isinstance(claimed_components, list) or not all(
             isinstance(value, str) and value.strip() for value in claimed_components
@@ -300,7 +332,9 @@ def load_candidate_specification(
                 or candidate_key,
                 candidate_type=candidate_type,
                 amino_acid_fasta=aa_path,
+                amino_acid_sequence=aa_sequence,
                 nucleotide_fasta=cds_path,
+                nucleotide_sequence=cds_sequence,
                 claimed_source_id=(
                     str(candidate["claimed_source_id"]).strip()
                     if candidate.get("claimed_source_id") is not None
@@ -338,7 +372,9 @@ def load_candidate_specification(
     known_proposal_parent_keys = known_keys | source_candidate_keys
     manual_by_key = {candidate.candidate_key: candidate for candidate in manual_candidates}
     for candidate in manual_candidates:
-        unknown = sorted(set(candidate.claimed_component_keys) - known_keys)
+        unknown = sorted(
+            set(candidate.claimed_component_keys) - known_proposal_parent_keys
+        )
         if unknown:
             raise ValueError(
                 f"{candidate.candidate_key} claims unknown component keys: {unknown}"
@@ -379,8 +415,8 @@ def load_candidate_specification(
         raise ValueError(f"generation_grammar.status must be one of {sorted(GRAMMAR_STATUSES)}")
     if grammar.get("generate_new_candidates", False) is not False:
         raise ValueError(
-            "Automatic candidate generation is not implemented in stage-2 v1; "
-            "set generation_grammar.generate_new_candidates to false"
+            "Stage 2 accepts only materialized candidates; generate proposals first, "
+            "then set generation_grammar.generate_new_candidates to false"
         )
     structure_max_length = grammar.get("structure_max_length", 1024)
     if (
@@ -415,6 +451,18 @@ def _single_record(path: Path, candidate_key: str) -> str:
             f"Candidate {candidate_key} input must contain exactly one FASTA record: {path}"
         )
     return records[0].sequence
+
+
+def _declared_sequence(
+    inline_sequence: str | None,
+    fasta_path: Path | None,
+    candidate_key: str,
+) -> str:
+    if inline_sequence is not None:
+        return inline_sequence
+    if fasta_path is None:
+        raise ValueError(f"Candidate {candidate_key} has no sequence source")
+    return _single_record(fasta_path, candidate_key)
 
 
 def _candidate_issue(issue: QCIssue, candidate_key: str) -> QCIssue:
@@ -541,6 +589,51 @@ def _infer_component_keys(sequence: str, library: dict[str, str]) -> list[str]:
         keys.append(component_key)
         offset += length
     return keys
+
+
+def _declared_concatenation_components(
+    manual: ManualCandidateSpec,
+    sequence: str,
+    parent_records: dict[str, dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]] | None:
+    if manual.proposal.get("transformation") != "ordered_component_concatenation":
+        return None
+    parent_keys = list(manual.proposal.get("parent_candidate_keys", []))
+    parameters = manual.proposal.get("generator", {}).get("parameters", {})
+    linker = parameters.get("linker_sequence")
+    if not isinstance(linker, str):
+        raise ValueError(
+            f"{manual.candidate_key} ordered concatenation has no linker_sequence"
+        )
+    parent_sequences = [parent_records[key]["aa"] for key in parent_keys]
+    if linker.join(parent_sequences) != sequence:
+        raise ValueError(
+            f"{manual.candidate_key} sequence differs from its declared parents and linker"
+        )
+    components: list[dict[str, Any]] = []
+    offset = 0
+    for parent_index, parent_key in enumerate(parent_keys):
+        parent = parent_records[parent_key]
+        for raw_component in parent["components"]:
+            component = dict(raw_component)
+            component["candidate_start"] = offset + int(raw_component["candidate_start"])
+            component["candidate_end"] = offset + int(raw_component["candidate_end"])
+            components.append(component)
+        offset += len(parent["aa"])
+        if linker and parent_index < len(parent_keys) - 1:
+            components.append(
+                {
+                    "component_type": "addition",
+                    "candidate_start": offset + 1,
+                    "candidate_end": offset + len(linker),
+                    "sequence": linker,
+                    "sequence_sha256": _sha256_text(linker),
+                    "declared_role": "linker",
+                    "linker_id": parameters.get("linker_id"),
+                }
+            )
+            offset += len(linker)
+    return components, parent_keys
 
 
 def _candidate_id(
@@ -731,13 +824,21 @@ def analyze_candidate_specification(
 
     raw_manual: dict[str, dict[str, Any]] = {}
     for manual in specification.manual_candidates:
-        aa_raw = _single_record(manual.amino_acid_fasta, manual.candidate_key)
+        aa_raw = _declared_sequence(
+            manual.amino_acid_sequence,
+            manual.amino_acid_fasta,
+            manual.candidate_key,
+        )
         aa, aa_issues = normalize_amino_acid(aa_raw, manual.candidate_key)
         cds: str | None = None
         translated: str | None = None
         candidate_issues = [_candidate_issue(issue, manual.candidate_key) for issue in aa_issues]
-        if manual.nucleotide_fasta is not None:
-            cds_raw = _single_record(manual.nucleotide_fasta, manual.candidate_key)
+        if manual.nucleotide_fasta is not None or manual.nucleotide_sequence is not None:
+            cds_raw = _declared_sequence(
+                manual.nucleotide_sequence,
+                manual.nucleotide_fasta,
+                manual.candidate_key,
+            )
             cds, cds_issues = normalize_nucleotide(cds_raw, manual.candidate_key)
             translated, translation_issues, _ = translate_cds(cds, manual.candidate_key)
             candidate_issues.extend(
@@ -777,9 +878,10 @@ def analyze_candidate_specification(
             "components": components,
             "issues": candidate_issues,
         }
-        aa_name = f"manual:{manual.candidate_key}:amino_acid_fasta"
-        input_paths[aa_name] = manual.amino_acid_fasta
-        input_digests[aa_name] = sha256_file(manual.amino_acid_fasta)
+        if manual.amino_acid_fasta is not None:
+            aa_name = f"manual:{manual.candidate_key}:amino_acid_fasta"
+            input_paths[aa_name] = manual.amino_acid_fasta
+            input_digests[aa_name] = sha256_file(manual.amino_acid_fasta)
         if manual.nucleotide_fasta is not None:
             cds_name = f"manual:{manual.candidate_key}:nucleotide_fasta"
             input_paths[cds_name] = manual.nucleotide_fasta
@@ -790,6 +892,14 @@ def analyze_candidate_specification(
         for key, value in raw_manual.items()
         if value["spec"].candidate_type != "fusion"
     }
+    parent_records = {
+        candidate.candidate_key: {
+            "aa": candidate.amino_acid_sequence,
+            "components": candidate.inferred_components,
+        }
+        for candidate in candidates
+    }
+    parent_records.update(raw_manual)
     seen_sequences: dict[str, str] = {
         _sha256_text(candidate.amino_acid_sequence): candidate.candidate_key
         for candidate in candidates
@@ -800,11 +910,19 @@ def analyze_candidate_specification(
         aa = raw["aa"]
         components = raw["components"]
         candidate_issues = raw["issues"]
-        observed_component_keys = (
-            _infer_component_keys(aa, component_library)
-            if manual.candidate_type == "fusion"
-            else []
+        declared_concatenation = _declared_concatenation_components(
+            manual,
+            aa,
+            parent_records,
         )
+        if declared_concatenation is not None:
+            components, observed_component_keys = declared_concatenation
+        else:
+            observed_component_keys = (
+                _infer_component_keys(aa, component_library)
+                if manual.candidate_type == "fusion"
+                else []
+            )
         annotation_conflict = False
         source_segments = [
             component
@@ -814,7 +932,7 @@ def analyze_candidate_specification(
         additions = [
             component for component in components if component["component_type"] == "addition"
         ]
-        if additions:
+        if additions and declared_concatenation is None:
             annotation_conflict = True
             candidate_issues.append(
                 QCIssue(

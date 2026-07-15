@@ -27,6 +27,10 @@ from .netmhc_adapter import prepare_stage4_mhc_evidence
 from .pipeline import analyze_project
 from .post_structure_assessment import analyze_post_structure_stages
 from .post_structure_reporting import write_post_structure_run
+from .proposal_generation import (
+    verify_proposal_generation,
+    write_proposal_generation,
+)
 from .product_design import analyze_product_designs
 from .product_reporting import write_product_design_run
 from .product_specs import (
@@ -100,6 +104,23 @@ def _build_parser() -> argparse.ArgumentParser:
             type=Path,
             help="candidate specification JSON; defaults to the project input",
         )
+    generate_stage2_parser = subparsers.add_parser(
+        "generate-stage2-proposals",
+        help="expand a verified Stage 2 seed batch with an approved proposal grammar",
+    )
+    generate_stage2_parser.add_argument("project_config", type=Path)
+    generate_stage2_parser.add_argument(
+        "--from-run",
+        type=Path,
+        help="verified Stage 2 seed run; defaults to the project's latest run",
+    )
+    generate_stage2_parser.add_argument("--grammar", type=Path, required=True)
+    generate_stage2_parser.add_argument("--output-root", type=Path)
+    verify_stage2_proposals_parser = subparsers.add_parser(
+        "verify-stage2-proposals",
+        help="recompute and verify a materialized Stage 2 proposal directory",
+    )
+    verify_stage2_proposals_parser.add_argument("proposal_dir", type=Path)
     verify_parser = subparsers.add_parser(
         "verify-run",
         help="verify hashes and cross-file consistency for an immutable run",
@@ -440,6 +461,36 @@ def main(argv: list[str] | None = None) -> int:
             for warning in result["warnings"]:
                 print(f"  WARNING {warning}")
             return 0 if result["status"] == "pass" else 2
+
+        if args.command == "verify-stage2-proposals":
+            result = verify_proposal_generation(args.proposal_dir)
+            print(
+                f"Stage 2 proposal generation {result['identity']}: "
+                f"status={result['status']} errors={len(result['errors'])}"
+            )
+            for error in result["errors"]:
+                print(f"  ERROR {error}")
+            return 0 if result["status"] == "pass" else 2
+
+        if args.command == "generate-stage2-proposals":
+            generated = write_proposal_generation(
+                args.project_config,
+                grammar_path=args.grammar,
+                seed_run_dir=args.from_run,
+                output_root=args.output_root,
+            )
+            print(
+                "Stage 2 proposal generation: "
+                f"identity={generated['identity']} "
+                f"generated={generated['generated_candidates']} "
+                f"skipped={generated['skipped_candidates']} "
+                f"total={generated['total_candidates']}"
+            )
+            print(f"Proposal artifacts: {generated['output_dir']}")
+            print(f"Candidate specification: {generated['candidate_specification']}")
+            print(f"Stage 1 source run: {generated['stage1_run_path']}")
+            print(f"Bilingual report: {generated['report']}")
+            return 0
 
         if args.command == "prepare-stage3":
             prepared = write_structure_job(

@@ -4,12 +4,14 @@ Status: implemented as a provisional, audited candidate batch
 
 ## Purpose / 目的
 
-Stage 2 converts released source records and explicitly supplied manual constructs
-into one versioned candidate batch. It separates sequence-derived facts from names,
-claims, and human intent. No scientific model is needed to perform this stage.
+Stage 2 converts released source records, supplied controls, and explicit generator
+outputs into one versioned candidate batch. It separates sequence-derived facts from
+names, claims, generator provenance, and human intent. Deterministic generation can
+run on CPU; scientific generator adapters remain separately attributed.
 
-第二阶段把源序列和明确提供的手工构建体转换为版本化候选批次。系统以实际序列为
-身份来源，文件名和人工声明只作为待核对信息。本阶段不需要启动科学模型。
+第二阶段把源序列、手工构建体和明确的生成器输出转换为版本化候选批次。系统以实际
+序列作为身份来源，文件名、人工声明和模型提案均保留独立来源。本轮组合生成可在 CPU
+运行，不会把尚未执行的科学模型伪装成已有结果。
 
 ## Input Contract / 输入合同
 
@@ -26,7 +28,7 @@ The project configuration points to an external runtime file:
 The specification declares:
 
 - source controls inherited from the verified Stage 1 run;
-- one AA FASTA and optional CDS FASTA per manual candidate;
+- one AA source and optional CDS source per candidate, either FASTA-backed or inline;
 - claimed source ranges for truncations;
 - claimed component order for fusions;
 - annotation approval state;
@@ -47,23 +49,30 @@ The implementation:
 6. derives the actual component order of supplied fusions;
 7. compares sequence-derived annotations with supplied claims;
 8. deduplicates model execution while preserving candidate aliases and evidence;
-9. exports a provisional structure-model FASTA without silently releasing it.
+9. materializes approved component/order/linker grammars under a content identity;
+10. exports a provisional structure-model FASTA without silently releasing it.
 
-No candidate sequence is generated implicitly. New fusion generation remains off
-until an allowed grammar for boundaries, ordering, linkers, tags, and limits is
-approved.
+No candidate sequence is generated implicitly. `generate-stage2-proposals` requires
+an approved or Mock-approved grammar, a verified seed run, explicit component slots,
+linker sequences, order policy, length limit, and candidate budget. It snapshots
+these inputs and writes a self-verifying proposal directory before the expanded
+specification can enter Stage 2.
 
 ## Current Three-Protein Result / 当前结果
 
-The first real Stage 2 run contains nine records:
+The seed Stage 2 run contains nine records:
 
 - 3 full-length source controls: A33, B5, and L1;
 - 4 supplied truncations;
 - 2 supplied fusion constructs: ALAB and ALAL.
 
-All nine have computationally valid AA sequences and are eligible for exploratory
-structure inference. None is formally released because the source/control,
-annotation, grammar, and batch-approval gates remain open.
+The first grammar-bounded expansion considers 184 technical combinations across
+pair, triple, and four-component templates and four linker hypotheses. One direct
+four-component sequence is identical to supplied `manual-alab`, so it is skipped.
+The expanded Stage 2 run therefore contains 192 records: 9 seeds and 183 generated
+proposals. All pass digital sequence/lineage checks; only the three immutable source
+controls are formally structure-ready. The 189 manual/generated records remain
+quarantined for review and are suitable only for exploratory screening.
 
 ## Why Nine, Not One Hundred? / 为什么是 9 个而不是 100 个？
 
@@ -76,9 +85,8 @@ design space.
 当前的 9 个来自输入清单，而不是科学优化结果：3 个全长来源对照、4 个明确提供的截短体、
 2 个明确提供的融合体。没有模型选择“9”这个数量，也没有组合搜索证明它们覆盖了最佳设计空间。
 
-Automatic expansion is intentionally disabled because the project has not approved
-a construct grammar. Generating 100 records responsibly first requires versioned
-rules for:
+The original nine were an input-derived inventory count. Expansion is now enabled
+only through versioned rules for:
 
 - allowed source segments and truncation boundaries;
 - allowed component order, repetition, and orientation;
@@ -88,16 +96,13 @@ rules for:
 - the cheap filters and selection rule used to reduce a larger pool to 100.
 
 Without those rules, 100 candidates would be arbitrary permutations that consume
-compute without improving scientific coverage. A future generation round should
-enumerate a larger grammar-bounded pool, apply inexpensive hard checks, cluster for
-sequence and architecture diversity, and then select a declared number for expensive
-structure and downstream evaluation. One hundred is therefore a possible execution
-budget, not an inherently better scientific number.
+compute without improving scientific coverage. The current grammar enumerates 183
+new records because that is its exact bounded space, not because 183 is inherently
+optimal. Expensive model execution should still use a declared funnel and budget.
 
-For the current Mock milestone, nine is sufficient to exercise all three important
-software paths: full-length controls, truncations, and multi-component fusions. It is
-not sufficient to claim that candidate generation or design-space exploration is
-complete.
+The expanded pool exercises full-length controls, truncations, pairwise fusions,
+three-component fusions, four-component fusions, orientation, and linker variation.
+It still does not establish biological quality or exhaustive design-space coverage.
 
 Sequence-derived findings include:
 
@@ -123,21 +128,33 @@ Validate without writing a run:
 
 ```bash
 ./vaxflow validate-stage2 projects/three-protein/project.json \
-  --from-run /data00/home/wangzhi.wit/models/design-flow-runtime/three-protein/runs/20260713T100542093738Z-25cb00ab
+  --from-run /absolute/path/to/verified-stage1-run
+```
+
+Generate and verify the expanded proposal pool:
+
+```bash
+./vaxflow generate-stage2-proposals projects/three-protein/project.json \
+  --from-run /absolute/path/to/verified-stage2-seed-run \
+  --grammar projects/three-protein/stage2-proposal-grammar.json
+
+./vaxflow verify-stage2-proposals \
+  /absolute/path/to/input/stage2/proposals/<generation-identity>
 ```
 
 Create an immutable continuation run:
 
 ```bash
 ./vaxflow run-stage2 projects/three-protein/project.json \
-  --from-run /data00/home/wangzhi.wit/models/design-flow-runtime/three-protein/runs/20260713T100542093738Z-25cb00ab
+  --from-run /absolute/path/to/verified-stage1-run \
+  --specification /absolute/path/to/candidate_specification.generated.json
 ```
 
 Verify the real Stage 2 run:
 
 ```bash
 ./vaxflow verify-run \
-  /data00/home/wangzhi.wit/models/design-flow-runtime/three-protein/runs/20260713T120430674353Z-stage2-b184a407
+  /absolute/path/to/expanded-stage2-run
 ```
 
 ## Artifacts / 产物
@@ -150,18 +167,25 @@ The `nodes/candidate_specification/` directory contains:
 - `model_inputs.json`: model ownership and readiness;
 - `summary.json` and bilingual `report.html`;
 - input, process, output, human-action, and handoff audit records;
-- snapshots of the specification and every manual AA/CDS FASTA.
+- a snapshot of the specification plus every file-backed AA/CDS input; inline
+  sequences are sealed directly by the specification hash.
+
+The proposal-generation directory separately contains frozen grammar and seed
+snapshots, `proposal_batch.json`, an inline generated specification, proposal
+CSV/FASTA, a bilingual report, and an artifact index.
 
 ## Model Order / 模型顺序
 
-1. **ESMFold2** is the next executable model adapter. It consumes
-   `structure_candidates.fasta` in `protein_structure_assessment`. The current file
-   is explicitly exploratory because the batch is not formally approved.
-2. **Evo2** is not a folding backend. It should enter later through a pinned
-   sequence-evidence adapter after the candidate batch is frozen, with a declared
-   task and calibration rather than a generic score.
-3. **mRNABERT** belongs to `mrna_product_design`. It should not score protein
-   construct quality before the exact protein product and coding policy are fixed.
+1. The deterministic enumerator is the only generator executed in this expansion.
+2. **ESMFold2** evaluates the frozen protein pool in Stage 3.
+3. **NetMHCpan/NetMHCIIpan** evaluate declared immune-presentation evidence in Stage 4.
+4. **TMBed/metapredict** evaluate topology and disorder in Stage 5.
+5. **ProteinMPNN** remains deferred until a backbone and authorized residue mask
+   exist; it may not rewrite antigen residues in round-000.
+6. **Evo2** and **mRNABERT** belong to constrained nucleotide exploration and
+   scoring in Stage 6B, after an exact protein candidate is selected.
+7. Free protein/backbone generation such as ESM3 or RFdiffusion is not applicable
+   to the current source-antigen preservation contract.
 
-The immediate engineering task after candidate review is therefore the Stage 3
-ESMFold2 adapter, structure artifact contract, and residue-level structure audit.
+This separation allows many tools to contribute without letting one model generate,
+score, and approve its own proposal.

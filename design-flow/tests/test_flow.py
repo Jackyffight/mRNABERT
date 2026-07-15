@@ -32,6 +32,10 @@ from design_flow.post_structure_reporting import write_post_structure_run
 from design_flow.product_design import analyze_product_designs
 from design_flow.product_reporting import write_product_design_run
 from design_flow.product_specs import initialize_product_specifications
+from design_flow.proposal_generation import (
+    verify_proposal_generation,
+    write_proposal_generation,
+)
 from design_flow.ranking import analyze_integrated_ranking
 from design_flow.ranking_reporting import write_ranking_run
 from design_flow.ranking_specs import initialize_ranking_specification
@@ -1036,6 +1040,158 @@ class CandidateStageEndToEndTests(unittest.TestCase):
                     config_path,
                     source_run_dir=source_run,
                 )
+
+    def test_stage2_proposal_generator_materializes_and_verifies_inline_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, source_run = self._write_stage2_project(root)
+            seed_run = write_candidate_run(
+                analyze_candidate_specification(
+                    config_path,
+                    source_run_dir=source_run,
+                ),
+                now=datetime(2026, 7, 14, 8, 2, tzinfo=timezone.utc),
+            )
+            grammar_path = root / "proposal-grammar.json"
+            grammar_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "vaxflow.stage2-proposal-grammar.v1",
+                        "grammar_id": "fixture-pairwise-v1",
+                        "project_id": "test-stage2",
+                        "design_round_id": "round-000",
+                        "status": "approved_for_mock_execution",
+                        "consumed_feedback_request_ids": [],
+                        "linkers": [
+                            {
+                                "linker_id": "direct",
+                                "sequence": "",
+                                "class": "control",
+                                "rationale": "Direct concatenation control.",
+                            },
+                            {
+                                "linker_id": "flex5",
+                                "sequence": "GGGGS",
+                                "class": "flexible",
+                                "rationale": "Fixture flexible linker.",
+                            },
+                        ],
+                        "composition_templates": [
+                            {
+                                "template_id": "pair-ab",
+                                "component_slots": [
+                                    {
+                                        "slot_id": "a",
+                                        "candidate_keys": ["trunc-a"],
+                                    },
+                                    {
+                                        "slot_id": "b",
+                                        "candidate_keys": ["trunc-b"],
+                                    },
+                                ],
+                                "order_policy": "all_permutations",
+                                "linker_ids": ["direct", "flex5"],
+                                "rationale": "Exercise pairwise fixture generation.",
+                            },
+                            {
+                                "template_id": "source-pair",
+                                "component_slots": [
+                                    {
+                                        "slot_id": "source-a",
+                                        "candidate_keys": ["source-A"],
+                                    },
+                                    {
+                                        "slot_id": "source-b",
+                                        "candidate_keys": ["source-B"],
+                                    },
+                                ],
+                                "order_policy": "fixed",
+                                "linker_ids": ["direct"],
+                                "rationale": "Exercise immutable source parents.",
+                            },
+                        ],
+                        "constraints": {
+                            "maximum_aa_length": 1024,
+                            "maximum_generated_candidates": 10,
+                        },
+                        "model_roles": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            generated = write_proposal_generation(
+                config_path,
+                grammar_path=grammar_path,
+                seed_run_dir=seed_run,
+            )
+            proposal_dir = Path(generated["output_dir"])
+            proposal_batch = json.loads(
+                (proposal_dir / "proposal_batch.json").read_text(encoding="utf-8")
+            )
+            expanded = analyze_candidate_specification(
+                config_path,
+                source_run_dir=source_run,
+                specification_path=Path(generated["candidate_specification"]),
+            )
+
+            self.assertEqual(generated["generated_candidates"], 4)
+            self.assertEqual(generated["skipped_candidates"], 1)
+            self.assertEqual(generated["total_candidates"], 10)
+            self.assertEqual(
+                proposal_batch["skipped_candidates"][0]["duplicate_of"],
+                "fusion-ba",
+            )
+            self.assertEqual(verify_proposal_generation(proposal_dir)["status"], "pass")
+            self.assertIn(
+                "系统从 6 条冻结 seed 出发",
+                (proposal_dir / "report.html").read_text(encoding="utf-8"),
+            )
+            self.assertEqual(expanded.computational_status, "pass")
+            self.assertEqual(len(expanded.candidates), 10)
+            linked = next(
+                candidate
+                for candidate in expanded.candidates
+                if candidate.proposal["generator"]["id"]
+                == "deterministic-combinatorial-enumerator"
+                and candidate.proposal["generator"]["parameters"]["linker_id"]
+                == "flex5"
+            )
+            self.assertEqual(linked.observed_component_keys, ["trunc-a", "trunc-b"])
+            self.assertEqual(
+                [
+                    component.get("declared_role")
+                    for component in linked.inferred_components
+                ],
+                [None, "linker", None],
+            )
+            source_pair = next(
+                candidate
+                for candidate in expanded.candidates
+                if candidate.proposal["generator"]["id"]
+                == "deterministic-combinatorial-enumerator"
+                and candidate.proposal["generator"]["parameters"]["template_id"]
+                == "source-pair"
+            )
+            self.assertEqual(
+                source_pair.observed_component_keys,
+                ["source-A", "source-B"],
+            )
+            self.assertEqual(
+                [
+                    component["source_protein_id"]
+                    for component in source_pair.inferred_components
+                ],
+                ["A", "B"],
+            )
+
+            (proposal_dir / "proposals.csv").write_text("tampered\n", encoding="utf-8")
+            verification = verify_proposal_generation(proposal_dir)
+            self.assertEqual(verification["status"], "fail")
+            self.assertTrue(
+                any("Proposal CSV" in error for error in verification["errors"]),
+                verification["errors"],
+            )
 
     def test_stage2_verifier_detects_component_tampering_after_reindex(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:

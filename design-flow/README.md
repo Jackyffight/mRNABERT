@@ -131,6 +131,22 @@ Run candidate specification against a verified Stage 1 run:
 ./vaxflow run-stage2 projects/three-protein/project.json --from-run /absolute/path/to/stage1-run
 ```
 
+Expand a verified Stage 2 seed batch with an approved, versioned grammar:
+
+```bash
+./vaxflow generate-stage2-proposals projects/three-protein/project.json \
+  --from-run /absolute/path/to/verified-stage2-seed-run \
+  --grammar projects/three-protein/stage2-proposal-grammar.json
+
+./vaxflow verify-stage2-proposals \
+  /absolute/path/to/input/stage2/proposals/<generation-identity>
+```
+
+The generator writes one inline candidate specification rather than hundreds of
+small FASTA files. Its bilingual report separates the generator actually executed
+from downstream or non-applicable model adapters. Run the generated specification
+against the Stage 1 parent to freeze the expanded Stage 2 batch.
+
 The Stage 2 node writes `candidate_batch.json`, `proposal_lineage.json`,
 `redesign_requests.json`, review CSV files, a bilingual node report, and
 `structure_candidates.fasta`. The latter is an explicitly provisional ESMFold2
@@ -244,10 +260,10 @@ The pinned CPU tools and the reasons for selecting them are recorded in
 [docs/stage4-toolchain.md](docs/stage4-toolchain.md).
 The GPU-capable Stage 5 model profile, open gaps, and provider replacement contract
 are recorded in [docs/stage5-toolchain.md](docs/stage5-toolchain.md).
-The frozen route is recorded in
-[docs/workflow-v1.md](docs/workflow-v1.md) and
-`docs/workflow-v1.json`; CI-style tests prevent those contracts from drifting
-away from the executable DAG.
+The current frozen route is recorded in
+[docs/workflow-v2.md](docs/workflow-v2.md) and `docs/workflow-v2.json`; historical
+workflow-v1 runs remain verifiable against their frozen v1 contract. CI-style tests
+prevent either contract from drifting away from the executable DAG.
 The boundary between deterministic rules, LLM review, and human authority is
 defined in
 [docs/audit-automation-and-llm-governance.md](docs/audit-automation-and-llm-governance.md).

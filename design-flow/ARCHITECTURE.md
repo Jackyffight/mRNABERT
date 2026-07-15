@@ -130,7 +130,7 @@ acyclic and immutable. See [Round-Based Design Optimization](docs/round-based-de
 terminal node, and two modality branches that rejoin before experiment release:
 
 1. **Program definition and source intake (implemented)**
-2. **Candidate specification and generation (manual/provisional specification implemented)**
+2. **Candidate specification and generation (manual import and grammar-bounded combinatorial generation implemented)**
 3. **Protein structure assessment (exploratory ESMFold2 path implemented)**
 4. **Immune evidence assessment (deterministic partial-evidence path implemented)**
 5. **Developability and manufacturability assessment (deterministic intrinsic and adapter path implemented)**
@@ -240,15 +240,17 @@ immutable; a correction creates a new run or an explicitly versioned node attemp
 ## Initial Milestones
 
 - **M0:** sequence intake and reproducible audit, now implemented.
-- **M1:** candidate schema plus manually supplied original and fusion constructs;
-  provisional reconciliation is implemented, while grammar and batch approval remain open.
+- **M1:** candidate schema, manual controls, inline model proposals, grammar-bounded
+  combinatorial generation, lineage, deduplication, and proposal reports are implemented;
+  scientific batch approval remains open.
 - **M2:** one structure-prediction adapter and a structure comparison report;
   exploratory ESMFold2-Fast execution, deterministic geometry, and audited import are implemented.
 - **M3:** developability adapters and transparent multi-objective ranking.
 - **M4:** protein-expression and mRNA-design branches.
 - **M5:** experiment manifest, assay schema, and first closed learning loop.
 
-The next implementation target is a pinned Stage 2 proposal-generator adapter and
-the first `round-001` execution that consumes accepted `round_feedback.json`
-requests. Model-generated candidates must use the same lineage, control retention,
-deduplication, and immutable-round contracts as manual proposals.
+The next implementation target is a declared multi-fidelity selection policy for
+the expanded Stage 2 pool, followed by Stage 3 execution under an explicit compute
+budget. Scientific generator adapters and the first `round-001` execution must use
+the same lineage, control retention, deduplication, and immutable-round contracts as
+the deterministic generator.

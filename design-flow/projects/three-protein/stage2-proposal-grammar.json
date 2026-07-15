@@ -1,0 +1,266 @@
+{
+  "schema_version": "vaxflow.stage2-proposal-grammar.v1",
+  "grammar_id": "three-protein-round-000-combinatorial-v1",
+  "project_id": "three-protein-vaccine",
+  "design_round_id": "round-000",
+  "status": "approved_for_mock_execution",
+  "batch_label": "Round-000 combinatorial fusion proposal pool",
+  "consumed_feedback_request_ids": [],
+  "linkers": [
+    {
+      "linker_id": "direct",
+      "sequence": "",
+      "class": "no_linker_control",
+      "rationale": "Retain direct concatenation as a technical control, not as a preferred product design."
+    },
+    {
+      "linker_id": "flex5",
+      "sequence": "GGGGS",
+      "class": "short_flexible",
+      "rationale": "Represent one short flexible-linker hypothesis in the Mock exploration panel."
+    },
+    {
+      "linker_id": "flex10",
+      "sequence": "GGGGSGGGGS",
+      "class": "longer_flexible",
+      "rationale": "Represent a longer flexible-linker hypothesis while retaining exact sequence identity."
+    },
+    {
+      "linker_id": "rigid5",
+      "sequence": "EAAAK",
+      "class": "short_rigid",
+      "rationale": "Represent one short rigid-linker hypothesis for downstream structural comparison."
+    }
+  ],
+  "composition_templates": [
+    {
+      "template_id": "pair-a33-b5",
+      "component_slots": [
+        {
+          "slot_id": "a33",
+          "candidate_keys": [
+            "a33-trunc-1",
+            "a33-trunc-2"
+          ]
+        },
+        {
+          "slot_id": "b5",
+          "candidate_keys": [
+            "b5-trunc"
+          ]
+        }
+      ],
+      "order_policy": "all_permutations",
+      "linker_ids": [
+        "direct",
+        "flex5",
+        "flex10",
+        "rigid5"
+      ],
+      "rationale": "Explore both orientations of one A33 boundary hypothesis paired with B5."
+    },
+    {
+      "template_id": "pair-a33-l1",
+      "component_slots": [
+        {
+          "slot_id": "a33",
+          "candidate_keys": [
+            "a33-trunc-1",
+            "a33-trunc-2"
+          ]
+        },
+        {
+          "slot_id": "l1",
+          "candidate_keys": [
+            "l1-trunc"
+          ]
+        }
+      ],
+      "order_policy": "all_permutations",
+      "linker_ids": [
+        "direct",
+        "flex5",
+        "flex10",
+        "rigid5"
+      ],
+      "rationale": "Explore both orientations of one A33 boundary hypothesis paired with L1."
+    },
+    {
+      "template_id": "pair-b5-l1",
+      "component_slots": [
+        {
+          "slot_id": "b5",
+          "candidate_keys": [
+            "b5-trunc"
+          ]
+        },
+        {
+          "slot_id": "l1",
+          "candidate_keys": [
+            "l1-trunc"
+          ]
+        }
+      ],
+      "order_policy": "all_permutations",
+      "linker_ids": [
+        "direct",
+        "flex5",
+        "flex10",
+        "rigid5"
+      ],
+      "rationale": "Add the B5-L1 pair as a composition control independent of A33."
+    },
+    {
+      "template_id": "triple-a33-b5-l1",
+      "component_slots": [
+        {
+          "slot_id": "a33",
+          "candidate_keys": [
+            "a33-trunc-1",
+            "a33-trunc-2"
+          ]
+        },
+        {
+          "slot_id": "b5",
+          "candidate_keys": [
+            "b5-trunc"
+          ]
+        },
+        {
+          "slot_id": "l1",
+          "candidate_keys": [
+            "l1-trunc"
+          ]
+        }
+      ],
+      "order_policy": "all_permutations",
+      "linker_ids": [
+        "direct",
+        "flex5",
+        "flex10",
+        "rigid5"
+      ],
+      "rationale": "Explore all orders of one A33 boundary hypothesis with B5 and L1."
+    },
+    {
+      "template_id": "quad-a33a-a33b-b5-l1",
+      "component_slots": [
+        {
+          "slot_id": "a33a",
+          "candidate_keys": [
+            "a33-trunc-1"
+          ]
+        },
+        {
+          "slot_id": "a33b",
+          "candidate_keys": [
+            "a33-trunc-2"
+          ]
+        },
+        {
+          "slot_id": "b5",
+          "candidate_keys": [
+            "b5-trunc"
+          ]
+        },
+        {
+          "slot_id": "l1",
+          "candidate_keys": [
+            "l1-trunc"
+          ]
+        }
+      ],
+      "order_policy": "all_permutations",
+      "linker_ids": [
+        "direct",
+        "flex5",
+        "flex10",
+        "rigid5"
+      ],
+      "rationale": "Expand the supplied four-component idea across every component order and linker hypothesis."
+    }
+  ],
+  "constraints": {
+    "maximum_aa_length": 1024,
+    "maximum_generated_candidates": 200
+  },
+  "model_roles": [
+    {
+      "adapter_id": "deterministic-combinatorial-enumerator",
+      "role": "proposal_generator",
+      "stage_id": "candidate_specification",
+      "status": "active",
+      "reason": "This adapter can vary only the explicitly approved component, order, and linker fields."
+    },
+    {
+      "adapter_id": "proteinmpnn-restricted-redesign",
+      "role": "proposal_generator",
+      "stage_id": "candidate_specification",
+      "status": "deferred",
+      "reason": "It requires a selected backbone plus an authorized residue mask; internal antigen mutation is not approved in round-000."
+    },
+    {
+      "adapter_id": "esmfold2-fast",
+      "role": "evaluator",
+      "stage_id": "protein_structure_assessment",
+      "status": "deferred",
+      "reason": "It independently evaluates generated proteins after the Stage 2 batch is frozen."
+    },
+    {
+      "adapter_id": "netmhcpan-4.2",
+      "role": "evaluator",
+      "stage_id": "immune_evidence_assessment",
+      "status": "deferred",
+      "reason": "It provides declared BoLA-I binding evidence and does not generate antigen sequences."
+    },
+    {
+      "adapter_id": "netmhciipan-4.3",
+      "role": "evaluator",
+      "stage_id": "immune_evidence_assessment",
+      "status": "deferred",
+      "reason": "It provides declared BoLA-II binding evidence and does not generate antigen sequences."
+    },
+    {
+      "adapter_id": "tmbed",
+      "role": "evaluator",
+      "stage_id": "developability_assessment",
+      "status": "deferred",
+      "reason": "It evaluates topology liabilities after generation."
+    },
+    {
+      "adapter_id": "metapredict",
+      "role": "evaluator",
+      "stage_id": "developability_assessment",
+      "status": "deferred",
+      "reason": "It evaluates predicted disorder after generation."
+    },
+    {
+      "adapter_id": "evo2-constrained-nucleotide",
+      "role": "product_optimizer",
+      "stage_id": "mrna_product_design",
+      "status": "deferred",
+      "reason": "Evo2 operates on nucleotide sequence; it belongs in constrained synonymous mRNA exploration after the protein is selected."
+    },
+    {
+      "adapter_id": "mrnabert-cds-scorer",
+      "role": "evaluator",
+      "stage_id": "mrna_product_design",
+      "status": "deferred",
+      "reason": "It can compare synonymous CDS proposals but cannot establish protein structure or immunogenicity."
+    },
+    {
+      "adapter_id": "esm3-protein-generator",
+      "role": "proposal_generator",
+      "stage_id": "candidate_specification",
+      "status": "not_applicable",
+      "reason": "Free internal antigen mutation is outside the approved round-000 design variables."
+    },
+    {
+      "adapter_id": "rfdiffusion-backbone-generator",
+      "role": "proposal_generator",
+      "stage_id": "candidate_specification",
+      "status": "not_applicable",
+      "reason": "De novo backbone generation is outside this source-antigen fusion experiment."
+    }
+  ]
+}

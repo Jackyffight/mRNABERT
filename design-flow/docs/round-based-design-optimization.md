@@ -63,10 +63,13 @@ kitchen line, not enough to claim that the restaurant explored every possible di
 
 ## Current Implementation Boundary
 
-Version 0.13 implements the design-round contracts, approval gate, proposal
-lineage, evaluator feedback artifacts, and Stage 7 feedback aggregation. The
-current `round-000` pool is imported from explicit source and manual records.
-Automatic or model-driven proposal generation is intentionally not yet enabled;
-the next adapter must emit the same validated proposal schema before it may enter
-Stage 2. This distinction prevents an implemented feedback loop from being confused
-with an already optimized candidate portfolio.
+Version 0.14 implements the design-round contracts, approval gate, proposal
+lineage, evaluator feedback artifacts, Stage 7 feedback aggregation, and an explicit
+Stage 2 combinatorial generator. The first grammar-bounded expansion starts from
+nine source/manual seeds, materializes 183 unique proposals, and skips one exact
+duplicate of an existing manual construct. The resulting 192-record pool remains
+Mock-only and unapproved for scientific release.
+
+Scientific or model-driven generators must emit the same validated proposal schema.
+Registering a model role does not mean that model ran: every adapter remains
+`deferred` until its responsible stage, inputs, and authority constraints are ready.
