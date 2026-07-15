@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .design_loop import validate_redesign_request_document
 from .assessment_specs import DEVELOPABILITY_STAGE_ID, IMMUNE_STAGE_ID
 from .config import load_project_config
 from .continuation_state import (
@@ -324,6 +325,31 @@ def verify_post_structure_run(
         "Both stages recomputed from copied candidates, structures, specs, and evidence",
         "Stage 4/5 deterministic recomputation failed",
     )
+    workflow_version = workflow.get("workflow_version")
+    is_v2_workflow = isinstance(workflow_version, int) and workflow_version >= 2
+    if is_v2_workflow:
+        round_id = str(candidate_batch.get("design_round_id")) if semantic_loaded else ""
+        for stage_id, node in (
+            (IMMUNE_STAGE_ID, immune_node),
+            (DEVELOPABILITY_STAGE_ID, developability_node),
+        ):
+            try:
+                redesign_requests = _load(node / "redesign_requests.json")
+            except (OSError, ValueError, json.JSONDecodeError):
+                redesign_requests = {}
+            verifier.check(
+                f"{stage_id}-redesign-requests",
+                bool(round_id)
+                and validate_redesign_request_document(
+                    redesign_requests,
+                    project_id=str(manifest.get("project_id")),
+                    run_id=run_id,
+                    round_id=round_id,
+                    stage_id=stage_id,
+                ),
+                f"{stage_id} redesign requests are schema-valid",
+                f"{stage_id} redesign-request artifact is missing or invalid",
+            )
     verifier.check(
         "stage4-immune-reproducibility",
         semantic_loaded

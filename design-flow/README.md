@@ -20,6 +20,8 @@ intake through provisional integrated ranking:
 - frame, stop-codon, alphabet, and start-codon QC;
 - descriptive AA/CDS metrics;
 - exact input snapshots, indexed immutable artifacts, and cross-file verification;
+- versioned Stage 1 design brief, objective policy, and searchable-variable registry;
+- round-aware proposal lineage and evaluator-generated redesign requests;
 - JSON/CSV audit records and self-contained bilingual HTML reports.
 - a Stage 2 candidate specification contract for source controls, truncations, and fusions;
 - deterministic AA/CDS terminal-addition, source-range, and component-order inference;
@@ -67,6 +69,17 @@ same three IDs (`A33`, `B5`, and `L1`). Use the original coding
 sequence in the CDS file, in 5-prime to 3-prime orientation. DNA (`T`) and RNA (`U`)
 are accepted; RNA is normalized to DNA for translation checks.
 
+Initialize the explicit round-0 design contracts before validation:
+
+```bash
+./vaxflow init-design-round projects/three-protein/project.json
+```
+
+Review the three files under `input/design/` and change their status from `draft`
+only after their contents are accepted. For a non-scientific pipeline smoke project,
+`--mock-approved` writes `approved_for_mock_execution`; this never authorizes a
+scientific, synthesis, or experiment release.
+
 Validate without writing a run:
 
 ```bash
@@ -81,7 +94,7 @@ When validation is understandable, calculate and record the first run:
 
 The command prints the exact run path. The run root contains:
 
-- `inputs/`: exact project and FASTA snapshots used by this run;
+- `inputs/`: exact project, FASTA, design brief, variable, and objective snapshots;
 - `artifact_index.json`: SHA-256 and byte size for every run artifact;
 - `manifest.json`: run identity, context, current node, and artifact pointers;
 - `workflow.json`: complete future UI node graph and every node's audit contract;
@@ -92,6 +105,7 @@ The command prints the exact run path. The run root contains:
 - `nodes/program_and_source_intake/output_audit.json`: audited node outputs;
 - `nodes/program_and_source_intake/human_actions.json`: human questions and decisions;
 - `nodes/program_and_source_intake/handoff.json`: next-node payload;
+- `nodes/program_and_source_intake/design_round.json`: reconstructed round contract;
 - sequence JSON/CSV details under the same node directory.
 
 As the workflow advances, each completed system node adds its own `summary.json`
@@ -117,9 +131,10 @@ Run candidate specification against a verified Stage 1 run:
 ./vaxflow run-stage2 projects/three-protein/project.json --from-run /absolute/path/to/stage1-run
 ```
 
-The Stage 2 node writes `candidate_batch.json`, review CSV files, a bilingual node
-report, and `structure_candidates.fasta`. The latter is an explicitly provisional
-ESMFold2 input until the human release gates are resolved.
+The Stage 2 node writes `candidate_batch.json`, `proposal_lineage.json`,
+`redesign_requests.json`, review CSV files, a bilingual node report, and
+`structure_candidates.fasta`. The latter is an explicitly provisional ESMFold2
+input until the human release gates are resolved.
 
 Prepare the checksum-bound exploratory Stage 3 transfer archive:
 

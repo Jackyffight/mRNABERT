@@ -19,6 +19,7 @@ from .candidate_specification import (
     NEXT_STAGE_ID,
     CandidateBatchAnalysis,
 )
+from .design_loop import proposal_lineage_document, redesign_request_document
 from .verification import ARTIFACT_INDEX_FILENAME, build_artifact_index, sha256_file, verify_run
 from .workflow import (
     STAGE_BY_ID,
@@ -78,6 +79,10 @@ def _candidate_csv_rows(analysis: CandidateBatchAnalysis) -> list[dict[str, Any]
             "exploratory_structure_ready": candidate.exploratory_structure_ready,
             "formal_structure_ready": candidate.formal_structure_ready,
             "duplicate_of": candidate.duplicate_of or "",
+            "proposal_round": candidate.proposal["round_id"],
+            "proposal_generator": candidate.proposal["generator"]["id"],
+            "proposal_parent_keys": "|".join(candidate.proposal["parent_candidate_keys"]),
+            "feedback_request_ids": "|".join(candidate.proposal["feedback_request_ids"]),
         }
         for candidate in analysis.candidates
     ]
@@ -166,12 +171,20 @@ def build_candidate_node_bundle(
         status, readiness = "complete", "ready"
 
     candidates = [candidate.to_dict() for candidate in analysis.candidates]
+    round_id = str(analysis.source_handoff["carried_forward"]["design_round"]["round_id"])
     eligible = [
         candidate
         for candidate in candidates
-        if candidate["exploratory_structure_ready"] and candidate["duplicate_of"] is None
+        if candidate["computational_status"] == "pass"
+        and candidate["exploratory_structure_ready"]
+        and candidate["duplicate_of"] is None
     ]
-    release_ready = [candidate for candidate in candidates if candidate["formal_structure_ready"]]
+    release_ready = [
+        candidate
+        for candidate in candidates
+        if candidate["computational_status"] == "pass"
+        and candidate["formal_structure_ready"]
+    ]
     errors = sum(issue.severity == "error" for issue in analysis.all_issues)
     warnings = sum(issue.severity == "warning" for issue in analysis.all_issues)
     input_records = {
@@ -244,6 +257,13 @@ def build_candidate_node_bundle(
                 "behavior": "Map exact AA segments back to source proteins and compare inferred ranges/order with supplied claims.",
             },
             {
+                "operation": "freeze_proposal_lineage",
+                "behavior": (
+                    "Record proposal round, generator identity, parent candidates, transformation, "
+                    "rationale, and consumed feedback separately from biological candidate identity."
+                ),
+            },
+            {
                 "operation": "deduplicate_model_inputs",
                 "behavior": "Retain every alias in the manifest while executing identical AA sequences only once per model adapter.",
             },
@@ -308,6 +328,14 @@ def build_candidate_node_bundle(
                 "check_id": "structure-inputs-explicit",
                 "status": "pass",
             },
+            {
+                "check_id": "proposal-lineage-complete",
+                "status": "pass" if all(
+                    candidate["proposal"].get("round_id") == round_id
+                    and candidate["proposal"].get("generator", {}).get("id")
+                    for candidate in candidates
+                ) else "fail",
+            },
         ],
     }
     human_actions = {
@@ -366,6 +394,7 @@ def build_candidate_node_bundle(
             "project_id": analysis.config.project_id,
             "source_run_id": analysis.source_run_id,
             "specification_id": analysis.specification.specification_id,
+            "design_round_id": round_id,
             "candidate_batch_sha256": None,
             "candidates": output_audit["candidates"],
             "exploratory_structure_candidate_ids": [
@@ -400,9 +429,30 @@ def build_candidate_node_bundle(
         "specification_id": analysis.specification.specification_id,
         "batch_label": analysis.specification.batch_label,
         "release_mode": analysis.specification.release_mode,
+        "design_round_id": round_id,
         "generation_grammar": analysis.specification.generation_grammar,
         "candidates": candidates,
     }
+    proposal_lineage = proposal_lineage_document(
+        project_id=analysis.config.project_id,
+        run_id=run_id,
+        round_id=round_id,
+        records=[
+            {
+                "candidate_key": candidate["candidate_key"],
+                "candidate_id": candidate["candidate_id"],
+                **candidate["proposal"],
+            }
+            for candidate in candidates
+        ],
+    )
+    redesign_requests = redesign_request_document(
+        project_id=analysis.config.project_id,
+        run_id=run_id,
+        round_id=round_id,
+        stage_id=CANDIDATE_STAGE_ID,
+        requests=[],
+    )
     return {
         "status": status,
         "summary": summary,
@@ -413,6 +463,8 @@ def build_candidate_node_bundle(
         "handoff": handoff,
         "model_inputs": model_inputs,
         "candidate_batch": candidate_batch,
+        "proposal_lineage": proposal_lineage,
+        "redesign_requests": redesign_requests,
     }
 
 
@@ -453,13 +505,11 @@ def write_candidate_run(
     if run_dir.exists():
         raise ValueError(f"Refusing to overwrite candidate run: {run_dir}")
     try:
-        (run_dir / "inputs").mkdir(parents=True)
+        shutil.copytree(analysis.source_run_dir / "inputs", run_dir / "inputs")
         shutil.copytree(
             analysis.source_run_dir / "nodes" / SOURCE_STAGE_ID,
             run_dir / "nodes" / SOURCE_STAGE_ID,
         )
-        for name in ("project.json", "proteins_aa.fasta", "proteins_cds.fasta"):
-            shutil.copyfile(analysis.source_run_dir / "inputs" / name, run_dir / "inputs" / name)
         shutil.copyfile(
             analysis.source_run_dir / "manifest.json",
             run_dir / "inputs" / "source_run_manifest.json",
@@ -474,6 +524,8 @@ def write_candidate_run(
         _snapshot_candidate_inputs(analysis, node_dir, bundle)
 
         _atomic_write(node_dir / "candidate_batch.json", _json_text(bundle["candidate_batch"]))
+        _atomic_write(node_dir / "proposal_lineage.json", _json_text(bundle["proposal_lineage"]))
+        _atomic_write(node_dir / "redesign_requests.json", _json_text(bundle["redesign_requests"]))
         candidate_batch_sha256 = sha256_file(node_dir / "candidate_batch.json")
         bundle["handoff"]["carried_forward"]["candidate_batch_sha256"] = candidate_batch_sha256
         _atomic_write(node_dir / "summary.json", _json_text(bundle["summary"]))
@@ -488,6 +540,8 @@ def write_candidate_run(
             "computational_status", "release_status", "annotation_status", "aa_length",
             "cds_length_nt", "translation_relation", "exploratory_structure_ready",
             "formal_structure_ready", "duplicate_of",
+            "proposal_round", "proposal_generator", "proposal_parent_keys",
+            "feedback_request_ids",
         ]
         _atomic_write(
             node_dir / "candidates.csv",

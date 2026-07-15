@@ -299,6 +299,7 @@ def write_run_artifacts(
         "project_config": analysis.config.config_path,
         "amino_acid_fasta": analysis.config.amino_acid_fasta,
         "nucleotide_fasta": analysis.config.nucleotide_fasta,
+        **analysis.design_dossier.paths,
     }
     for input_name, snapshot_path in SOURCE_SNAPSHOT_PATHS.items():
         _atomic_write_bytes(run_dir / snapshot_path, source_paths[input_name].read_bytes())
@@ -311,6 +312,17 @@ def write_run_artifacts(
         "run_id": run_id,
         "stage_id": CURRENT_STAGE_ID,
         "proteins": [protein.to_dict() for protein in analysis.proteins],
+    }
+    design_round_document = {
+        "schema_version": 1,
+        "project_id": analysis.config.project_id,
+        "run_id": run_id,
+        "stage_id": CURRENT_STAGE_ID,
+        "summary": analysis.design_dossier.summary(),
+        "digests": analysis.design_dossier.digests,
+        "design_brief": analysis.design_dossier.brief,
+        "design_variable_registry": analysis.design_dossier.variable_registry,
+        "objective_policy": analysis.design_dossier.objective_policy,
     }
     fieldnames, protein_rows = _protein_rows(analysis)
     issue_rows = _issue_rows(analysis)
@@ -383,6 +395,7 @@ def write_run_artifacts(
     _atomic_write(node_dir / "human_actions.json", _json_text(bundle["human_actions"]))
     _atomic_write(node_dir / "handoff.json", _json_text(bundle["handoff"]))
     _atomic_write(node_dir / "proteins.json", _json_text(proteins_document))
+    _atomic_write(node_dir / "design_round.json", _json_text(design_round_document))
     _atomic_write(node_dir / "proteins.csv", _csv_text(fieldnames, protein_rows))
     _atomic_write(
         node_dir / "qc_issues.csv",

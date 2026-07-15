@@ -21,6 +21,8 @@ from .assessment_specs import (
     initialize_assessment_specifications,
 )
 from .domain import ProjectAnalysis
+from .config import load_project_config
+from .design_loop import default_design_documents
 from .netmhc_adapter import prepare_stage4_mhc_evidence
 from .pipeline import analyze_project
 from .post_structure_assessment import analyze_post_structure_stages
@@ -72,6 +74,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser("run", help="audit inputs and write immutable run artifacts")
     run_parser.add_argument("project_config", type=Path)
+    init_design_parser = subparsers.add_parser(
+        "init-design-round",
+        help="create explicit round-0 design brief, variable registry, and objective policy",
+    )
+    init_design_parser.add_argument("project_config", type=Path)
+    init_design_parser.add_argument(
+        "--mock-approved",
+        action="store_true",
+        help="mark templates approved only for non-scientific workflow validation",
+    )
     for command, help_text in (
         ("validate-stage2", "validate candidate specification without writing a continuation run"),
         ("run-stage2", "write an immutable candidate-specification continuation run"),
@@ -255,7 +267,17 @@ def _init_project(
     config_path = project_dir / "project.json"
     amino_acid_path = runtime_root / "input" / "proteins_aa.fasta"
     nucleotide_path = runtime_root / "input" / "proteins_cds.fasta"
-    existing = [path for path in (config_path, amino_acid_path, nucleotide_path) if path.exists()]
+    design_root = runtime_root / "input" / "design"
+    design_paths = {
+        "design_brief": design_root / "design_brief.json",
+        "design_variable_registry": design_root / "design_variable_registry.json",
+        "objective_policy": design_root / "objective_policy.json",
+    }
+    existing = [
+        path
+        for path in (config_path, amino_acid_path, nucleotide_path, *design_paths.values())
+        if path.exists()
+    ]
     if existing:
         raise ValueError(f"Refusing to overwrite existing project file: {existing[0]}")
 
@@ -269,6 +291,9 @@ def _init_project(
         "inputs": {
             "amino_acid_fasta": "input/proteins_aa.fasta",
             "nucleotide_fasta": "input/proteins_cds.fasta",
+            "design_brief": "input/design/design_brief.json",
+            "design_variable_registry": "input/design/design_variable_registry.json",
+            "objective_policy": "input/design/objective_policy.json",
         },
         "outputs": {"run_root": "runs"},
         "context": {
@@ -285,10 +310,49 @@ def _init_project(
     config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     amino_acid_path.write_text(_placeholder_records(expected_count, "aa"), encoding="utf-8")
     nucleotide_path.write_text(_placeholder_records(expected_count, "cds"), encoding="utf-8")
+    design_root.mkdir(parents=True, exist_ok=True)
+    design_documents = default_design_documents(
+        project_id=project_id,
+        target_indication="unspecified",
+        intended_host_species="unspecified",
+        product_modalities=[],
+    )
+    for name, document in design_documents.items():
+        design_paths[name].write_text(
+            json.dumps(document, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     print(f"Created project: {config_path}")
     print(f"Runtime root: {runtime_root}")
     print(f"Replace placeholder sequences in: {amino_acid_path}")
     print(f"Replace placeholder sequences in: {nucleotide_path}")
+    return 0
+
+
+def _init_design_round(project_config: Path, *, mock_approved: bool) -> int:
+    config = load_project_config(project_config)
+    paths = {
+        "design_brief": config.design_brief,
+        "design_variable_registry": config.design_variable_registry,
+        "objective_policy": config.objective_policy,
+    }
+    existing = [path for path in paths.values() if path.exists()]
+    if existing:
+        raise ValueError(f"Refusing to overwrite existing design-round input: {existing[0]}")
+    documents = default_design_documents(
+        project_id=config.project_id,
+        target_indication=config.target_indication,
+        intended_host_species=config.intended_host_species,
+        product_modalities=list(config.product_modalities),
+        mock_approved=mock_approved,
+    )
+    for name, path in paths.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(documents[name], indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        print(f"Created {name}: {path}")
     return 0
 
 
@@ -357,6 +421,11 @@ def main(argv: list[str] | None = None) -> int:
                 args.runtime_root,
                 args.project_id,
                 args.expected_count,
+            )
+        if args.command == "init-design-round":
+            return _init_design_round(
+                args.project_config,
+                mock_approved=args.mock_approved,
             )
 
         if args.command == "verify-run":

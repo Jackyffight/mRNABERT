@@ -1,0 +1,401 @@
+{
+  "contract_sha256": "a5e858dba9ae2c4d480f9c2b1661ed79138211f4e5e99157dce3b1f6aef30b0c",
+  "entry_stage": "program_and_source_intake",
+  "schema_version": 1,
+  "stages": [
+    {
+      "capabilities": [
+        "Pair protein and CDS records and verify translation consistency.",
+        "Detect malformed, mislabeled, duplicated, or incomplete source records.",
+        "Create stable candidate IDs, input hashes, and a source evidence baseline.",
+        "Validate a versioned design brief, objective policy, and design-variable registry."
+      ],
+      "depends_on": [],
+      "human_intervention_contract": [
+        "Approve the design brief, objective policy, variable registry, and immutable reference controls.",
+        "Resolve missing provenance and decide whether disputed or mislabeled files are replaced or rejected.",
+        "Assign owners and resolutions to every open action before its blocking stage."
+      ],
+      "input_audit_contract": [
+        "Verify target indication, intended host, product modalities, owners, and success criteria.",
+        "Verify round identity, prior feedback, hard gates, optimization objectives, and searchable variables.",
+        "Verify source accession/version, organism or isolate, file integrity, and record identity.",
+        "Verify AA/CDS record counts, alphabets, reading frames, start/stop behavior, and pairing IDs."
+      ],
+      "name": "Program definition and source intake",
+      "order": "1",
+      "output_audit_contract": [
+        "Confirm every accepted source has an immutable ID, normalized sequences, and SHA-256 provenance.",
+        "Confirm errors, warnings, and exclusions are explicit and machine-readable.",
+        "Confirm the source set and unresolved decisions are ready for candidate specification.",
+        "Confirm every objective and variable is explicit before proposal generation begins."
+      ],
+      "process_contract": [
+        "Normalize FASTA formatting without silently changing biological sequence content.",
+        "Translate CDS with the declared genetic code and compare it residue by residue with AA input.",
+        "Calculate descriptive sequence metrics and quarantine inconsistent records.",
+        "Freeze the round contract without allowing an LLM or model to change its authority status."
+      ],
+      "purpose": "Freeze the design-round question, objectives, searchable variables, source identities, immutable controls, and evidence provenance before any sequence is proposed.",
+      "stage_id": "program_and_source_intake"
+    },
+    {
+      "capabilities": [
+        "Enumerate single-protein and multi-protein fusion candidates.",
+        "Track residue boundaries, domain order, linkers, tags, signal peptides, and cleavage sites.",
+        "Use pluggable sequence design models while preserving manually supplied controls.",
+        "Consume accepted redesign requests from the prior immutable round."
+      ],
+      "depends_on": [
+        "program_and_source_intake"
+      ],
+      "human_intervention_contract": [
+        "Approve construct grammar, boundaries, domain order, linker families, tags, and required controls.",
+        "Review candidates violating biological assumptions even when computationally valid.",
+        "Freeze the candidate batch before expensive model evaluation."
+      ],
+      "input_audit_contract": [
+        "Accept only source records released by stage 1 and verify their hashes.",
+        "Audit allowed boundaries, required domains, forbidden edits, length limits, and modality constraints.",
+        "Audit every manual construct against its claimed components and annotations.",
+        "Audit generator identity, parameters, parents, rationale, and consumed feedback for every proposal."
+      ],
+      "name": "Candidate specification and generation",
+      "order": "2",
+      "output_audit_contract": [
+        "Verify exact AA sequence, component map, lineage, generator revision, and parameter set per candidate.",
+        "Verify no tag, linker, residue deletion, or insertion is implicit.",
+        "Verify candidate coverage and diversity against the approved design space.",
+        "Verify proposal lineage and feedback consumption are complete and machine-readable."
+      ],
+      "process_contract": [
+        "Generate candidates from a versioned grammar and record every parent-to-child transformation.",
+        "Deduplicate exact sequences and separate generation from scoring.",
+        "Retain original and manual constructs as named controls in every candidate batch.",
+        "Keep biological candidate identity separate from proposal provenance."
+      ],
+      "purpose": "Generate or import a round-specific proposal pool and represent originals, truncations, manual controls, and model-generated constructs under one explicit lineage and construct grammar.",
+      "stage_id": "candidate_specification"
+    },
+    {
+      "capabilities": [
+        "Run one or more pinned monomer or complex structure predictors.",
+        "Extract confidence, disorder, clashes, domain geometry, interfaces, and refolding consistency.",
+        "Compare variants with source structures and manual controls."
+      ],
+      "depends_on": [
+        "candidate_specification"
+      ],
+      "human_intervention_contract": [
+        "Review domain preservation, exposed regions, unexpected interfaces, and low-confidence linkers.",
+        "Approve exceptions to structural gates with a written rationale.",
+        "Select candidates requiring alternative oligomer or construct hypotheses."
+      ],
+      "input_audit_contract": [
+        "Verify candidate batch hash, chain definitions, oligomer assumptions, templates, and predictor limits.",
+        "Verify sequence length and alphabet compatibility for every selected structure backend.",
+        "Verify source or reference structures and residue mappings when supplied."
+      ],
+      "name": "Protein structure assessment",
+      "order": "3",
+      "output_audit_contract": [
+        "Verify every score maps to the exact candidate and structure artifact checksum.",
+        "Verify failures and low-confidence regions are retained rather than filtered silently.",
+        "Verify structural gates are calibrated and do not claim experimental folding.",
+        "Export deterministic review findings as next-round redesign requests without mutating candidates."
+      ],
+      "process_contract": [
+        "Predict structures with pinned models, revisions, seeds, and inference parameters.",
+        "Compute confidence and geometry features under a common residue map.",
+        "Repeat or cross-check predictions when uncertainty or model disagreement is material."
+      ],
+      "purpose": "Test whether each construct is structurally plausible and preserves intended domains, surfaces, and interfaces before downstream ranking.",
+      "stage_id": "protein_structure_assessment"
+    },
+    {
+      "capabilities": [
+        "Assess conservation, surface accessibility, epitope evidence, host presentation coverage, and similarity risks.",
+        "Map evidence to residues, domains, and candidate structure context.",
+        "Quantify disagreement and uncertainty across methods and host assumptions."
+      ],
+      "depends_on": [
+        "candidate_specification",
+        "protein_structure_assessment"
+      ],
+      "human_intervention_contract": [
+        "Confirm host population assumptions and acceptable evidence thresholds.",
+        "Review conserved versus variable regions and biologically implausible predictions.",
+        "Approve which evidence may act as a gate versus a ranking feature."
+      ],
+      "input_audit_contract": [
+        "Verify target population or host genetics, pathogen sequence panel, and evidence database versions.",
+        "Verify candidate residue maps and structural confidence before geometry-dependent analysis.",
+        "Verify exclusion lists, homology databases, and threshold calibration sets."
+      ],
+      "name": "Immune evidence assessment",
+      "order": "4",
+      "output_audit_contract": [
+        "Verify residue-level evidence is traceable to model/database revision and candidate hash.",
+        "Verify coverage, uncertainty, conflicts, and unsupported regions are reported.",
+        "Verify outputs are labeled computational evidence, not efficacy or safety conclusions.",
+        "Keep missing evidence separate from evidence-backed next-round redesign requests."
+      ],
+      "process_contract": [
+        "Run pinned evidence adapters and retain per-method raw scores.",
+        "Aggregate only after calibration, leakage checks, and explicit host assumptions.",
+        "Flag conflicting evidence instead of hiding it in a single composite score."
+      ],
+      "purpose": "Assemble computational evidence relevant to immune recognition while keeping predictions separate from experimental immunogenicity claims.",
+      "stage_id": "immune_evidence_assessment"
+    },
+    {
+      "capabilities": [
+        "Assess solubility, aggregation, disorder, proteolysis, topology, stability, and modification liabilities.",
+        "Compare predicted behavior across expression hosts and product formats.",
+        "Expose hard constraints separately from tunable optimization objectives."
+      ],
+      "depends_on": [
+        "candidate_specification",
+        "protein_structure_assessment"
+      ],
+      "human_intervention_contract": [
+        "Confirm host, purification, formulation, and acceptable risk thresholds.",
+        "Review liabilities that may be mitigated experimentally rather than by redesign.",
+        "Approve redesign requests and preserve the rejected candidate lineage."
+      ],
+      "input_audit_contract": [
+        "Verify intended expression host, compartment, purification strategy, formulation assumptions, and construct form.",
+        "Verify sequence/structure inputs and model applicability domains.",
+        "Verify thresholds against internal or public experimental baselines where available."
+      ],
+      "name": "Developability and manufacturability assessment",
+      "order": "5",
+      "output_audit_contract": [
+        "Verify every liability has residue-level or construct-level evidence and severity.",
+        "Verify pass/fail rules and ranking features are versioned and reproducible.",
+        "Verify unsupported predictions are marked not evaluated.",
+        "Export rule-backed liabilities as reviewable next-round redesign requests."
+      ],
+      "process_contract": [
+        "Run pinned property predictors and rule-based checks.",
+        "Normalize outputs with applicability and uncertainty metadata.",
+        "Evaluate tradeoffs without allowing one favorable metric to erase a hard liability."
+      ],
+      "purpose": "Estimate whether candidates can be expressed, purified, handled, and formulated without obvious sequence or structure liabilities.",
+      "stage_id": "developability_assessment"
+    },
+    {
+      "capabilities": [
+        "Design expression-specific signal peptides, tags, cleavage sites, and host-compatible coding constructs.",
+        "Evaluate expression and purification constraints without changing the antigen silently.",
+        "Release a protein-product specification for experimental review."
+      ],
+      "depends_on": [
+        "developability_assessment"
+      ],
+      "human_intervention_contract": [
+        "Approve expression host, vector, tag, cleavage, purification, and formulation choices.",
+        "Confirm whether expression-only residues remain in the tested product.",
+        "Sign off the exact construct before synthesis or cloning."
+      ],
+      "input_audit_contract": [
+        "Verify selected antigen lineage, expression host, vector constraints, tags, cleavage strategy, and product form.",
+        "Verify every expression-only addition is distinguishable from the final antigen sequence.",
+        "Verify developability gates and unresolved exceptions."
+      ],
+      "name": "Recombinant protein product design",
+      "order": "6A",
+      "output_audit_contract": [
+        "Verify antigen, expression construct, tags, and cleavage products are separately defined.",
+        "Verify released DNA and translated protein match the approved design.",
+        "Verify all manufacturing assumptions and unresolved risks are included."
+      ],
+      "process_contract": [
+        "Generate versioned expression constructs and back-translate only under declared host constraints.",
+        "Re-run sequence and structural checks affected by expression-specific additions.",
+        "Create a bill of materials and exact release sequence."
+      ],
+      "purpose": "Convert an accepted antigen candidate into a traceable recombinant expression and purification construct.",
+      "stage_id": "protein_product_design"
+    },
+    {
+      "capabilities": [
+        "Optimize synonymous CDS under codon, GC, motif, repeat, and RNA-structure constraints.",
+        "Version UTR, cap, poly(A), and other non-coding design assumptions when available.",
+        "Compare multiple Pareto-optimal mRNA designs instead of emitting one opaque sequence."
+      ],
+      "depends_on": [
+        "developability_assessment"
+      ],
+      "human_intervention_contract": [
+        "Approve target species/cell context, UTR/poly(A) choices, motif constraints, and synthesis limits.",
+        "Review Pareto tradeoffs and select more than one design when uncertainty is material.",
+        "Sign off the exact mRNA sequence before synthesis."
+      ],
+      "input_audit_contract": [
+        "Verify exact antigen AA, target species/cell context, delivery platform constraints, and forbidden motifs.",
+        "Verify source/optimized CDS identity and quarantine mislabeled sequences.",
+        "Verify non-coding elements and formulation assumptions are licensed and versioned."
+      ],
+      "name": "mRNA product design",
+      "order": "6B",
+      "output_audit_contract": [
+        "Verify every released mRNA translates exactly to the approved antigen.",
+        "Verify all coding and non-coding components, scores, constraints, and tool revisions.",
+        "Verify no optimized sequence is accepted solely because of a language-model score."
+      ],
+      "process_contract": [
+        "Generate synonymous candidates while continuously asserting translation identity.",
+        "Score codon, motif, GC, repeat, and RNA-structure objectives with pinned tools.",
+        "Retain Pareto frontier, parentage, and all rejected hard-constraint violations.",
+        "Return hard-constraint failures as mRNA-specific requests for the next immutable round."
+      ],
+      "purpose": "Create host-aware mRNA constructs that preserve the approved antigen protein while optimizing delivery-specific sequence constraints.",
+      "stage_id": "mrna_product_design"
+    },
+    {
+      "capabilities": [
+        "Rank candidates by modality-specific objectives, uncertainty, diversity, and experimental value.",
+        "Compare generated candidates directly with originals and manual controls.",
+        "Perform sensitivity analysis across weights, thresholds, and missing evidence."
+      ],
+      "depends_on": [
+        "protein_structure_assessment",
+        "immune_evidence_assessment",
+        "developability_assessment",
+        "protein_product_design",
+        "mrna_product_design"
+      ],
+      "human_intervention_contract": [
+        "Approve ranking policy, budget, risk tolerance, and control composition.",
+        "Review unstable ranks and disagreements between modalities or evidence families.",
+        "Sign off the experimental candidate portfolio."
+      ],
+      "input_audit_contract": [
+        "Verify candidate identities, stage completeness, score calibration, missing values, and exclusion reasons.",
+        "Verify no training/test leakage or duplicated biological entities in task models.",
+        "Verify ranking policy, weights, hard gates, and decision budget are frozen before scoring."
+      ],
+      "name": "Integrated ranking and portfolio selection",
+      "order": "7",
+      "output_audit_contract": [
+        "Verify ranks reproduce from component scores and policy revision.",
+        "Verify excluded candidates remain visible with reasons.",
+        "Verify selected portfolio covers controls, diversity, and uncertainty rather than only top scores.",
+        "Publish accepted, rejected, and deferred next-round requests with the selected portfolio."
+      ],
+      "process_contract": [
+        "Apply hard gates first, then transparent multi-objective ranking and uncertainty penalties.",
+        "Measure rank stability and retain component-level explanations.",
+        "Select a diverse portfolio with explicit positive, negative, original, and manual controls."
+      ],
+      "purpose": "Combine validated evidence into a transparent, uncertainty-aware portfolio without hiding hard gates or model disagreement.",
+      "stage_id": "integrated_ranking"
+    },
+    {
+      "capabilities": [
+        "Define controls, replicates, randomization, batches, acceptance criteria, and sample identities.",
+        "Generate release manifests and chain-of-custody records.",
+        "Freeze predictions before outcomes are observed."
+      ],
+      "depends_on": [
+        "integrated_ranking"
+      ],
+      "human_intervention_contract": [
+        "Scientific, laboratory, safety, and quality owners approve protocol and release.",
+        "Operators record deviations, failed controls, and sample handling events.",
+        "No model is updated until the frozen release is closed."
+      ],
+      "input_audit_contract": [
+        "Verify selected candidates, synthesis feasibility, controls, assay objectives, budget, and ethical approvals.",
+        "Verify sample identifiers do not leak ranking labels to blinded operators.",
+        "Verify protocol versions, units, replicate plans, and acceptance rules."
+      ],
+      "name": "Experiment design and release",
+      "order": "8",
+      "output_audit_contract": [
+        "Verify every physical sample maps to one immutable candidate and batch.",
+        "Verify controls, replicates, and acceptance criteria are complete.",
+        "Verify release package approval and amendment history."
+      ],
+      "process_contract": [
+        "Create blinded sample sheets, randomization, batch layout, and release checksums.",
+        "Freeze model predictions and candidate manifests before execution.",
+        "Record deviations through controlled amendments."
+      ],
+      "purpose": "Convert the selected portfolio into a blinded, controlled, and traceable experimental release package.",
+      "stage_id": "experiment_release"
+    },
+    {
+      "capabilities": [
+        "Ingest raw files, metadata, controls, replicates, batches, units, and protocol revisions.",
+        "Apply predefined assay QC and preserve both raw and processed observations.",
+        "Expose batch effects, missingness, and censored measurements."
+      ],
+      "depends_on": [
+        "experiment_release"
+      ],
+      "human_intervention_contract": [
+        "Laboratory and data owners adjudicate failed controls, deviations, censoring, and exclusions.",
+        "Approve the frozen analysis dataset and permitted endpoint definitions.",
+        "Document any exploratory endpoint separately from preregistered endpoints."
+      ],
+      "input_audit_contract": [
+        "Verify file checksums, instrument exports, sample mapping, protocol, batch, units, and operator metadata.",
+        "Verify controls and acceptance criteria before unblinding.",
+        "Verify amendments and exclusions have signed reasons."
+      ],
+      "name": "Assay ingestion and quality control",
+      "order": "9",
+      "output_audit_contract": [
+        "Verify every value traces to raw file, sample, unit, batch, and transform revision.",
+        "Verify failed controls and excluded observations remain visible.",
+        "Verify labels are suitable for the declared downstream learning task."
+      ],
+      "process_contract": [
+        "Store immutable raw data, normalize through versioned transforms, and run assay-specific QC.",
+        "Aggregate replicates only under declared rules and retain individual measurements.",
+        "Unblind only after QC status is frozen."
+      ],
+      "purpose": "Turn raw laboratory observations into immutable, unit-aware, quality-controlled evidence linked to the released candidates.",
+      "stage_id": "assay_ingestion"
+    },
+    {
+      "capabilities": [
+        "Train and compare task heads, baselines, calibration models, and active-learning policies.",
+        "Estimate generalization by biological split, batch, and time.",
+        "Propose the next portfolio while preserving all prior predictions and outcomes."
+      ],
+      "depends_on": [
+        "assay_ingestion"
+      ],
+      "human_intervention_contract": [
+        "Approve labels, splits, decision thresholds, and acceptable evidence for model promotion.",
+        "Review failure modes and decide whether to redesign candidates, assays, or models.",
+        "Approve the next round, then restart at program intake with inherited lineage, feedback, and evidence."
+      ],
+      "input_audit_contract": [
+        "Verify frozen assay labels, entity-level split rules, batch metadata, sample size, and endpoint definitions.",
+        "Verify baselines, model revisions, hyperparameter budgets, and leakage controls.",
+        "Verify unresolved data-quality issues are represented, not discarded silently."
+      ],
+      "name": "Learning, calibration, and next-round design",
+      "order": "10",
+      "output_audit_contract": [
+        "Verify held-out and prospective metrics, uncertainty calibration, stability, and failure analysis.",
+        "Verify claims are limited to evaluated populations and assays.",
+        "Verify the next-round proposal preserves controls and targets informative uncertainty."
+      ],
+      "process_contract": [
+        "Train baselines and task models under fixed splits and repeated seeds.",
+        "Calibrate uncertainty, perform ablations, and compare prospective decision utility.",
+        "Version model cards, predictions, and active-learning acquisition policy."
+      ],
+      "purpose": "Learn task-specific decision models from leakage-safe experimental data, update objective evidence, and authorize a new immutable design round that restarts from Stage 1.",
+      "stage_id": "learning_and_iteration"
+    }
+  ],
+  "system_architecture_version": 2,
+  "workflow_id": "vaccine-design-build-test-learn",
+  "workflow_version": 2
+}

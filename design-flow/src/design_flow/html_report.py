@@ -10,6 +10,8 @@ from .workflow import CURRENT_STAGE_ID, STAGE_BY_ID
 
 
 CHECK_LABELS = {
+    "design-round-contract-valid": ("设计轮次合同结构有效", "Design-round contract is valid"),
+    "design-round-contract-approved": ("设计轮次合同已获执行批准", "Design-round contract is approved for execution"),
     "source-files-hashed": ("输入文件已建立哈希身份", "Source files have cryptographic identities"),
     "expected-record-count": ("记录数量符合预期", "Record count matches expectation"),
     "one-to-one-id-pairing": ("蛋白与 CDS 一一配对", "Protein and CDS IDs pair one-to-one"),
@@ -21,6 +23,7 @@ CHECK_LABELS = {
 }
 
 OPERATION_LABELS = {
+    "freeze_design_round": ("冻结设计轮次", "Freeze design round", "在生成候选前冻结目标、变量、反馈和缺失证据规则。"),
     "parse_fasta": ("读取 FASTA", "Parse FASTA", "识别多行记录、ID、空记录和重复记录。"),
     "normalize_sequences": ("规范化序列", "Normalize sequences", "统一大小写；RNA 的 U 转换为 T 时保留明确警告。"),
     "translate_cds": ("翻译 CDS", "Translate CDS", "使用标准遗传密码表检查阅读框、起始和终止。"),
@@ -279,6 +282,27 @@ def render_node_report(
         MODALITY_LABELS_ZH.get(modality, modality)
         for modality in analysis.config.product_modalities
     )
+    design_summary = analysis.design_dossier.summary()
+    objective_rows = "".join(
+        "<tr>"
+        f"<td><code>{_e(item['objective_id'])}</code></td>"
+        f"<td>{_e(item['decision_role'])}</td>"
+        f"<td>{_e(item['direction'])}</td>"
+        f"<td><code>{_e(item['metric'])}</code></td>"
+        f"<td>{_e(item['evidence_stage'])}</td>"
+        "</tr>"
+        for item in analysis.design_dossier.objective_policy["objectives"]
+    )
+    variable_rows = "".join(
+        "<tr>"
+        f"<td><code>{_e(item['variable_id'])}</code></td>"
+        f"<td>{_e(item['scope'])}</td>"
+        f"<td>{_badge(item['status'])}</td>"
+        f"<td>{_e(item['introduced_at_stage'])}</td>"
+        f"<td>{_e(item['description'])}</td>"
+        "</tr>"
+        for item in analysis.design_dossier.variable_registry["variables"]
+    )
 
     return f"""<!doctype html>
 <html lang="zh-CN">
@@ -530,6 +554,27 @@ def render_node_report(
           </ul>
         </div>
       </div>
+    </section>
+
+    <section>
+      <div class="section-heading">
+        <h2>本轮设计合同 / Design-round contract</h2>
+        <p>候选生成之前先冻结目标与可搜索空间；后续模型只能提供证据或下一轮建议。<span class="english">Objectives and the searchable space are frozen before proposal generation; downstream models may only add evidence or next-round requests.</span></p>
+      </div>
+      <div class="context-strip">
+        <div class="context-item"><span>设计轮次 / Round</span><strong>{_e(design_summary['round_id'])}</strong><span class="english">index {_e(design_summary['round_index'])}</span></div>
+        <div class="context-item"><span>目标 / Objectives</span><strong>{_e(design_summary['objective_count'])}</strong><span class="english">versioned objective records</span></div>
+        <div class="context-item"><span>可搜索变量 / Searchable</span><strong>{_e(design_summary['searchable_variable_count'])}</strong><span class="english">of {_e(design_summary['variable_count'])} variables</span></div>
+        <div class="context-item"><span>历史反馈 / Prior feedback</span><strong>{_e(design_summary['prior_feedback_request_count'])}</strong><span class="english">accepted request IDs</span></div>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>目标 ID / Objective</th><th>决策角色 / Role</th><th>方向 / Direction</th><th>指标 / Metric</th><th>证据节点 / Stage</th></tr></thead>
+        <tbody>{objective_rows}</tbody>
+      </table></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>变量 ID / Variable</th><th>范围 / Scope</th><th>状态 / Status</th><th>引入节点 / Stage</th><th>说明 / Description</th></tr></thead>
+        <tbody>{variable_rows}</tbody>
+      </table></div>
     </section>
 
     <section>

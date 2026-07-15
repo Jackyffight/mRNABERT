@@ -6,6 +6,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .design_loop import (
+    redesign_request_document,
+    round_feedback_document,
+    validate_redesign_request_document,
+)
 from .ranking import _compute_ranking_result
 from .ranking_reporting import _csv_text
 from .ranking_specs import RANKING_STAGE_ID
@@ -150,6 +155,50 @@ def verify_ranking_run(
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
         recomputed = stored = {}
         semantic_loaded = False
+    workflow_version = workflow.get("workflow_version")
+    is_v2_workflow = isinstance(workflow_version, int) and workflow_version >= 2
+    if is_v2_workflow:
+        try:
+            redesign_requests = _load(node / "redesign_requests.json")
+            round_feedback = _load(node / "round_feedback.json")
+            source_documents = [
+                _load(path)
+                for path in sorted((root / "nodes").glob("*/redesign_requests.json"))
+                if path.parent.name != RANKING_STAGE_ID
+            ]
+            round_id = str(candidate_batch["design_round_id"])
+            expected_feedback = round_feedback_document(
+                project_id=str(manifest["project_id"]),
+                run_id=run_id,
+                round_id=round_id,
+                source_documents=source_documents,
+            )
+            feedback_valid = (
+                validate_redesign_request_document(
+                    redesign_requests,
+                    project_id=str(manifest["project_id"]),
+                    run_id=run_id,
+                    round_id=round_id,
+                    stage_id=RANKING_STAGE_ID,
+                )
+                and redesign_requests
+                == redesign_request_document(
+                    project_id=str(manifest["project_id"]),
+                    run_id=run_id,
+                    round_id=round_id,
+                    stage_id=RANKING_STAGE_ID,
+                    requests=[],
+                )
+                and round_feedback == expected_feedback
+            )
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            feedback_valid = False
+        verifier.check(
+            "stage7-round-feedback",
+            feedback_valid,
+            "Stage 7 exactly aggregates prior redesign requests for next-round review",
+            "Stage 7 redesign or round-feedback artifacts are missing or inconsistent",
+        )
     verifier.check(
         "stage7-semantic-recompute", semantic_loaded,
         "Ranking recomputed from copied Stage 3-6 evidence and frozen policy",
@@ -193,6 +242,11 @@ def verify_ranking_run(
         handoff_ok = (
             handoff["carried_forward"]["ranking_result_sha256"]
             == sha256_file(node / "ranking_result.json")
+            and (
+                not is_v2_workflow
+                or handoff["carried_forward"]["round_feedback_sha256"]
+                == sha256_file(node / "round_feedback.json")
+            )
             and handoff.get("formal_readiness") == "not_released"
         )
     except (OSError, ValueError, KeyError, json.JSONDecodeError):

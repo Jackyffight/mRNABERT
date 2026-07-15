@@ -1,12 +1,12 @@
 # Design-Flow Architecture
 
-Status: frozen architecture baseline v1
+Status: frozen architecture baseline v2
 
 Normative companion documents:
 
-- [Workflow v1](docs/workflow-v1.md) and its frozen machine contract;
+- [Workflow v2](docs/workflow-v2.md) and its frozen machine contract;
 - [Audit Automation and LLM Governance](docs/audit-automation-and-llm-governance.md);
-- [ADR 0001](docs/adr/0001-hybrid-audited-workflow.md).
+- [ADR 0002](docs/adr/0002-round-based-design-optimization.md).
 
 The executable workflow is versioned in `src/design_flow/workflow.py`. A semantic
 architecture or workflow change requires a superseding ADR, explicit version
@@ -102,17 +102,27 @@ findings into reviewable proposed actions.
 
 ## Candidate Lineage
 
-Every candidate receives an immutable ID derived from its normalized sequence and
-parentage. A future fusion candidate must also record:
+Every candidate receives an immutable biological construct ID. Proposal provenance is
+stored separately so an identical construct does not change identity when proposed by
+a different generator. Every proposal records:
 
 - source proteins and residue ranges;
 - domain order and orientation;
 - linker identities and positions;
 - additions or removals such as tags, signal peptides, or cleavage sites;
 - the generator and parameters that proposed it.
+- the design round, rationale, parent candidate IDs, and consumed feedback requests.
 
 No downstream stage may silently rewrite a candidate. A changed sequence creates
-a new candidate with an explicit parent.
+a new child candidate in a later immutable round.
+
+## Design Optimization Loop
+
+Design begins at Stage 1. Each round freezes `design_brief.json`,
+`design_variable_registry.json`, and `objective_policy.json`; Stage 2 forms a proposal
+pool; Stages 3-6 evaluate it and emit structured redesign requests. Accepted requests
+become inputs to a later round that restarts at Stage 1. The executable run DAG remains
+acyclic and immutable. See [Round-Based Design Optimization](docs/round-based-design-optimization.md).
 
 ## Stages
 
@@ -238,5 +248,7 @@ immutable; a correction creates a new run or an explicitly versioned node attemp
 - **M4:** protein-expression and mRNA-design branches.
 - **M5:** experiment manifest, assay schema, and first closed learning loop.
 
-The next implementation target is residue-level immune evidence and developability
-assessment using the exact Stage 2 candidate IDs and checksum-bound Stage 3 structures.
+The next implementation target is a pinned Stage 2 proposal-generator adapter and
+the first `round-001` execution that consumes accepted `round_feedback.json`
+requests. Model-generated candidates must use the same lineage, control retention,
+deduplication, and immutable-round contracts as manual proposals.

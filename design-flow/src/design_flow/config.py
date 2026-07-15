@@ -125,10 +125,30 @@ def load_project_config(path: Path) -> ProjectConfig:
         if isinstance(candidate_specification_value, str)
         else None
     )
+    design_input_defaults = {
+        "design_brief": "input/design/design_brief.json",
+        "design_variable_registry": "input/design/design_variable_registry.json",
+        "objective_policy": "input/design/objective_policy.json",
+    }
+    design_input_values: dict[str, str] = {}
+    for name, default in design_input_defaults.items():
+        value = inputs.get(name, default)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"inputs.{name} must be a non-empty path")
+        design_input_values[name] = value.strip()
+    design_brief = _runtime_path(runtime_root, design_input_values["design_brief"])
+    design_variable_registry = _runtime_path(
+        runtime_root,
+        design_input_values["design_variable_registry"],
+    )
+    objective_policy = _runtime_path(runtime_root, design_input_values["objective_policy"])
     run_root = _runtime_path(runtime_root, str(outputs.get("run_root", "runs")))
     checked_runtime_paths: list[tuple[str, Path]] = [
         ("amino_acid_fasta", amino_acid_fasta),
         ("nucleotide_fasta", nucleotide_fasta),
+        ("design_brief", design_brief),
+        ("design_variable_registry", design_variable_registry),
+        ("objective_policy", objective_policy),
         ("run_root", run_root),
     ]
     if candidate_specification is not None:
@@ -170,6 +190,9 @@ def load_project_config(path: Path) -> ProjectConfig:
         amino_acid_fasta=amino_acid_fasta,
         nucleotide_fasta=nucleotide_fasta,
         candidate_specification=candidate_specification,
+        design_brief=design_brief,
+        design_variable_registry=design_variable_registry,
+        objective_policy=objective_policy,
         run_root=run_root,
         target_indication=str(context.get("target_indication", "unspecified")),
         intended_host_species=str(context.get("intended_host_species", "unspecified")),

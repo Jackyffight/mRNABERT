@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .design_loop import validate_redesign_request_document
 from .structure_job import _document_sha256, _identity
 from .structure_metrics import (
     RULESET_ID,
@@ -200,6 +201,25 @@ def verify_structure_run(
     except (OSError, ValueError, json.JSONDecodeError) as error:
         verifier.fail("stage3-node-json", str(error))
         return verifier.result(root, run_id)
+    workflow_version = workflow.get("workflow_version")
+    is_v2_workflow = isinstance(workflow_version, int) and workflow_version >= 2
+    if is_v2_workflow:
+        try:
+            redesign_requests = _load(node_dir / "redesign_requests.json")
+        except (OSError, ValueError, json.JSONDecodeError):
+            redesign_requests = {}
+        verifier.check(
+            "stage3-redesign-requests",
+            validate_redesign_request_document(
+                redesign_requests,
+                project_id=str(manifest.get("project_id")),
+                run_id=run_id,
+                round_id=str(candidate_batch.get("design_round_id")),
+                stage_id=STRUCTURE_STAGE_ID,
+            ),
+            "Stage 3 redesign requests are checksum-bound and schema-valid",
+            "Stage 3 redesign-request artifact is missing or invalid",
+        )
     verifier.check(
         "stage3-job-and-gpu-identity",
         job.get("job_identity") == _identity(job, "job_identity")

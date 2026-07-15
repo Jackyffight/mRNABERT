@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .design_loop import validate_redesign_request_document
 from .config import load_project_config
 from .product_design import (
     _apply_upstream_developability_requirement,
@@ -252,6 +253,31 @@ def verify_product_run(
         "Both product branches recomputed from copied specifications and inputs",
         "Stage 6 deterministic recomputation failed",
     )
+    workflow_version = workflow.get("workflow_version")
+    is_v2_workflow = isinstance(workflow_version, int) and workflow_version >= 2
+    if is_v2_workflow:
+        round_id = str(candidate_batch.get("design_round_id")) if semantic_loaded else ""
+        for stage_id, node in (
+            (PROTEIN_PRODUCT_STAGE_ID, protein_node),
+            (MRNA_PRODUCT_STAGE_ID, mrna_node),
+        ):
+            try:
+                redesign_requests = _load(node / "redesign_requests.json")
+            except (OSError, ValueError, json.JSONDecodeError):
+                redesign_requests = {}
+            verifier.check(
+                f"{stage_id}-redesign-requests",
+                bool(round_id)
+                and validate_redesign_request_document(
+                    redesign_requests,
+                    project_id=str(manifest.get("project_id")),
+                    run_id=run_id,
+                    round_id=round_id,
+                    stage_id=stage_id,
+                ),
+                f"{stage_id} redesign requests are schema-valid",
+                f"{stage_id} redesign-request artifact is missing or invalid",
+            )
     verifier.check(
         "stage6-protein-reproducibility",
         semantic_loaded and protein_stored == protein_recomputed,

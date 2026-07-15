@@ -14,6 +14,7 @@ import tempfile
 from typing import Any
 
 from . import __version__
+from .design_loop import redesign_request_document, request_id
 from .structure_assessment import STRUCTURE_STAGE_ID, StructureAssessmentAnalysis
 from .structure_html_report import render_structure_report
 from .structure_metrics import RULESET_ID
@@ -181,6 +182,7 @@ def build_structure_node_bundle(
     run_id: str,
 ) -> dict[str, Any]:
     assessments = copy.deepcopy(analysis.assessments)
+    round_id = str(analysis.source_candidate_batch["design_round_id"])
     for item in assessments:
         candidate_id = item["candidate_id"]
         item["structure_artifact"] = {
@@ -222,6 +224,33 @@ def build_structure_node_bundle(
         "due_human_actions": len(due_actions),
         "next_stages": list(NEXT_STAGES),
     }
+    redesign_requests = redesign_request_document(
+        project_id=analysis.config.project_id,
+        run_id=run_id,
+        round_id=round_id,
+        stage_id=STRUCTURE_STAGE_ID,
+        requests=[
+            {
+                "request_id": request_id(
+                    STRUCTURE_STAGE_ID,
+                    finding["candidate_id"],
+                    finding["code"],
+                    index,
+                ),
+                "status": "proposed",
+                "candidate_id": finding["candidate_id"],
+                "trigger": finding["code"],
+                "evidence_ref": f"findings.csv#row={index + 1}",
+                "requested_variable_ids": ["antigen.recipe"],
+                "instruction": (
+                    "Review the flagged structural region. If a sequence change is authorized, "
+                    "create a child proposal in the next immutable round; do not mutate this candidate."
+                ),
+                "authority": "deterministic_structure_rule",
+            }
+            for index, finding in enumerate(analysis.findings)
+        ],
+    )
     input_audit = {
         "stage_id": STRUCTURE_STAGE_ID,
         "status": "pass",
@@ -371,6 +400,7 @@ def build_structure_node_bundle(
             "gpu_run_identity": analysis.result_run_manifest["run_identity"],
             "assessments": assessments,
         },
+        "redesign_requests": redesign_requests,
     }
 
 
@@ -427,6 +457,10 @@ def write_structure_run(
         _atomic_write(
             node_dir / "structure_assessments.json",
             _json_text(bundle["structure_assessments"]),
+        )
+        _atomic_write(
+            node_dir / "redesign_requests.json",
+            _json_text(bundle["redesign_requests"]),
         )
         assessments_sha = sha256_file(node_dir / "structure_assessments.json")
         bundle["handoff"]["carried_forward"][

@@ -9,6 +9,12 @@ import json
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .design_loop import (
+    PROPOSAL_LINEAGE_SCHEMA,
+    load_design_dossier,
+    validate_redesign_request_document,
+)
+
 from .workflow import (
     CURRENT_STAGE_ID,
     FULL_WORKFLOW,
@@ -18,6 +24,7 @@ from .workflow import (
     approved_workflow_hash,
     stage_contract,
     validate_workflow,
+    workflow_contract,
     workflow_contract_sha256,
 )
 
@@ -27,6 +34,13 @@ SOURCE_SNAPSHOT_PATHS = {
     "project_config": "inputs/project.json",
     "amino_acid_fasta": "inputs/proteins_aa.fasta",
     "nucleotide_fasta": "inputs/proteins_cds.fasta",
+    "design_brief": "inputs/design_brief.json",
+    "design_variable_registry": "inputs/design_variable_registry.json",
+    "objective_policy": "inputs/objective_policy.json",
+}
+LEGACY_SOURCE_SNAPSHOT_PATHS = {
+    key: SOURCE_SNAPSHOT_PATHS[key]
+    for key in ("project_config", "amino_acid_fasta", "nucleotide_fasta")
 }
 NODE_ARTIFACT_NAMES = (
     "summary.json",
@@ -60,6 +74,10 @@ CANDIDATE_NODE_ARTIFACT_NAMES = (
     "findings.csv",
     "structure_candidates.fasta",
     "model_inputs.json",
+)
+V2_CANDIDATE_NODE_ARTIFACT_NAMES = (
+    "proposal_lineage.json",
+    "redesign_requests.json",
 )
 
 
@@ -175,28 +193,56 @@ def _candidate_triples(records: Any) -> list[tuple[str, str, str]] | None:
 
 def _workflow_blueprint_matches(workflow: dict[str, Any]) -> bool:
     stages = workflow.get("stages")
+    if not isinstance(stages, list) or not all(isinstance(stage, dict) for stage in stages):
+        return False
+    architecture_version = workflow.get("system_architecture_version")
+    workflow_version = workflow.get("workflow_version")
+    approved_hash = approved_workflow_hash(architecture_version, workflow_version)
+    contract = {
+        "schema_version": workflow.get("schema_version"),
+        "system_architecture_version": architecture_version,
+        "workflow_id": workflow.get("workflow_id"),
+        "workflow_version": workflow_version,
+        "entry_stage": workflow.get("entry_stage"),
+        "stages": [
+            {key: value for key, value in stage.items() if key != "status"}
+            for stage in stages
+        ],
+    }
+    contract_hash = hashlib.sha256(
+        json.dumps(
+            contract,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
     if (
-        workflow.get("system_architecture_version") != SYSTEM_ARCHITECTURE_VERSION
-        or workflow.get("workflow_id") != WORKFLOW_ID
-        or workflow.get("workflow_version") != WORKFLOW_VERSION
+        workflow.get("workflow_id") != WORKFLOW_ID
         or workflow.get("entry_stage") != CURRENT_STAGE_ID
-        or workflow.get("contract_sha256") != workflow_contract_sha256()
-        or workflow.get("contract_sha256")
-        != approved_workflow_hash(
-            workflow.get("system_architecture_version"),
-            workflow.get("workflow_version"),
-        )
-        or not isinstance(stages, list)
-        or len(stages) != len(FULL_WORKFLOW)
+        or not isinstance(approved_hash, str)
+        or workflow.get("contract_sha256") != approved_hash
+        or contract_hash != approved_hash
     ):
         return False
-    for actual, expected in zip(stages, FULL_WORKFLOW, strict=True):
-        if not isinstance(actual, dict):
-            return False
-        expected_fields = stage_contract(expected)
-        if any(actual.get(key) != value for key, value in expected_fields.items()):
-            return False
+    if (architecture_version, workflow_version) == (
+        SYSTEM_ARCHITECTURE_VERSION,
+        WORKFLOW_VERSION,
+    ):
+        return contract == workflow_contract() and contract_hash == workflow_contract_sha256()
     return True
+
+
+def _source_snapshot_paths(manifest: dict[str, Any]) -> dict[str, str]:
+    inputs = manifest.get("inputs")
+    if not isinstance(inputs, dict):
+        return LEGACY_SOURCE_SNAPSHOT_PATHS
+    selected = {
+        name: path
+        for name, path in SOURCE_SNAPSHOT_PATHS.items()
+        if name in inputs
+    }
+    return selected or LEGACY_SOURCE_SNAPSHOT_PATHS
 
 
 def _read_csv(verifier: _Verification, path: Path, check_id: str) -> list[dict[str, str]] | None:
@@ -270,15 +316,20 @@ def verify_run(run_dir: Path, *, check_external_inputs: bool = True) -> dict[str
         verifier.fail("run-directory", f"Run directory does not exist: {run_dir}")
         return verifier.result(run_dir, run_id)
 
+    active_source_snapshots = _source_snapshot_paths(
+        current_manifest if isinstance(current_manifest, dict) else {}
+    )
     expected_files = {
         "manifest.json",
         "workflow.json",
-        *SOURCE_SNAPSHOT_PATHS.values(),
+        *active_source_snapshots.values(),
         *(
             f"nodes/{CURRENT_STAGE_ID}/{name}"
             for name in NODE_ARTIFACT_NAMES
         ),
     }
+    if "design_brief" in active_source_snapshots:
+        expected_files.add(f"nodes/{CURRENT_STAGE_ID}/design_round.json")
     actual_files: set[str] = set()
     symlinks: list[str] = []
     for path in run_dir.rglob("*"):
@@ -447,13 +498,13 @@ def verify_run(run_dir: Path, *, check_external_inputs: bool = True) -> dict[str
     verifier.check(
         "input-records",
         isinstance(input_records, dict)
-        and set(input_records) == set(SOURCE_SNAPSHOT_PATHS)
+        and set(input_records) == set(active_source_snapshots)
         and manifest.get("inputs") == input_records,
         "Manifest and input audit carry the same three input identities",
         "Manifest and input audit input identities are missing or inconsistent",
     )
     if isinstance(input_records, dict):
-        for input_name, snapshot_relative in SOURCE_SNAPSHOT_PATHS.items():
+        for input_name, snapshot_relative in active_source_snapshots.items():
             record = input_records.get(input_name)
             if not isinstance(record, dict):
                 verifier.fail(f"input-snapshot:{input_name}", "Input identity is not an object")
@@ -493,6 +544,43 @@ def verify_run(run_dir: Path, *, check_external_inputs: bool = True) -> dict[str
                     f"External source is unavailable or has drifted for {input_name}",
                     warning=True,
                 )
+
+    if "design_brief" in active_source_snapshots:
+        design_round = _load_json(
+            verifier,
+            node_dir / "design_round.json",
+            "json:design-round",
+        )
+        try:
+            design_dossier = load_design_dossier(
+                project_id=str(project_id),
+                design_brief_path=run_dir / active_source_snapshots["design_brief"],
+                variable_registry_path=(
+                    run_dir / active_source_snapshots["design_variable_registry"]
+                ),
+                objective_policy_path=run_dir / active_source_snapshots["objective_policy"],
+                known_stage_ids={stage.stage_id for stage in FULL_WORKFLOW},
+            )
+            expected_design_round = {
+                "schema_version": 1,
+                "project_id": project_id,
+                "run_id": run_id,
+                "stage_id": CURRENT_STAGE_ID,
+                "summary": design_dossier.summary(),
+                "digests": design_dossier.digests,
+                "design_brief": design_dossier.brief,
+                "design_variable_registry": design_dossier.variable_registry,
+                "objective_policy": design_dossier.objective_policy,
+            }
+            design_round_valid = design_round == expected_design_round
+        except (OSError, ValueError):
+            design_round_valid = False
+        verifier.check(
+            "design-round-contract",
+            design_round_valid,
+            "Design brief, variables, objectives, snapshots, and round summary agree",
+            "Design-round artifact cannot be reconstructed from its immutable snapshots",
+        )
 
     project_snapshot = _load_json(
         verifier,
@@ -766,10 +854,19 @@ def _verify_candidate_run(
         verifier.fail("run-directory", f"Run directory does not exist: {run_dir}")
         return verifier.result(run_dir, run_id)
 
+    try:
+        source_manifest_preview = json.loads(
+            (run_dir / "inputs/source_run_manifest.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        source_manifest_preview = {}
+    active_source_snapshots = _source_snapshot_paths(
+        source_manifest_preview if isinstance(source_manifest_preview, dict) else {}
+    )
     fixed_expected_files = {
         "manifest.json",
         "workflow.json",
-        *SOURCE_SNAPSHOT_PATHS.values(),
+        *active_source_snapshots.values(),
         "inputs/source_run_manifest.json",
         "inputs/source_run_artifact_index.json",
         *(
@@ -781,6 +878,12 @@ def _verify_candidate_run(
             for name in CANDIDATE_NODE_ARTIFACT_NAMES
         ),
     }
+    if "design_brief" in active_source_snapshots:
+        fixed_expected_files.update(
+            f"nodes/{CANDIDATE_STAGE_ID}/{name}"
+            for name in V2_CANDIDATE_NODE_ARTIFACT_NAMES
+        )
+        fixed_expected_files.add(f"nodes/{source_stage_id}/design_round.json")
     actual_files: set[str] = set()
     symlinks: list[str] = []
     for path in run_dir.rglob("*"):
@@ -971,12 +1074,14 @@ def _verify_candidate_run(
         "Source-run identity or artifact-index seal differs",
     )
     copied_parent_paths = {
-        *SOURCE_SNAPSHOT_PATHS.values(),
+        *active_source_snapshots.values(),
         *(
             f"nodes/{source_stage_id}/{name}"
             for name in NODE_ARTIFACT_NAMES
         ),
     }
+    if "design_brief" in active_source_snapshots:
+        copied_parent_paths.add(f"nodes/{source_stage_id}/design_round.json")
     parent_copy_matches = bool(source_entries) and all(
         relative_path in source_entries
         and (run_dir / relative_path).is_file()
@@ -1066,6 +1171,78 @@ def _verify_candidate_run(
         "Candidate keys and IDs are present and unique",
         "Candidate records are malformed or contain duplicate identities",
     )
+    if "design_brief" in active_source_snapshots:
+        proposal_lineage = _load_json(
+            verifier,
+            candidate_node_dir / "proposal_lineage.json",
+            "json:proposal-lineage",
+        )
+        redesign_requests = _load_json(
+            verifier,
+            candidate_node_dir / "redesign_requests.json",
+            "json:stage2-redesign-requests",
+        )
+        round_id = candidate_batch.get("design_round_id")
+        expected_lineage_records = [
+            {
+                "candidate_key": candidate.get("candidate_key"),
+                "candidate_id": candidate.get("candidate_id"),
+                **(
+                    candidate.get("proposal")
+                    if isinstance(candidate.get("proposal"), dict)
+                    else {}
+                ),
+            }
+            for candidate in candidates
+        ]
+        lineage_valid = (
+            isinstance(proposal_lineage, dict)
+            and proposal_lineage.get("schema_version") == PROPOSAL_LINEAGE_SCHEMA
+            and proposal_lineage.get("project_id") == project_id
+            and proposal_lineage.get("run_id") == run_id
+            and proposal_lineage.get("round_id") == round_id
+            and proposal_lineage.get("records") == expected_lineage_records
+        )
+        candidate_by_key = {
+            candidate.get("candidate_key"): candidate
+            for candidate in candidates
+            if isinstance(candidate, dict)
+        }
+        parent_links_valid = all(
+            isinstance(candidate.get("proposal"), dict)
+            and candidate["proposal"].get("round_id") == round_id
+            and candidate["proposal"].get("parent_candidate_ids")
+            == [
+                candidate_by_key[key].get("candidate_id")
+                for key in candidate["proposal"].get("parent_candidate_keys", [])
+                if key in candidate_by_key
+            ]
+            and all(
+                key in candidate_by_key
+                for key in candidate["proposal"].get("parent_candidate_keys", [])
+            )
+            for candidate in candidates
+        )
+        verifier.check(
+            "proposal-lineage",
+            lineage_valid and parent_links_valid,
+            "Proposal lineage exactly matches candidate parents, generators, and round identity",
+            "Proposal lineage differs from candidate records or contains invalid parent links",
+        )
+        verifier.check(
+            "stage2-redesign-requests",
+            isinstance(redesign_requests, dict)
+            and isinstance(round_id, str)
+            and validate_redesign_request_document(
+                redesign_requests,
+                project_id=str(project_id),
+                run_id=run_id,
+                round_id=round_id,
+                stage_id=CANDIDATE_STAGE_ID,
+            ),
+            "Stage 2 redesign-request artifact is valid",
+            "Stage 2 redesign-request artifact is malformed or inconsistent",
+        )
 
     source_records = source_proteins_document.get("proteins")
     source_records = source_records if isinstance(source_records, list) else []

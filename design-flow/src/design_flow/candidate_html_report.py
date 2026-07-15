@@ -49,6 +49,8 @@ def render_candidate_report(
         f"<td>{_e(candidate['candidate_type'])}</td>"
         f"<td>{len(candidate['amino_acid_sequence'])}</td>"
         f"<td>{_e(_component_text(candidate))}</td>"
+        f"<td><code>{_e(candidate['proposal']['generator']['id'])}</code>"
+        f"{_e(' -> '.join(candidate['proposal']['parent_candidate_keys']) or 'root')}</td>"
         f"<td>{_e(candidate['translation_relation']['relation'])}</td>"
         f"<td>{_badge(candidate['release_status'])}</td>"
         f"<td>{_badge('ready' if candidate['exploratory_structure_ready'] else 'blocked')}</td>"
@@ -147,6 +149,7 @@ def render_candidate_report(
       第一节点 handoff={_e(analysis.source_handoff.get('readiness'))}；候选节点状态={_e(summary['status'])}。
       <span class="en">This batch is provisional, not released for experiment. Source handoff ready: {_e(source_ready)}.</span>
     </div>
+    <p><strong>设计轮次 / Design round:</strong> <code>{_e(bundle['candidate_batch']['design_round_id'])}</code></p>
   </section>
   <section>
     <h2>模型启动顺序 / Model launch order</h2>
@@ -155,7 +158,7 @@ def render_candidate_report(
   <section>
     <h2>候选批次 / Candidate batch</h2>
     <div class="table"><table>
-      <thead><tr><th>候选 / Candidate</th><th>类型 / Type</th><th>AA</th><th>序列推断组件 / Sequence-derived components</th><th>CDS 关系 / Translation</th><th>放行 / Release</th><th>ESMFold2</th></tr></thead>
+      <thead><tr><th>候选 / Candidate</th><th>类型 / Type</th><th>AA</th><th>序列推断组件 / Sequence-derived components</th><th>生成器与父代 / Generator and parents</th><th>CDS 关系 / Translation</th><th>放行 / Release</th><th>ESMFold2</th></tr></thead>
       <tbody>{candidate_rows}</tbody>
     </table></div>
   </section>

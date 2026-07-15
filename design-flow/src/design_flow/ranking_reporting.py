@@ -15,6 +15,10 @@ import tempfile
 from typing import Any
 
 from . import __version__
+from .design_loop import (
+    redesign_request_document,
+    round_feedback_document,
+)
 from .ranking import RankingAnalysis
 from .ranking_html import render_ranking_report
 from .ranking_specs import RANKING_STAGE_ID
@@ -96,6 +100,16 @@ def _actions(analysis: RankingAnalysis) -> list[dict[str, Any]]:
         },
     )
     return list(merged.values())
+
+
+def _source_redesign_documents(source_run_dir: Path) -> list[dict[str, Any]]:
+    documents = []
+    for path in sorted((source_run_dir / "nodes").glob("*/redesign_requests.json")):
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError(f"Redesign-request root must be an object: {path}")
+        documents.append(value)
+    return documents
 
 
 def write_ranking_run(
@@ -229,10 +243,35 @@ def write_ranking_run(
             "formal_readiness": "not_released",
             "blocking_action_ids": [action["action_id"] for action in due_actions],
             "carried_human_actions": open_actions,
-            "carried_forward": {"ranking_result_sha256": None},
+            "carried_forward": {
+                "ranking_result_sha256": None,
+                "round_feedback_sha256": None,
+            },
             "limitations": analysis.result["limitations"],
         }
         _atomic_write(node / "ranking_result.json", _json_text(analysis.result))
+        candidate_batch = json.loads(
+            (
+                analysis.source_run_dir
+                / "nodes/candidate_specification/candidate_batch.json"
+            ).read_text(encoding="utf-8")
+        )
+        round_id = str(candidate_batch["design_round_id"])
+        redesign_requests = redesign_request_document(
+            project_id=analysis.config.project_id,
+            run_id=run_id,
+            round_id=round_id,
+            stage_id=RANKING_STAGE_ID,
+            requests=[],
+        )
+        round_feedback = round_feedback_document(
+            project_id=analysis.config.project_id,
+            run_id=run_id,
+            round_id=round_id,
+            source_documents=_source_redesign_documents(analysis.source_run_dir),
+        )
+        _atomic_write(node / "redesign_requests.json", _json_text(redesign_requests))
+        _atomic_write(node / "round_feedback.json", _json_text(round_feedback))
         _atomic_write(node / "summary.json", _json_text(summary))
         _atomic_write(node / "input_audit.json", _json_text(input_audit))
         _atomic_write(node / "process_record.json", _json_text(process_record))
@@ -284,6 +323,12 @@ def write_ranking_run(
         handoff["carried_forward"]["ranking_result_sha256"] = sha256_file(
             node / "ranking_result.json"
         )
+        handoff["carried_forward"]["round_feedback_sha256"] = sha256_file(
+            node / "round_feedback.json"
+        )
+        handoff["carried_forward"]["round_feedback_request_count"] = round_feedback[
+            "request_count"
+        ]
         _atomic_write(node / "handoff.json", _json_text(handoff))
 
         workflow = workflow_contract()
@@ -341,6 +386,7 @@ def write_ranking_run(
             "artifacts": {
                 "workflow": "workflow.json",
                 "ranking_handoff": f"nodes/{RANKING_STAGE_ID}/handoff.json",
+                "round_feedback": f"nodes/{RANKING_STAGE_ID}/round_feedback.json",
                 "artifact_index": ARTIFACT_INDEX_FILENAME,
             },
         }

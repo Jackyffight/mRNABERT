@@ -6,6 +6,9 @@
   "inputs": {
     "amino_acid_fasta": "input/proteins_aa.fasta",
     "nucleotide_fasta": "input/proteins_cds.fasta",
+    "design_brief": "input/design/design_brief.json",
+    "design_variable_registry": "input/design/design_variable_registry.json",
+    "objective_policy": "input/design/objective_policy.json",
     "candidate_specification": "input/candidate_specification.json"
   },
   "outputs": {

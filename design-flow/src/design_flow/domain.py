@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .design_loop import DesignDossier
 
 
 @dataclass(frozen=True)
@@ -23,6 +26,9 @@ class ProjectConfig:
     amino_acid_fasta: Path
     nucleotide_fasta: Path
     candidate_specification: Path | None
+    design_brief: Path
+    design_variable_registry: Path
+    objective_policy: Path
     run_root: Path
     target_indication: str
     intended_host_species: str
@@ -95,6 +101,7 @@ class ProjectAnalysis:
     proteins: list[ProteinAnalysis]
     issues: list[QCIssue]
     input_digests: dict[str, str]
+    design_dossier: DesignDossier
 
     @property
     def all_issues(self) -> list[QCIssue]:

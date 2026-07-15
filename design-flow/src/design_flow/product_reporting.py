@@ -15,6 +15,7 @@ import tempfile
 from typing import Any
 
 from . import __version__
+from .design_loop import redesign_request_document, request_id
 from .product_design import ProductDesignAnalysis
 from .product_html import render_mrna_product_report, render_protein_product_report
 from .product_specs import MRNA_PRODUCT_STAGE_ID, PROTEIN_PRODUCT_STAGE_ID
@@ -72,6 +73,19 @@ def _parent_actions(analysis: ProductDesignAnalysis) -> list[dict[str, Any]]:
     return list(actions.values())
 
 
+def _design_round_id(analysis: ProductDesignAnalysis) -> str:
+    candidate_batch = json.loads(
+        (
+            analysis.source_run_dir
+            / "nodes/candidate_specification/candidate_batch.json"
+        ).read_text(encoding="utf-8")
+    )
+    round_id = candidate_batch.get("design_round_id")
+    if not isinstance(round_id, str) or not round_id:
+        raise ValueError("Candidate batch has no design_round_id")
+    return round_id
+
+
 def _actions(
     parent: list[dict[str, Any]],
     requirements: list[dict[str, Any]],
@@ -119,6 +133,36 @@ def _bundle(
         )
     ]
     item_name = "products" if stage_id == PROTEIN_PRODUCT_STAGE_ID else "designs"
+    requests = []
+    if stage_id == MRNA_PRODUCT_STAGE_ID:
+        requests = [
+            {
+                "request_id": request_id(
+                    stage_id,
+                    rejected["candidate_id"],
+                    str(rejected["reason"]),
+                    index,
+                ),
+                "status": "proposed",
+                "candidate_id": rejected["candidate_id"],
+                "trigger": str(rejected["reason"]),
+                "evidence_ref": f"rejected_designs.csv#row={index + 1}",
+                "requested_variable_ids": ["mrna.synonymous_coding_sequence"],
+                "instruction": (
+                    "Generate a new synonymous CDS child in the next round under the same protein "
+                    "identity and hard constraints; retain this rejected design as evidence."
+                ),
+                "authority": "deterministic_mrna_constraint",
+            }
+            for index, rejected in enumerate(result["rejected_designs"])
+        ]
+    redesign_requests = redesign_request_document(
+        project_id=analysis.config.project_id,
+        run_id=run_id,
+        round_id=_design_round_id(analysis),
+        stage_id=stage_id,
+        requests=requests,
+    )
     summary = {
         "schema_version": 1,
         "run_id": run_id,
@@ -211,6 +255,7 @@ def _bundle(
             "limitations": result["limitations"],
         },
         "result": result,
+        "redesign_requests": redesign_requests,
     }
 
 
@@ -241,6 +286,10 @@ def _write_node(
 ) -> None:
     node.mkdir(parents=True, exist_ok=True)
     _atomic_write(node / result_name, _json_text(bundle["result"]))
+    _atomic_write(
+        node / "redesign_requests.json",
+        _json_text(bundle["redesign_requests"]),
+    )
     for name in ("summary", "input_audit", "process_record", "output_audit", "human_actions", "handoff"):
         _atomic_write(node / f"{name}.json", _json_text(bundle[name]))
     _atomic_write(node / "report.html", report)

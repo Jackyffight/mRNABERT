@@ -24,10 +24,11 @@ class StageDefinition:
 
 CURRENT_STAGE_ID = "program_and_source_intake"
 WORKFLOW_ID = "vaccine-design-build-test-learn"
-WORKFLOW_VERSION = 1
-SYSTEM_ARCHITECTURE_VERSION = 1
+WORKFLOW_VERSION = 2
+SYSTEM_ARCHITECTURE_VERSION = 2
 APPROVED_WORKFLOW_HASHES = {
     (1, 1): "0c2f4fff63cddcf3ea2851b0501db7dff61ca8a93eea7bf93b0b09a4dc709763",
+    (2, 2): "a5e858dba9ae2c4d480f9c2b1661ed79138211f4e5e99157dce3b1f6aef30b0c",
 }
 
 
@@ -37,16 +38,18 @@ FULL_WORKFLOW = (
         stage_id=CURRENT_STAGE_ID,
         name="Program definition and source intake",
         purpose=(
-            "Freeze the product question, source identities, immutable reference controls, "
-            "and evidence provenance before any sequence is redesigned."
+            "Freeze the design-round question, objectives, searchable variables, source identities, "
+            "immutable controls, and evidence provenance before any sequence is proposed."
         ),
         capabilities=(
             "Pair protein and CDS records and verify translation consistency.",
             "Detect malformed, mislabeled, duplicated, or incomplete source records.",
             "Create stable candidate IDs, input hashes, and a source evidence baseline.",
+            "Validate a versioned design brief, objective policy, and design-variable registry.",
         ),
         input_audit=(
             "Verify target indication, intended host, product modalities, owners, and success criteria.",
+            "Verify round identity, prior feedback, hard gates, optimization objectives, and searchable variables.",
             "Verify source accession/version, organism or isolate, file integrity, and record identity.",
             "Verify AA/CDS record counts, alphabets, reading frames, start/stop behavior, and pairing IDs.",
         ),
@@ -54,14 +57,16 @@ FULL_WORKFLOW = (
             "Normalize FASTA formatting without silently changing biological sequence content.",
             "Translate CDS with the declared genetic code and compare it residue by residue with AA input.",
             "Calculate descriptive sequence metrics and quarantine inconsistent records.",
+            "Freeze the round contract without allowing an LLM or model to change its authority status.",
         ),
         output_audit=(
             "Confirm every accepted source has an immutable ID, normalized sequences, and SHA-256 provenance.",
             "Confirm errors, warnings, and exclusions are explicit and machine-readable.",
-            "Confirm the source set and unresolved decisions are ready for candidate specification."
+            "Confirm the source set and unresolved decisions are ready for candidate specification.",
+            "Confirm every objective and variable is explicit before proposal generation begins.",
         ),
         human_intervention=(
-            "Approve the project brief and immutable reference controls.",
+            "Approve the design brief, objective policy, variable registry, and immutable reference controls.",
             "Resolve missing provenance and decide whether disputed or mislabeled files are replaced or rejected.",
             "Assign owners and resolutions to every open action before its blocking stage."
         ),
@@ -71,28 +76,32 @@ FULL_WORKFLOW = (
         stage_id="candidate_specification",
         name="Candidate specification and generation",
         purpose=(
-            "Represent originals, truncations, manual controls, and generated fusion constructs under one "
-            "explicit lineage and construct grammar."
+            "Generate or import a round-specific proposal pool and represent originals, truncations, manual "
+            "controls, and model-generated constructs under one explicit lineage and construct grammar."
         ),
         capabilities=(
             "Enumerate single-protein and multi-protein fusion candidates.",
             "Track residue boundaries, domain order, linkers, tags, signal peptides, and cleavage sites.",
-            "Use pluggable sequence design models while preserving manually supplied controls."
+            "Use pluggable sequence design models while preserving manually supplied controls.",
+            "Consume accepted redesign requests from the prior immutable round.",
         ),
         input_audit=(
             "Accept only source records released by stage 1 and verify their hashes.",
             "Audit allowed boundaries, required domains, forbidden edits, length limits, and modality constraints.",
-            "Audit every manual construct against its claimed components and annotations."
+            "Audit every manual construct against its claimed components and annotations.",
+            "Audit generator identity, parameters, parents, rationale, and consumed feedback for every proposal.",
         ),
         process=(
             "Generate candidates from a versioned grammar and record every parent-to-child transformation.",
             "Deduplicate exact sequences and separate generation from scoring.",
-            "Retain original and manual constructs as named controls in every candidate batch."
+            "Retain original and manual constructs as named controls in every candidate batch.",
+            "Keep biological candidate identity separate from proposal provenance.",
         ),
         output_audit=(
             "Verify exact AA sequence, component map, lineage, generator revision, and parameter set per candidate.",
             "Verify no tag, linker, residue deletion, or insertion is implicit.",
-            "Verify candidate coverage and diversity against the approved design space."
+            "Verify candidate coverage and diversity against the approved design space.",
+            "Verify proposal lineage and feedback consumption are complete and machine-readable.",
         ),
         human_intervention=(
             "Approve construct grammar, boundaries, domain order, linker families, tags, and required controls.",
@@ -127,7 +136,8 @@ FULL_WORKFLOW = (
         output_audit=(
             "Verify every score maps to the exact candidate and structure artifact checksum.",
             "Verify failures and low-confidence regions are retained rather than filtered silently.",
-            "Verify structural gates are calibrated and do not claim experimental folding."
+            "Verify structural gates are calibrated and do not claim experimental folding.",
+            "Export deterministic review findings as next-round redesign requests without mutating candidates.",
         ),
         human_intervention=(
             "Review domain preservation, exposed regions, unexpected interfaces, and low-confidence linkers.",
@@ -162,7 +172,8 @@ FULL_WORKFLOW = (
         output_audit=(
             "Verify residue-level evidence is traceable to model/database revision and candidate hash.",
             "Verify coverage, uncertainty, conflicts, and unsupported regions are reported.",
-            "Verify outputs are labeled computational evidence, not efficacy or safety conclusions."
+            "Verify outputs are labeled computational evidence, not efficacy or safety conclusions.",
+            "Keep missing evidence separate from evidence-backed next-round redesign requests.",
         ),
         human_intervention=(
             "Confirm host population assumptions and acceptable evidence thresholds.",
@@ -197,7 +208,8 @@ FULL_WORKFLOW = (
         output_audit=(
             "Verify every liability has residue-level or construct-level evidence and severity.",
             "Verify pass/fail rules and ranking features are versioned and reproducible.",
-            "Verify unsupported predictions are marked not evaluated."
+            "Verify unsupported predictions are marked not evaluated.",
+            "Export rule-backed liabilities as reviewable next-round redesign requests.",
         ),
         human_intervention=(
             "Confirm host, purification, formulation, and acceptable risk thresholds.",
@@ -261,7 +273,8 @@ FULL_WORKFLOW = (
         process=(
             "Generate synonymous candidates while continuously asserting translation identity.",
             "Score codon, motif, GC, repeat, and RNA-structure objectives with pinned tools.",
-            "Retain Pareto frontier, parentage, and all rejected hard-constraint violations."
+            "Retain Pareto frontier, parentage, and all rejected hard-constraint violations.",
+            "Return hard-constraint failures as mRNA-specific requests for the next immutable round.",
         ),
         output_audit=(
             "Verify every released mRNA translates exactly to the approved antigen.",
@@ -301,7 +314,8 @@ FULL_WORKFLOW = (
         output_audit=(
             "Verify ranks reproduce from component scores and policy revision.",
             "Verify excluded candidates remain visible with reasons.",
-            "Verify selected portfolio covers controls, diversity, and uncertainty rather than only top scores."
+            "Verify selected portfolio covers controls, diversity, and uncertainty rather than only top scores.",
+            "Publish accepted, rejected, and deferred next-round requests with the selected portfolio.",
         ),
         human_intervention=(
             "Approve ranking policy, budget, risk tolerance, and control composition.",
@@ -390,8 +404,8 @@ FULL_WORKFLOW = (
         stage_id="learning_and_iteration",
         name="Learning, calibration, and next-round design",
         purpose=(
-            "Learn task-specific decision models from leakage-safe experimental data and use uncertainty to plan "
-            "the next design round."
+            "Learn task-specific decision models from leakage-safe experimental data, update objective evidence, "
+            "and authorize a new immutable design round that restarts from Stage 1."
         ),
         capabilities=(
             "Train and compare task heads, baselines, calibration models, and active-learning policies.",
@@ -416,7 +430,7 @@ FULL_WORKFLOW = (
         human_intervention=(
             "Approve labels, splits, decision thresholds, and acceptable evidence for model promotion.",
             "Review failure modes and decide whether to redesign candidates, assays, or models.",
-            "Approve the next round, then restart at candidate specification with inherited lineage and evidence."
+            "Approve the next round, then restart at program intake with inherited lineage, feedback, and evidence."
         ),
         depends_on=("assay_ingestion",),
     ),

@@ -24,6 +24,7 @@ from design_flow.assessment_specs import (
 from design_flow.candidate_reporting import write_candidate_run
 from design_flow.candidate_specification import analyze_candidate_specification
 from design_flow.domain import FastaRecord
+from design_flow.design_loop import default_design_documents
 from design_flow.fasta import parse_fasta
 from design_flow.pipeline import analyze_project
 from design_flow.post_structure_assessment import analyze_post_structure_stages
@@ -41,7 +42,11 @@ from design_flow.structure_assessment import analyze_structure_results
 from design_flow.structure_reporting import write_structure_run
 from design_flow.structure_job import _document_sha256, _identity
 from design_flow.structure_metrics import ResidueGeometry, geometry_metrics
-from design_flow.verification import build_artifact_index, verify_run
+from design_flow.verification import (
+    _workflow_blueprint_matches,
+    build_artifact_index,
+    verify_run,
+)
 from design_flow.workflow import (
     CURRENT_STAGE_ID,
     FULL_WORKFLOW,
@@ -66,6 +71,36 @@ VALID_CDS = [
     FastaRecord("protein_2", "", "ATGAAATTTTGA"),
     FastaRecord("protein_3", "", "ATGGGTCCTTAG"),
 ]
+
+
+def _write_design_inputs(
+    runtime_dir: Path,
+    *,
+    project_id: str,
+    target_indication: str = "test indication",
+    intended_host_species: str = "test host",
+) -> None:
+    design_dir = runtime_dir / "input" / "design"
+    design_dir.mkdir(parents=True, exist_ok=True)
+    documents = default_design_documents(
+        project_id=project_id,
+        target_indication=target_indication,
+        intended_host_species=intended_host_species,
+        product_modalities=["recombinant_protein", "mrna"],
+        mock_approved=True,
+    )
+    for name, document in documents.items():
+        (design_dir / f"{name}.json").write_text(
+            json.dumps(document, sort_keys=True),
+            encoding="utf-8",
+        )
+
+
+DESIGN_INPUT_PATHS = {
+    "design_brief": "input/design/design_brief.json",
+    "design_variable_registry": "input/design/design_variable_registry.json",
+    "objective_policy": "input/design/objective_policy.json",
+}
 
 
 class StructureMetricTests(unittest.TestCase):
@@ -188,6 +223,14 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(frozen, expected)
         self.assertEqual(approved_workflow_hash(), workflow_contract_sha256())
 
+    def test_historical_v1_contract_remains_verifiable(self) -> None:
+        design_flow_root = Path(__file__).resolve().parents[1]
+        historical = json.loads(
+            (design_flow_root / "docs/workflow-v1.json").read_text(encoding="utf-8")
+        )
+
+        self.assertTrue(_workflow_blueprint_matches(historical))
+
     def test_human_workflow_document_records_version_hash_and_all_stages(self) -> None:
         design_flow_root = Path(__file__).resolve().parents[1]
         document = (
@@ -205,9 +248,9 @@ class WorkflowContractTests(unittest.TestCase):
         design_flow_root = Path(__file__).resolve().parents[1]
         architecture = (design_flow_root / "ARCHITECTURE.md").read_text(encoding="utf-8")
 
-        self.assertIn("frozen architecture baseline v1", architecture)
+        self.assertIn("frozen architecture baseline v2", architecture)
         self.assertIn("docs/audit-automation-and-llm-governance.md", architecture)
-        self.assertIn("docs/adr/0001-hybrid-audited-workflow.md", architecture)
+        self.assertIn("docs/adr/0002-round-based-design-optimization.md", architecture)
 
     def test_human_actions_block_only_when_due_for_handoff(self) -> None:
         self.assertFalse(
@@ -259,6 +302,7 @@ class EndToEndTests(unittest.TestCase):
             ">protein_3\nATGGGTCCTTAG\n",
             encoding="utf-8",
         )
+        _write_design_inputs(runtime_dir, project_id="test-three-protein")
         config = {
             "schema_version": 1,
             "project_id": "test-three-protein",
@@ -267,6 +311,7 @@ class EndToEndTests(unittest.TestCase):
             "inputs": {
                 "amino_acid_fasta": "input/proteins_aa.fasta",
                 "nucleotide_fasta": "input/proteins_cds.fasta",
+                **DESIGN_INPUT_PATHS,
             },
             "outputs": {"run_root": "runs"},
             "context": {
@@ -301,7 +346,11 @@ class EndToEndTests(unittest.TestCase):
             )
             self.assertEqual(
                 {path.name for path in (run_dir / "inputs").iterdir()},
-                {"project.json", "proteins_aa.fasta", "proteins_cds.fasta"},
+                {
+                    "project.json", "proteins_aa.fasta", "proteins_cds.fasta",
+                    "design_brief.json", "design_variable_registry.json",
+                    "objective_policy.json",
+                },
             )
             node_dir = run_dir / "nodes" / CURRENT_STAGE_ID
             self.assertEqual(
@@ -315,6 +364,7 @@ class EndToEndTests(unittest.TestCase):
                     "human_actions.json",
                     "handoff.json",
                     "proteins.json",
+                    "design_round.json",
                     "proteins.csv",
                     "qc_issues.csv",
                 },
@@ -412,6 +462,36 @@ class EndToEndTests(unittest.TestCase):
                 {"approve-controls", "define-target-indication"},
             )
 
+    def test_draft_design_contract_blocks_candidate_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path = self._write_project(root)
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            brief_path = Path(config["runtime_root"]) / config["inputs"]["design_brief"]
+            brief = json.loads(brief_path.read_text(encoding="utf-8"))
+            brief["status"] = "draft"
+            brief_path.write_text(json.dumps(brief), encoding="utf-8")
+
+            run_dir = write_run_artifacts(
+                analyze_project(config_path),
+                now=datetime(2026, 7, 13, 13, 30, tzinfo=timezone.utc),
+            )
+            node_dir = run_dir / "nodes" / CURRENT_STAGE_ID
+            summary = json.loads((node_dir / "summary.json").read_text(encoding="utf-8"))
+            input_audit = json.loads(
+                (node_dir / "input_audit.json").read_text(encoding="utf-8")
+            )
+            handoff = json.loads((node_dir / "handoff.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(summary["status"], "needs_human_input")
+            self.assertIn("approve-design-round-contract", handoff["blocking_action_ids"])
+            contract_check = next(
+                check
+                for check in input_audit["checks"]
+                if check["check_id"] == "design-round-contract-approved"
+            )
+            self.assertEqual(contract_check["status"], "warning")
+
     def test_artifact_hash_detects_modified_output(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
@@ -429,6 +509,35 @@ class EndToEndTests(unittest.TestCase):
             self.assertTrue(
                 any("artifact-integrity:" in error for error in result["errors"]),
                 result["errors"],
+            )
+
+    def test_design_round_tampering_fails_after_reindex(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            run_dir = write_run_artifacts(
+                analyze_project(self._write_project(root)),
+                now=datetime(2026, 7, 13, 14, 15, tzinfo=timezone.utc),
+            )
+            path = run_dir / "nodes/program_and_source_intake/design_round.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            document["summary"]["searchable_variable_count"] = 999
+            path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+            manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+            rebuilt = build_artifact_index(
+                run_dir,
+                manifest["project_id"],
+                manifest["run_id"],
+            )
+            (run_dir / "artifact_index.json").write_text(
+                json.dumps(rebuilt, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            verification = verify_run(run_dir)
+
+            self.assertEqual(verification["status"], "fail")
+            self.assertTrue(
+                any("design-round-contract" in error for error in verification["errors"])
             )
 
     def test_failed_sequence_audit_produces_a_valid_blocked_run(self) -> None:
@@ -692,6 +801,7 @@ class CandidateStageEndToEndTests(unittest.TestCase):
         }
         specification_path = input_dir / "candidate_specification.json"
         specification_path.write_text(json.dumps(specification), encoding="utf-8")
+        _write_design_inputs(runtime_dir, project_id="test-stage2")
         config = {
             "schema_version": 1,
             "project_id": "test-stage2",
@@ -701,6 +811,7 @@ class CandidateStageEndToEndTests(unittest.TestCase):
                 "amino_acid_fasta": "input/proteins_aa.fasta",
                 "nucleotide_fasta": "input/proteins_cds.fasta",
                 "candidate_specification": "input/candidate_specification.json",
+                **DESIGN_INPUT_PATHS,
             },
             "outputs": {"run_root": "runs"},
             "context": {
@@ -861,6 +972,71 @@ class CandidateStageEndToEndTests(unittest.TestCase):
             self.assertEqual(summary["exploratory_structure_ready_count"], 6)
             self.assertEqual(summary["formal_structure_ready_count"], 3)
 
+    def test_stage2_rejects_draft_design_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, _ = self._write_stage2_project(root)
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            brief_path = Path(config["runtime_root"]) / config["inputs"]["design_brief"]
+            brief = json.loads(brief_path.read_text(encoding="utf-8"))
+            brief["status"] = "draft"
+            brief_path.write_text(json.dumps(brief), encoding="utf-8")
+            source_run = write_run_artifacts(
+                analyze_project(config_path),
+                now=datetime(2026, 7, 14, 8, 1, tzinfo=timezone.utc),
+            )
+
+            with self.assertRaisesRegex(ValueError, "design-round contract is approved"):
+                analyze_candidate_specification(
+                    config_path,
+                    source_run_dir=source_run,
+                )
+
+    def test_stage2_rejects_unknown_proposal_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, source_run = self._write_stage2_project(root)
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            specification_path = (
+                Path(config["runtime_root"])
+                / config["inputs"]["candidate_specification"]
+            )
+            specification = json.loads(specification_path.read_text(encoding="utf-8"))
+            specification["manual_candidates"][0]["proposal"] = {
+                "parent_candidate_keys": ["missing-parent"]
+            }
+            specification_path.write_text(json.dumps(specification), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "unknown proposal parents"):
+                analyze_candidate_specification(
+                    config_path,
+                    source_run_dir=source_run,
+                )
+
+    def test_stage2_rejects_cyclic_proposal_lineage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, source_run = self._write_stage2_project(root)
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            specification_path = (
+                Path(config["runtime_root"])
+                / config["inputs"]["candidate_specification"]
+            )
+            specification = json.loads(specification_path.read_text(encoding="utf-8"))
+            specification["manual_candidates"][0]["proposal"] = {
+                "parent_candidate_keys": ["trunc-b"]
+            }
+            specification["manual_candidates"][1]["proposal"] = {
+                "parent_candidate_keys": ["trunc-a"]
+            }
+            specification_path.write_text(json.dumps(specification), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "proposal lineage contains a cycle"):
+                analyze_candidate_specification(
+                    config_path,
+                    source_run_dir=source_run,
+                )
+
     def test_stage2_verifier_detects_component_tampering_after_reindex(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             config_path, source_run = self._write_stage2_project(Path(temporary_dir))
@@ -885,6 +1061,35 @@ class CandidateStageEndToEndTests(unittest.TestCase):
             self.assertTrue(
                 any("component-maps-cover-sequences" in error for error in result["errors"]),
                 result["errors"],
+            )
+
+    def test_stage2_verifier_detects_proposal_lineage_tampering(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            config_path, source_run = self._write_stage2_project(Path(temporary_dir))
+            candidate_run = write_candidate_run(
+                analyze_candidate_specification(config_path, source_run_dir=source_run),
+                now=datetime(2026, 7, 14, 10, 30, tzinfo=timezone.utc),
+            )
+            path = candidate_run / "nodes/candidate_specification/proposal_lineage.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            document["records"][-1]["generator"]["id"] = "unrecorded-generator"
+            path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+            manifest = json.loads((candidate_run / "manifest.json").read_text(encoding="utf-8"))
+            rebuilt = build_artifact_index(
+                candidate_run,
+                manifest["project_id"],
+                manifest["run_id"],
+            )
+            (candidate_run / "artifact_index.json").write_text(
+                json.dumps(rebuilt, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            verification = verify_run(candidate_run)
+
+            self.assertEqual(verification["status"], "fail")
+            self.assertTrue(
+                any("proposal-lineage" in error for error in verification["errors"])
             )
 
     def test_stage3_job_contains_only_verified_exploratory_candidates(self) -> None:
@@ -1402,6 +1607,20 @@ class CandidateStageEndToEndTests(unittest.TestCase):
             )
             self.assertEqual(
                 stage7_verification["status"], "pass", stage7_verification["errors"]
+            )
+            round_feedback = json.loads(
+                (
+                    stage7_run
+                    / "nodes/integrated_ranking/round_feedback.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(round_feedback["round_id"], "round-000")
+            self.assertEqual(
+                round_feedback["request_count"], len(round_feedback["requests"])
+            )
+            self.assertIn(
+                "developability_assessment",
+                round_feedback["source_stages"],
             )
 
     def test_stage7_verifier_detects_score_tampering_after_reindex(self) -> None:

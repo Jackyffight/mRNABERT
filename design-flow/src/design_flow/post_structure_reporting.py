@@ -21,6 +21,7 @@ from .continuation_state import (
     project_context,
     reconcile_human_actions,
 )
+from .design_loop import redesign_request_document, request_id
 from .post_structure_assessment import PostStructureAnalysis
 from .post_structure_html import render_developability_report, render_immune_report
 from .verification import ARTIFACT_INDEX_FILENAME, build_artifact_index, sha256_file, verify_run
@@ -71,11 +72,31 @@ def _parent_actions(analysis: PostStructureAnalysis) -> list[dict[str, Any]]:
     )
 
 
+def _design_round_id(analysis: PostStructureAnalysis) -> str:
+    candidate_batch = json.loads(
+        (
+            analysis.source_run_dir
+            / "nodes/candidate_specification/candidate_batch.json"
+        ).read_text(encoding="utf-8")
+    )
+    round_id = candidate_batch.get("design_round_id")
+    if not isinstance(round_id, str) or not round_id:
+        raise ValueError("Candidate batch has no design_round_id")
+    return round_id
+
+
 def _immune_bundle(
     analysis: PostStructureAnalysis,
     run_id: str,
 ) -> dict[str, Any]:
     result = analysis.immune_result
+    redesign_requests = redesign_request_document(
+        project_id=analysis.config.project_id,
+        run_id=run_id,
+        round_id=_design_round_id(analysis),
+        stage_id=IMMUNE_STAGE_ID,
+        requests=[],
+    )
     actions = merge_requirement_actions(
         _parent_actions(analysis),
         result["requirements"],
@@ -191,6 +212,7 @@ def _immune_bundle(
         "human_actions": human_actions,
         "handoff": handoff,
         "result": result,
+        "redesign_requests": redesign_requests,
     }
 
 
@@ -199,6 +221,42 @@ def _developability_bundle(
     run_id: str,
 ) -> dict[str, Any]:
     result = analysis.developability_result
+    requests = []
+    ordinal = 0
+    liability_row = 0
+    for candidate in result["candidates"]:
+        for liability in candidate["liabilities"]:
+            liability_row += 1
+            if liability["severity"] != "review":
+                continue
+            requests.append(
+                {
+                    "request_id": request_id(
+                        DEVELOPABILITY_STAGE_ID,
+                        candidate["candidate_id"],
+                        liability["code"],
+                        ordinal,
+                    ),
+                    "status": "proposed",
+                    "candidate_id": candidate["candidate_id"],
+                    "trigger": liability["code"],
+                    "evidence_ref": f"liabilities.csv#row={liability_row}",
+                    "requested_variable_ids": ["antigen.recipe"],
+                    "instruction": (
+                        "Review whether this liability should be accepted, mitigated experimentally, "
+                        "or addressed by a child sequence proposal in the next immutable round."
+                    ),
+                    "authority": "deterministic_developability_rule",
+                }
+            )
+            ordinal += 1
+    redesign_requests = redesign_request_document(
+        project_id=analysis.config.project_id,
+        run_id=run_id,
+        round_id=_design_round_id(analysis),
+        stage_id=DEVELOPABILITY_STAGE_ID,
+        requests=requests,
+    )
     actions = merge_requirement_actions(
         _parent_actions(analysis),
         result["requirements"],
@@ -322,6 +380,7 @@ def _developability_bundle(
         "human_actions": human_actions,
         "handoff": handoff,
         "result": result,
+        "redesign_requests": redesign_requests,
     }
 
 
@@ -340,6 +399,10 @@ def _write_node(
 ) -> None:
     node_dir.mkdir(parents=True, exist_ok=True)
     _atomic_write(node_dir / result_name, _json_text(bundle["result"]))
+    _atomic_write(
+        node_dir / "redesign_requests.json",
+        _json_text(bundle["redesign_requests"]),
+    )
     for name in (
         "summary",
         "input_audit",

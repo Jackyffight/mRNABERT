@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from . import __version__
@@ -26,6 +27,18 @@ def _is_unspecified(value: str) -> bool:
 def _automatic_human_actions(analysis: ProjectAnalysis) -> list[HumanAction]:
     config = analysis.config
     actions: list[HumanAction] = []
+    if not analysis.design_dossier.approved_for_execution:
+        actions.append(
+            HumanAction(
+                action_id="approve-design-round-contract",
+                question=(
+                    "Approve the design brief, searchable variables, and objective policy "
+                    "before candidate proposal generation."
+                ),
+                required_before_stage=NEXT_STAGE_ID,
+                question_zh="在生成候选方案前，确认本轮设计简报、可搜索变量和目标策略。",
+            )
+        )
     if _is_unspecified(config.target_indication):
         actions.append(
             HumanAction(
@@ -125,12 +138,39 @@ def build_input_audit(analysis: ProjectAnalysis) -> dict[str, Any]:
                 "path": str(analysis.config.nucleotide_fasta),
                 "sha256": analysis.input_digests["nucleotide_fasta"],
             },
+            **{
+                name: {
+                    "path": str(path),
+                    "sha256": analysis.design_dossier.digests[name],
+                }
+                for name, path in analysis.design_dossier.paths.items()
+            },
         },
         "checks": [
             {
                 "check_id": "source-files-hashed",
                 "status": "pass",
                 "evidence": "Project configuration and both FASTA files have SHA-256 identities.",
+            },
+            {
+                "check_id": "design-round-contract-valid",
+                "status": "pass",
+                "evidence": (
+                    f"round={analysis.design_dossier.round_id}; "
+                    f"objectives={len(analysis.design_dossier.objective_policy['objectives'])}; "
+                    f"variables={len(analysis.design_dossier.variable_registry['variables'])}"
+                ),
+            },
+            {
+                "check_id": "design-round-contract-approved",
+                "status": (
+                    "pass" if analysis.design_dossier.approved_for_execution else "warning"
+                ),
+                "evidence": json.dumps(
+                    analysis.design_dossier.approval_statuses,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
             },
             {
                 "check_id": "expected-record-count",
@@ -166,6 +206,13 @@ def build_process_record(analysis: ProjectAnalysis) -> dict[str, Any]:
         "pipeline_version": __version__,
         "operations": [
             {
+                "operation": "freeze_design_round",
+                "behavior": (
+                    "Validate and hash the design brief, objective policy, and searchable-variable "
+                    "registry before candidate proposal generation."
+                ),
+            },
+            {
                 "operation": "parse_fasta",
                 "behavior": "Parse multiline records, preserve record IDs, reject duplicate or empty records.",
             },
@@ -194,6 +241,8 @@ def build_process_record(analysis: ProjectAnalysis) -> dict[str, Any]:
             },
         ],
         "parameters": {
+            "round_id": analysis.design_dossier.round_id,
+            "round_index": analysis.design_dossier.round_index,
             "genetic_code": "standard",
             "expected_protein_count": analysis.config.expected_protein_count,
             "product_modalities": list(analysis.config.product_modalities),
@@ -208,6 +257,7 @@ def build_output_audit(analysis: ProjectAnalysis) -> dict[str, Any]:
         "stage_id": CURRENT_STAGE_ID,
         "status": analysis.status,
         "summary": {
+            "design_round": analysis.design_dossier.summary(),
             "accepted_candidates": sum(protein.status == "pass" for protein in analysis.proteins),
             "rejected_candidates": sum(protein.status == "fail" for protein in analysis.proteins),
             "errors": errors,
@@ -225,6 +275,10 @@ def build_output_audit(analysis: ProjectAnalysis) -> dict[str, Any]:
             for protein in analysis.proteins
         ],
         "checks": [
+            {
+                "check_id": "design-space-is-explicit",
+                "status": "pass",
+            },
             {
                 "check_id": "candidate-identities-present",
                 "status": "pass" if all(protein.candidate_id for protein in analysis.proteins) else "fail",
@@ -297,6 +351,9 @@ def build_node_bundle(analysis: ProjectAnalysis, run_id: str) -> dict[str, Any]:
         },
         "carried_forward": {
             "project_id": analysis.config.project_id,
+            "design_round": analysis.design_dossier.summary(),
+            "design_contract_digests": analysis.design_dossier.digests,
+            "prior_feedback": analysis.design_dossier.brief.get("prior_feedback", {}),
             "input_digests": analysis.input_digests,
             "candidates": [
                 {

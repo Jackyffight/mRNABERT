@@ -1,10 +1,12 @@
 # Stage 4-7 Computational Pipeline
 
-Status: implemented exploratory execution path, version `0.12.0`
+Status: implemented exploratory execution path, version `0.13.0`
 
 This document defines the executable path after a verified Stage 3 structure run.
-It does not change workflow v1. Stage 4 and 5 execute together, Stage 6A and 6B
-execute together, and Stage 7 consumes both product branches. Each command writes
+Under workflow v2, these evaluators also emit structured next-round redesign
+requests without mutating candidates. Stage 4 and 5 execute together, Stage 6A and
+6B execute together, and Stage 7 consumes both product branches and aggregates the
+round feedback. Each command writes
 a new immutable continuation run and publishes `latest.json` only after integrity
 and semantic recomputation pass.
 

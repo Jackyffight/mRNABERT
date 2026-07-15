@@ -1,0 +1,72 @@
+# Round-Based Design Optimization
+
+## The Operational Model
+
+The pipeline is both a design engine and a quality-control line. Design starts at
+Stage 1, not Stage 6:
+
+```text
+design brief + objectives + variables + prior feedback
+                         |
+                         v
+                 Stage 2 proposal pool
+                         |
+                         v
+             Stage 3-6 specialized evaluators
+                         |
+                         v
+          evidence + structured redesign requests
+                         |
+                         v
+             ranking / experiment / learning
+                         |
+                         v
+                next immutable round
+```
+
+There is no in-place candidate mutation. A changed sequence is a child proposal in
+a later round. Rejected candidates and failed constraints remain visible.
+
+## Stage 1 Contracts
+
+- `design_brief.json` defines the product question, round identity, success criteria,
+  and accepted prior feedback.
+- `design_variable_registry.json` declares what is fixed, searchable, deferred, or
+  forbidden and where each variable enters the workflow.
+- `objective_policy.json` separates hard gates, optimization objectives, monitoring
+  metrics, and missing-evidence behavior.
+
+These files are machine-validated and hash-snapshotted. `draft` contracts block the
+Stage 1 to Stage 2 handoff. `approved_for_mock_execution` permits workflow testing
+but never authorizes a scientific or synthesis release.
+
+## Proposal And Feedback Contracts
+
+`proposal_lineage.json` records the proposal round, generator, parameters, parents,
+transformation, rationale, and consumed request IDs for each candidate.
+
+`redesign_requests.json` is emitted by evaluators. A request names its candidate,
+trigger, evidence reference, affected design variables, instruction, authority, and
+review state. It is a proposal for the next round, not permission to edit the current
+candidate.
+
+## Kitchen Analogy
+
+The restaurant owner defines what kind of meal should succeed and which tradeoffs
+matter before the menu is written. Stage 2 chefs propose recipes. Stage 3-6 stations
+test shape, intended diners, manufacturability, and product format. A failed station
+does not alter the recipe on the counter; it writes a ticket for the next menu round.
+The owner and scientific chef decide which tickets become new recipes.
+
+The original nine recipes are the first tasting menu. They are enough to test the
+kitchen line, not enough to claim that the restaurant explored every possible dish.
+
+## Current Implementation Boundary
+
+Version 0.13 implements the design-round contracts, approval gate, proposal
+lineage, evaluator feedback artifacts, and Stage 7 feedback aggregation. The
+current `round-000` pool is imported from explicit source and manual records.
+Automatic or model-driven proposal generation is intentionally not yet enabled;
+the next adapter must emit the same validated proposal schema before it may enter
+Stage 2. This distinction prevents an implemented feedback loop from being confused
+with an already optimized candidate portfolio.

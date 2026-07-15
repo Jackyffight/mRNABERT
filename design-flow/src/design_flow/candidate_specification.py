@@ -42,6 +42,7 @@ class ManualCandidateSpec:
     claimed_source_end: int | None
     claimed_component_keys: tuple[str, ...]
     annotation_status: str
+    proposal: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ class CandidateSpecification:
     specification_id: str
     batch_label: str
     release_mode: str
+    design_round_id: str | None
     include_source_controls: tuple[str, ...]
     manual_candidates: tuple[ManualCandidateSpec, ...]
     generation_grammar: dict[str, Any]
@@ -75,6 +77,7 @@ class CandidateRecord:
     exploratory_structure_ready: bool
     formal_structure_ready: bool
     duplicate_of: str | None
+    proposal: dict[str, Any]
     issues: list[QCIssue] = field(default_factory=list)
 
     @property
@@ -106,6 +109,7 @@ class CandidateRecord:
             "exploratory_structure_ready": self.exploratory_structure_ready,
             "formal_structure_ready": self.formal_structure_ready,
             "duplicate_of": self.duplicate_of,
+            "proposal": self.proposal,
             "issues": [issue.to_dict() for issue in self.issues],
         }
 
@@ -196,6 +200,14 @@ def load_candidate_specification(
     release_mode = str(data.get("release_mode", "provisional")).strip()
     if release_mode not in {"provisional", "approved"}:
         raise ValueError("release_mode must be 'provisional' or 'approved'")
+    design_round_value = data.get("design_round_id")
+    if design_round_value is not None and (
+        not isinstance(design_round_value, str)
+        or not design_round_value.strip()
+        or not ID_PATTERN.fullmatch(design_round_value.strip())
+    ):
+        raise ValueError("design_round_id must be a valid non-empty ID when provided")
+    design_round_id = design_round_value.strip() if isinstance(design_round_value, str) else None
 
     controls = data.get("include_source_controls")
     if not isinstance(controls, list) or not controls or not all(
@@ -211,6 +223,7 @@ def load_candidate_specification(
         raise ValueError("manual_candidates must be a JSON array")
     manual_candidates: list[ManualCandidateSpec] = []
     known_keys: set[str] = set()
+    source_candidate_keys = {f"source-{source_id}" for source_id in normalized_controls}
     for index, raw_candidate in enumerate(raw_candidates):
         field_name = f"manual_candidates[{index}]"
         candidate = _mapping(raw_candidate, field_name)
@@ -219,6 +232,10 @@ def load_candidate_specification(
             raise ValueError(f"Invalid candidate_key: {candidate_key}")
         if candidate_key in known_keys:
             raise ValueError(f"Duplicate candidate_key: {candidate_key}")
+        if candidate_key in source_candidate_keys:
+            raise ValueError(
+                f"manual candidate_key collides with a source control: {candidate_key}"
+            )
         known_keys.add(candidate_key)
         candidate_type = _text(candidate, "candidate_type", field_name)
         if candidate_type not in MANUAL_CANDIDATE_TYPES:
@@ -246,6 +263,36 @@ def load_candidate_specification(
             isinstance(value, str) and value.strip() for value in claimed_components
         ):
             raise ValueError(f"{field_name}.claimed_component_keys must be a string array")
+        proposal = candidate.get("proposal", {})
+        if not isinstance(proposal, dict):
+            raise ValueError(f"{field_name}.proposal must be an object")
+        generator = proposal.get("generator", {})
+        if not isinstance(generator, dict):
+            raise ValueError(f"{field_name}.proposal.generator must be an object")
+        generator_id = str(generator.get("id", "manual_import")).strip()
+        generator_version = str(generator.get("version", "1")).strip()
+        if not generator_id or not generator_version:
+            raise ValueError(f"{field_name}.proposal generator id/version must be non-empty")
+        parameters = generator.get("parameters", {})
+        if not isinstance(parameters, dict):
+            raise ValueError(f"{field_name}.proposal.generator.parameters must be an object")
+        parent_keys_value = proposal.get("parent_candidate_keys")
+        if parent_keys_value is None:
+            if candidate_type == "fusion":
+                parent_keys_value = claimed_components
+            elif candidate.get("claimed_source_id") is not None:
+                parent_keys_value = [f"source-{str(candidate['claimed_source_id']).strip()}"]
+            else:
+                parent_keys_value = []
+        if not isinstance(parent_keys_value, list) or not all(
+            isinstance(value, str) and value.strip() for value in parent_keys_value
+        ):
+            raise ValueError(f"{field_name}.proposal.parent_candidate_keys must be a string array")
+        feedback_ids = proposal.get("feedback_request_ids", [])
+        if not isinstance(feedback_ids, list) or not all(
+            isinstance(value, str) and value.strip() for value in feedback_ids
+        ):
+            raise ValueError(f"{field_name}.proposal.feedback_request_ids must be a string array")
         manual_candidates.append(
             ManualCandidateSpec(
                 candidate_key=candidate_key,
@@ -267,9 +314,29 @@ def load_candidate_specification(
                 ),
                 claimed_component_keys=tuple(value.strip() for value in claimed_components),
                 annotation_status=annotation_status,
+                proposal={
+                    "generator": {
+                        "id": generator_id,
+                        "version": generator_version,
+                        "parameters": parameters,
+                    },
+                    "parent_candidate_keys": [value.strip() for value in parent_keys_value],
+                    "transformation": str(
+                        proposal.get("transformation", candidate_type)
+                    ).strip() or candidate_type,
+                    "rationale": str(
+                        proposal.get(
+                            "rationale",
+                            "User-supplied round-0 seed; scientific rationale not encoded.",
+                        )
+                    ).strip(),
+                    "feedback_request_ids": [value.strip() for value in feedback_ids],
+                },
             )
         )
 
+    known_proposal_parent_keys = known_keys | source_candidate_keys
+    manual_by_key = {candidate.candidate_key: candidate for candidate in manual_candidates}
     for candidate in manual_candidates:
         unknown = sorted(set(candidate.claimed_component_keys) - known_keys)
         if unknown:
@@ -278,6 +345,33 @@ def load_candidate_specification(
             )
         if candidate.candidate_key in candidate.claimed_component_keys:
             raise ValueError(f"{candidate.candidate_key} cannot contain itself")
+        unknown_parents = sorted(
+            set(candidate.proposal["parent_candidate_keys"])
+            - known_proposal_parent_keys
+        )
+        if unknown_parents:
+            raise ValueError(
+                f"{candidate.candidate_key} has unknown proposal parents: {unknown_parents}"
+            )
+        if candidate.candidate_key in candidate.proposal["parent_candidate_keys"]:
+            raise ValueError(f"{candidate.candidate_key} cannot be its own proposal parent")
+
+    visited: set[str] = set()
+    visiting: set[str] = set()
+
+    def visit_proposal(candidate_key: str) -> None:
+        if candidate_key in visited or candidate_key in source_candidate_keys:
+            return
+        if candidate_key in visiting:
+            raise ValueError(f"proposal lineage contains a cycle at {candidate_key}")
+        visiting.add(candidate_key)
+        for parent_key in manual_by_key[candidate_key].proposal["parent_candidate_keys"]:
+            visit_proposal(parent_key)
+        visiting.remove(candidate_key)
+        visited.add(candidate_key)
+
+    for candidate_key in sorted(manual_by_key):
+        visit_proposal(candidate_key)
 
     grammar = _mapping(data.get("generation_grammar", {}), "generation_grammar")
     grammar_status = str(grammar.get("status", "not_configured")).strip()
@@ -305,6 +399,7 @@ def load_candidate_specification(
         specification_id=specification_id,
         batch_label=str(data.get("batch_label", specification_id)).strip() or specification_id,
         release_mode=release_mode,
+        design_round_id=design_round_id,
         include_source_controls=normalized_controls,
         manual_candidates=tuple(manual_candidates),
         generation_grammar=normalized_grammar,
@@ -564,6 +659,21 @@ def analyze_candidate_specification(
     input_digests: dict[str, str] = {"candidate_specification": specification.sha256}
 
     source_blockers = set(source_handoff.get("blocking_action_ids", []))
+    if "approve-design-round-contract" in source_blockers:
+        raise ValueError(
+            "Stage 2 is blocked until the Stage 1 design-round contract is approved"
+        )
+    design_round = source_handoff.get("carried_forward", {}).get("design_round", {})
+    round_id = design_round.get("round_id")
+    if not isinstance(round_id, str) or not round_id:
+        raise ValueError("Stage 1 handoff has no versioned design round")
+    if (
+        specification.design_round_id is not None
+        and specification.design_round_id != round_id
+    ):
+        raise ValueError(
+            "Candidate specification design_round_id differs from the Stage 1 design round"
+        )
     source_controls_approved = not {
         "confirm-source-provenance",
         "confirm-reference-controls",
@@ -607,6 +717,15 @@ def analyze_candidate_specification(
                 exploratory_structure_ready=True,
                 formal_structure_ready=source_controls_approved,
                 duplicate_of=None,
+                proposal={
+                    "round_id": round_id,
+                    "generator": {"id": "source_intake", "version": "1", "parameters": {}},
+                    "parent_candidate_keys": [],
+                    "parent_candidate_ids": [],
+                    "transformation": "immutable_source_control",
+                    "rationale": "Preserve the exact Stage 1 source as a round control.",
+                    "feedback_request_ids": [],
+                },
             )
         )
 
@@ -806,9 +925,36 @@ def analyze_candidate_specification(
                 exploratory_structure_ready=exploratory_ready,
                 formal_structure_ready=exploratory_ready and release_status == "released",
                 duplicate_of=duplicate_of,
+                proposal={
+                    "round_id": round_id,
+                    **manual.proposal,
+                    "parent_candidate_ids": [],
+                },
                 issues=candidate_issues,
             )
         )
+
+    candidate_by_key = {candidate.candidate_key: candidate for candidate in candidates}
+    for candidate in candidates:
+        parent_keys = candidate.proposal["parent_candidate_keys"]
+        unknown_parent_keys = [key for key in parent_keys if key not in candidate_by_key]
+        if unknown_parent_keys:
+            candidate.issues.append(
+                QCIssue(
+                    "error",
+                    "unknown_proposal_parent",
+                    f"Proposal lineage references unknown candidate keys: {unknown_parent_keys}",
+                    candidate.candidate_key,
+                )
+            )
+            candidate.release_status = "rejected"
+            candidate.exploratory_structure_ready = False
+            candidate.formal_structure_ready = False
+        candidate.proposal["parent_candidate_ids"] = [
+            candidate_by_key[key].candidate_id
+            for key in parent_keys
+            if key in candidate_by_key
+        ]
 
     return CandidateBatchAnalysis(
         config=config,
