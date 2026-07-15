@@ -42,6 +42,12 @@ from design_flow.ranking_specs import initialize_ranking_specification
 from design_flow.qc import CODON_TABLE, analyze_sequence_pairs, normalize_nucleotide, translate_cds
 from design_flow.reporting import write_run_artifacts
 from design_flow.structure_job import build_structure_job, write_structure_job
+from design_flow.stage2_external_proposals import (
+    _validate_results,
+    verify_stage2_model_import,
+    write_stage2_model_import,
+)
+from design_flow.stage2_search import _selection_records
 from design_flow.structure_assessment import analyze_structure_results
 from design_flow.structure_reporting import write_structure_run
 from design_flow.structure_job import _document_sha256, _identity
@@ -1193,6 +1199,411 @@ class CandidateStageEndToEndTests(unittest.TestCase):
                 verification["errors"],
             )
 
+    def test_stage2_supports_independent_linkers_and_constrained_substitution(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, source_run = self._write_stage2_project(root)
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            specification_path = (
+                Path(config["runtime_root"])
+                / config["inputs"]["candidate_specification"]
+            )
+            specification = json.loads(specification_path.read_text(encoding="utf-8"))
+            parent_sequence = "AAAAAAAA" + "GS" + "CCCCCCCC" + "EAAAK" + "MGGGGGGGG"
+            child_sequence = parent_sequence[:8] + "AS" + parent_sequence[10:]
+            specification["manual_candidates"].extend(
+                [
+                    {
+                        "candidate_key": "fusion-independent-linkers",
+                        "candidate_type": "fusion",
+                        "amino_acid_sequence": parent_sequence,
+                        "claimed_component_keys": ["trunc-a", "trunc-b", "source-C"],
+                        "annotation_status": "unreviewed",
+                        "proposal": {
+                            "generator": {
+                                "id": "fixture-multilinker",
+                                "version": "1",
+                                "parameters": {
+                                    "linker_ids": ["short", "rigid"],
+                                    "linker_sequences": ["GS", "EAAAK"],
+                                },
+                            },
+                            "parent_candidate_keys": ["trunc-a", "trunc-b", "source-C"],
+                            "transformation": "ordered_component_concatenation",
+                            "rationale": "Exercise independent junction linkers.",
+                            "feedback_request_ids": [],
+                        },
+                    },
+                    {
+                        "candidate_key": "fusion-model-child",
+                        "candidate_type": "fusion",
+                        "amino_acid_sequence": child_sequence,
+                        "claimed_component_keys": ["fusion-independent-linkers"],
+                        "annotation_status": "unreviewed",
+                        "proposal": {
+                            "generator": {
+                                "id": "fixture-model",
+                                "version": "model-revision",
+                                "parameters": {
+                                    "mutations": [
+                                        {"position": 9, "from": "G", "to": "A"}
+                                    ]
+                                },
+                            },
+                            "parent_candidate_keys": ["fusion-independent-linkers"],
+                            "transformation": "constrained_substitution",
+                            "rationale": "Exercise validated model substitution.",
+                            "feedback_request_ids": [],
+                        },
+                    },
+                ]
+            )
+            specification_path.write_text(json.dumps(specification), encoding="utf-8")
+
+            analysis = analyze_candidate_specification(
+                config_path,
+                source_run_dir=source_run,
+            )
+
+            parent = next(
+                candidate
+                for candidate in analysis.candidates
+                if candidate.candidate_key == "fusion-independent-linkers"
+            )
+            child = next(
+                candidate
+                for candidate in analysis.candidates
+                if candidate.candidate_key == "fusion-model-child"
+            )
+            self.assertEqual(parent.observed_component_keys, ["trunc-a", "trunc-b", "source-C"])
+            self.assertEqual(
+                [
+                    component.get("linker_id")
+                    for component in parent.inferred_components
+                    if component.get("declared_role") == "linker"
+                ],
+                ["short", "rigid"],
+            )
+            redesigned = [
+                component
+                for component in child.inferred_components
+                if component.get("sequence_relation") == "constrained_substitution"
+            ]
+            self.assertEqual(len(redesigned), 1)
+            self.assertEqual(redesigned[0]["mutations"], [{"position": 9, "from": "G", "to": "A"}])
+            self.assertEqual(child.observed_component_keys, ["fusion-independent-linkers"])
+            child_run = write_candidate_run(
+                analysis,
+                now=datetime(2026, 7, 14, 8, 5, tzinfo=timezone.utc),
+            )
+            self.assertEqual(verify_run(child_run)["status"], "pass")
+            batch_path = child_run / "nodes/candidate_specification/candidate_batch.json"
+            batch = json.loads(batch_path.read_text(encoding="utf-8"))
+            child_document = next(
+                candidate
+                for candidate in batch["candidates"]
+                if candidate["candidate_key"] == "fusion-model-child"
+            )
+            redesigned_component = next(
+                component
+                for component in child_document["inferred_components"]
+                if component.get("sequence_relation") == "constrained_substitution"
+            )
+            redesigned_component["mutations"][0]["to"] = "C"
+            batch_path.write_text(json.dumps(batch, indent=2), encoding="utf-8")
+            manifest = json.loads((child_run / "manifest.json").read_text(encoding="utf-8"))
+            index = build_artifact_index(child_run, manifest["project_id"], manifest["run_id"])
+            (child_run / "artifact_index.json").write_text(
+                json.dumps(index, indent=2), encoding="utf-8"
+            )
+            tampered = verify_run(child_run)
+            self.assertEqual(tampered["status"], "fail")
+            self.assertTrue(
+                any("component-maps-cover-sequences" in error for error in tampered["errors"])
+            )
+
+    def test_external_model_proposals_enforce_residue_masks(self) -> None:
+        job = {
+            "search_identity": "search-fixture",
+            "job_id": "esm3-fixture",
+            "job_identity": "job-fixture",
+            "adapter_id": "esm3-fixture",
+            "model": {"name": "fixture", "revision": "revision"},
+            "variants_per_parent": 2,
+            "records": [
+                {
+                    "parent_candidate_key": "parent",
+                    "sequence": "AAAA",
+                    "sequence_sha256": hashlib.sha256(b"AAAA").hexdigest(),
+                    "mutable_positions": [2],
+                    "protected_positions": [3],
+                    "maximum_substitutions": 1,
+                }
+            ],
+        }
+        results = {
+            "schema_version": "vaxflow.stage2-external-proposals.v1",
+            "search_identity": "search-fixture",
+            "job_id": "esm3-fixture",
+            "job_identity": "job-fixture",
+            "adapter_id": "esm3-fixture",
+            "model": {"name": "fixture", "revision": "revision"},
+            "records": [
+                {
+                    "parent_candidate_key": "parent",
+                    "amino_acid_sequence": "ACAA",
+                    "model_score": 0.5,
+                }
+            ],
+        }
+
+        accepted, skipped = _validate_results(
+            results,
+            job,
+            {"parent": "AAAA"},
+            {hashlib.sha256(b"AAAA").hexdigest(): "parent"},
+        )
+
+        self.assertEqual(len(accepted), 1)
+        self.assertEqual(skipped, [])
+        self.assertEqual(accepted[0]["mutations"], [{"position": 2, "from": "A", "to": "C"}])
+        invalid = json.loads(json.dumps(results))
+        invalid["records"][0]["amino_acid_sequence"] = "AACA"
+        with self.assertRaisesRegex(ValueError, "outside the declared mask"):
+            _validate_results(
+                invalid,
+                job,
+                {"parent": "AAAA"},
+                {hashlib.sha256(b"AAAA").hexdigest(): "parent"},
+            )
+
+    def test_stage2_search_preserves_baseline_without_exhausting_stage3_budget(self) -> None:
+        seed_candidates = []
+        for index in range(9):
+            sequence = "A" * (10 + index)
+            seed_candidates.append(
+                {
+                    "candidate_key": f"seed-{index}",
+                    "candidate_type": "source_control" if index < 3 else "fusion",
+                    "amino_acid_sequence": sequence,
+                    "amino_acid_sha256": hashlib.sha256(sequence.encode("ascii")).hexdigest(),
+                    "duplicate_of": None,
+                    "proposal": {
+                        "generator": {
+                            "id": "source_intake" if index < 3 else "manual_import",
+                            "parameters": {},
+                        }
+                    },
+                }
+            )
+        for index in range(12):
+            sequence = "C" * (20 + index)
+            seed_candidates.append(
+                {
+                    "candidate_key": f"baseline-{index}",
+                    "candidate_type": "fusion",
+                    "amino_acid_sequence": sequence,
+                    "amino_acid_sha256": hashlib.sha256(sequence.encode("ascii")).hexdigest(),
+                    "duplicate_of": None,
+                    "proposal": {
+                        "generator": {
+                            "id": "deterministic-combinatorial-enumerator",
+                            "parameters": {
+                                "template_id": f"template-{index % 3}",
+                                "linker_id": f"linker-{index % 2}",
+                            },
+                        }
+                    },
+                }
+            )
+        atomic = [
+            {
+                "candidate_key": f"atomic-{index}",
+                "amino_acid_sha256": hashlib.sha256(f"atomic-{index}".encode()).hexdigest(),
+                "aa_length": 50,
+                "features": {"atomic_priority_proxy": 0.5},
+            }
+            for index in range(3)
+        ]
+        fusions = [
+            {
+                "candidate_key": f"fusion-{index}",
+                "amino_acid_sha256": hashlib.sha256(f"fusion-{index}".encode()).hexdigest(),
+                "aa_length": 100,
+                "template_id": f"template-{index % 2}",
+                "ordered_source_ids": ["A", "B"],
+                "linker_classes": [f"class-{index % 2}"],
+                "features": {"fusion_priority_proxy": 1.0 - index / 100.0},
+            }
+            for index in range(20)
+        ]
+        selection = _selection_records(
+            {"candidates": seed_candidates},
+            atomic,
+            fusions,
+            {
+                "project_id": "fixture",
+                "design_round_id": "round-000",
+                "budgets": {
+                    "maximum_stage3_candidates": 20,
+                    "maximum_baseline_generated_stage3_candidates": 4,
+                },
+            },
+            "search-fixture",
+        )
+
+        tiers = [record["selection_tier"] for record in selection["records"]]
+        self.assertEqual(len(tiers), 20)
+        self.assertEqual(tiers.count("baseline_source_or_manual"), 9)
+        self.assertEqual(tiers.count("baseline_generated_panel"), 4)
+        self.assertEqual(tiers.count("atomic_boundary_panel"), 3)
+        self.assertEqual(tiers.count("multifamily_fusion_panel"), 4)
+
+    def test_external_model_import_materializes_self_verifying_specification(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, _ = self._write_stage2_project(root)
+            search = root / "fixture-search"
+            (search / "inputs").mkdir(parents=True)
+            parent_sequence = "AAAAAAAA"
+            parent_sha = hashlib.sha256(parent_sequence.encode("ascii")).hexdigest()
+            base_specification = {
+                "schema_version": 1,
+                "specification_id": "fixture-search-spec",
+                "batch_label": "fixture",
+                "design_round_id": "round-000",
+                "release_mode": "provisional",
+                "include_source_controls": [],
+                "manual_candidates": [
+                    {
+                        "candidate_key": "parent",
+                        "candidate_type": "fusion",
+                        "amino_acid_sequence": parent_sequence,
+                        "claimed_component_keys": [],
+                        "annotation_status": "unreviewed",
+                        "proposal": {
+                            "generator": {"id": "fixture", "version": "1", "parameters": {}},
+                            "parent_candidate_keys": [],
+                            "transformation": "fixture",
+                            "rationale": "fixture",
+                            "feedback_request_ids": [],
+                        },
+                    }
+                ],
+                "generation_grammar": {
+                    "status": "approved",
+                    "generate_new_candidates": False,
+                    "structure_max_length": 1024,
+                },
+            }
+            seed = {
+                "design_round_id": "round-000",
+                "candidates": [
+                    {
+                        "candidate_key": "parent",
+                        "amino_acid_sequence": parent_sequence,
+                        "amino_acid_sha256": parent_sha,
+                    }
+                ],
+            }
+            pool = {
+                "schema_version": "vaxflow.stage2-search-pool.v1",
+                "search_identity": "fixture-search",
+                "records": [],
+                "statistics": {},
+            }
+            job = {
+                "job_id": "esm3-fixture",
+                "adapter_id": "esm3-fixture",
+                "model": {"name": "fixture", "revision": "revision"},
+                "status": "ready_for_external_execution",
+                "search_identity": "fixture-search",
+                "transformation": "constrained_substitution",
+                "variants_per_parent": 2,
+                "records": [
+                    {
+                        "parent_candidate_key": "parent",
+                        "sequence": parent_sequence,
+                        "sequence_sha256": parent_sha,
+                        "mutable_positions": [2],
+                        "protected_positions": [],
+                        "maximum_substitutions": 1,
+                    }
+                ],
+                "result_schema": "vaxflow.stage2-external-proposals.v1",
+            }
+            job["job_identity"] = _document_sha256(job)
+            jobs = {
+                "schema_version": "vaxflow.stage2-model-job-requests.v1",
+                "project_id": "test-stage2",
+                "design_round_id": "round-000",
+                "search_identity": "fixture-search",
+                "jobs": [job],
+                "limitations": [],
+            }
+            results = {
+                "schema_version": "vaxflow.stage2-external-proposals.v1",
+                "search_identity": "fixture-search",
+                "job_id": job["job_id"],
+                "job_identity": job["job_identity"],
+                "adapter_id": job["adapter_id"],
+                "model": job["model"],
+                "records": [
+                    {
+                        "parent_candidate_key": "parent",
+                        "amino_acid_sequence": "ACAAAAAA",
+                        "model_score": 0.75,
+                    }
+                ],
+            }
+            (search / "search_summary.json").write_text(
+                json.dumps(
+                    {
+                        "search_identity": "fixture-search",
+                        "project_id": "test-stage2",
+                        "design_round_id": "round-000",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (search / "candidate_specification.generated.json").write_text(
+                json.dumps(base_specification), encoding="utf-8"
+            )
+            (search / "inputs/seed_candidate_batch.json").write_text(
+                json.dumps(seed), encoding="utf-8"
+            )
+            (search / "candidate_pool.json").write_text(json.dumps(pool), encoding="utf-8")
+            (search / "external_model_jobs.json").write_text(json.dumps(jobs), encoding="utf-8")
+            (search / "artifact_index.json").write_text("{}\n", encoding="utf-8")
+            results_path = root / "results.json"
+            results_path.write_text(json.dumps(results), encoding="utf-8")
+
+            with patch(
+                "design_flow.stage2_external_proposals.verify_stage2_search",
+                return_value={"status": "pass", "errors": []},
+            ):
+                imported = write_stage2_model_import(
+                    config_path,
+                    search_dir=search,
+                    results_path=results_path,
+                    job_id=job["job_id"],
+                    output_root=root / "model-imports",
+                )
+
+            self.assertEqual(imported["accepted_records"], 1)
+            self.assertEqual(imported["skipped_records"], 0)
+            self.assertEqual(
+                verify_stage2_model_import(imported["output_dir"])["status"],
+                "pass",
+            )
+            expanded = json.loads(
+                Path(imported["candidate_specification"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                expanded["manual_candidates"][-1]["proposal"]["transformation"],
+                "constrained_substitution",
+            )
+
     def test_stage2_verifier_detects_component_tampering_after_reindex(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             config_path, source_run = self._write_stage2_project(Path(temporary_dir))
@@ -1289,6 +1700,76 @@ class CandidateStageEndToEndTests(unittest.TestCase):
                 created_at=datetime(2026, 7, 14, 13, 0, tzinfo=timezone.utc),
             )
             self.assertEqual(rebuilt["job_identity"], prepared["job_identity"])
+            self.assertEqual(rebuilt["archive_sha256"], prepared["archive_sha256"])
+
+    def test_stage3_job_binds_search_selection_and_imports_results(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, source_run = self._write_stage2_project(root)
+            candidate_run = write_candidate_run(
+                analyze_candidate_specification(config_path, source_run_dir=source_run),
+                now=datetime(2026, 7, 14, 13, 30, tzinfo=timezone.utc),
+            )
+            batch = json.loads(
+                (
+                    candidate_run
+                    / "nodes/candidate_specification/candidate_batch.json"
+                ).read_text(encoding="utf-8")
+            )
+            selected = batch["candidates"][:2]
+            records = [
+                {
+                    "candidate_key": candidate["candidate_key"],
+                    "amino_acid_sha256": candidate["amino_acid_sha256"],
+                    "aa_length": len(candidate["amino_acid_sequence"]),
+                    "selection_tier": "fixture",
+                    "priority_proxy": None,
+                }
+                for candidate in selected
+            ]
+            selection = {
+                "schema_version": "vaxflow.stage3-selection.v1",
+                "selection_id": _document_sha256(
+                    {
+                        "search_identity": "fixture-search",
+                        "records": records,
+                        "budget": 2,
+                    }
+                ),
+                "project_id": "test-stage2",
+                "design_round_id": batch["design_round_id"],
+                "search_identity": "fixture-search",
+                "strategy": "fixture",
+                "budget": 2,
+                "records": records,
+                "limitations": [],
+            }
+            selection_path = root / "stage3-selection.json"
+            selection_path.write_text(json.dumps(selection), encoding="utf-8")
+            prepared = write_structure_job(
+                config_path,
+                source_run_dir=candidate_run,
+                output_root=root / "selected-transfer",
+                created_at=datetime(2026, 7, 14, 13, 45, tzinfo=timezone.utc),
+                selection_manifest=selection_path,
+            )
+
+            self.assertEqual(prepared["records"], 2)
+            with tarfile.open(prepared["archive"], "r:gz") as archive:
+                self.assertEqual(
+                    sorted(archive.getnames()),
+                    ["job-manifest.json", "selection.json", "sequences.fasta"],
+                )
+            archive = self._write_stage3_result_archive(
+                Path(prepared["job_dir"]), root / "selected-stage3-results.tar.gz"
+            )
+            analysis = analyze_structure_results(
+                config_path,
+                result_archive=archive,
+                source_run_dir=candidate_run,
+                job_dir=Path(prepared["job_dir"]),
+            )
+            self.assertEqual(len(analysis.assessments), 2)
 
     def test_stage3_job_rejects_candidates_over_backend_limit(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:

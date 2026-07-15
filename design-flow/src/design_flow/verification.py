@@ -1254,6 +1254,11 @@ def _verify_candidate_run(
         and isinstance(record.get("amino_acid_sequence"), str)
     }
     component_maps_valid = valid_candidate_shape
+    candidate_by_key = {
+        candidate.get("candidate_key"): candidate
+        for candidate in candidates
+        if isinstance(candidate, dict)
+    }
     for candidate in candidates:
         aa = candidate["amino_acid_sequence"]
         components = candidate["inferred_components"]
@@ -1275,6 +1280,66 @@ def _verify_candidate_run(
             ):
                 component_maps_valid = False
                 break
+            if component.get("sequence_relation") == "constrained_substitution":
+                parent_sequence = component.get("parent_sequence")
+                mutations = component.get("mutations")
+                parent_key = component.get("parent_candidate_key")
+                parent_candidate = candidate_by_key.get(parent_key)
+                if (
+                    not isinstance(parent_sequence, str)
+                    or len(parent_sequence) != len(sequence)
+                    or component.get("parent_component_type")
+                    != component.get("component_type")
+                    or not isinstance(parent_key, str)
+                    or parent_candidate is None
+                    or parent_key
+                    not in candidate.get("proposal", {}).get(
+                        "parent_candidate_keys", []
+                    )
+                    or parent_candidate.get("amino_acid_sequence", "")[start - 1 : end]
+                    != parent_sequence
+                    or component.get("parent_sequence_sha256")
+                    != hashlib.sha256(parent_sequence.encode("utf-8")).hexdigest()
+                    or not isinstance(mutations, list)
+                    or not mutations
+                ):
+                    component_maps_valid = False
+                    break
+                rebuilt_component = list(parent_sequence)
+                seen_mutations: set[int] = set()
+                for mutation in mutations:
+                    if not isinstance(mutation, dict):
+                        component_maps_valid = False
+                        break
+                    position = mutation.get("position")
+                    before = mutation.get("from")
+                    after = mutation.get("to")
+                    if (
+                        not isinstance(position, int)
+                        or isinstance(position, bool)
+                        or position < start
+                        or position > end
+                        or position in seen_mutations
+                        or not isinstance(before, str)
+                        or len(before) != 1
+                        or not isinstance(after, str)
+                        or len(after) != 1
+                    ):
+                        component_maps_valid = False
+                        break
+                    local_position = position - start
+                    if (
+                        parent_sequence[local_position] != before
+                        or sequence[local_position] != after
+                        or before == after
+                    ):
+                        component_maps_valid = False
+                        break
+                    rebuilt_component[local_position] = after
+                    seen_mutations.add(position)
+                if not component_maps_valid or "".join(rebuilt_component) != sequence:
+                    component_maps_valid = False
+                    break
             if component.get("component_type") == "source_segment":
                 source_id = component.get("source_protein_id")
                 source_start = component.get("source_start")
@@ -1284,7 +1349,8 @@ def _verify_candidate_run(
                     not isinstance(source_sequence, str)
                     or not isinstance(source_start, int)
                     or not isinstance(source_end, int)
-                    or source_sequence[source_start - 1 : source_end] != sequence
+                    or source_sequence[source_start - 1 : source_end]
+                    != component.get("parent_sequence", sequence)
                 ):
                     component_maps_valid = False
                     break

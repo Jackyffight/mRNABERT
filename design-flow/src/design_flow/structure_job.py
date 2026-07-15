@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import gzip
 import hashlib
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -17,6 +19,7 @@ from .verification import ARTIFACT_INDEX_FILENAME, sha256_file, verify_run
 
 
 JOB_SCHEMA = "vaxflow.esmfold2-job.v1"
+SELECTION_SCHEMA = "vaxflow.stage3-selection.v1"
 CANDIDATE_STAGE_ID = "candidate_specification"
 STRUCTURE_STAGE_ID = "protein_structure_assessment"
 BIOHUB_TRANSFORMERS_COMMIT = "ef32577f55da19a4989cd7b22e004dc43a4998cb"
@@ -109,12 +112,71 @@ def _resolve_stage2_run(config: ProjectConfig, source_run_dir: Path | None) -> P
     return source
 
 
+def _validate_selection(
+    selection: dict[str, Any],
+    candidate_batch: dict[str, Any],
+    project_id: str,
+) -> list[dict[str, Any]]:
+    records = selection.get("records")
+    budget = selection.get("budget")
+    if (
+        selection.get("schema_version") != SELECTION_SCHEMA
+        or selection.get("project_id") != project_id
+        or selection.get("design_round_id") != candidate_batch.get("design_round_id")
+        or not isinstance(records, list)
+        or not records
+        or not isinstance(budget, int)
+        or isinstance(budget, bool)
+        or budget < len(records)
+    ):
+        raise ValueError("Stage 3 selection manifest is invalid or mismatched")
+    expected_identity = _document_sha256(
+        {
+            "search_identity": selection.get("search_identity"),
+            "records": records,
+            "budget": budget,
+        }
+    )
+    if selection.get("selection_id") != expected_identity:
+        raise ValueError("Stage 3 selection identity mismatch")
+    candidates = candidate_batch.get("candidates")
+    if not isinstance(candidates, list):
+        raise ValueError("Stage 2 candidate batch has no candidate array")
+    by_key = {
+        candidate.get("candidate_key"): candidate
+        for candidate in candidates
+        if isinstance(candidate, dict)
+    }
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, record in enumerate(records):
+        if not isinstance(record, dict):
+            raise ValueError(f"Stage 3 selection record {index} must be an object")
+        key = record.get("candidate_key")
+        candidate = by_key.get(key)
+        if not isinstance(key, str) or candidate is None or key in seen:
+            raise ValueError(f"Stage 3 selection record {index} has an invalid candidate key")
+        seen.add(key)
+        sequence = candidate.get("amino_acid_sequence")
+        if (
+            not isinstance(sequence, str)
+            or record.get("amino_acid_sha256") != candidate.get("amino_acid_sha256")
+            or record.get("aa_length") != len(sequence)
+            or not candidate.get("exploratory_structure_ready")
+            or candidate.get("duplicate_of") is not None
+        ):
+            raise ValueError(f"Stage 3 selection record {key} differs from candidate batch")
+        selected.append(candidate)
+    return selected
+
+
 def build_structure_job(
     project_config: str | Path,
     *,
     source_run_dir: str | Path | None = None,
     created_at: datetime | None = None,
     maximum_sequence_length: int = 1024,
+    selection_manifest: str | Path | None = None,
 ) -> tuple[ProjectConfig, Path, dict[str, Any], bytes]:
     if maximum_sequence_length < 1:
         raise ValueError("maximum_sequence_length must be positive")
@@ -150,9 +212,33 @@ def build_structure_job(
     }
     if set(requested_ids) - set(by_id):
         raise ValueError("Stage 2 model input references an unknown candidate")
+    selected_candidates = [by_id[candidate_id] for candidate_id in requested_ids]
+    selection_descriptor = None
+    if selection_manifest is not None:
+        selection_path = Path(selection_manifest).expanduser().resolve()
+        selection = _load_json(selection_path)
+        selected_candidates = _validate_selection(
+            selection,
+            batch,
+            config.project_id,
+        )
+        requested_set = set(requested_ids)
+        if any(
+            candidate["candidate_id"] not in requested_set
+            for candidate in selected_candidates
+        ):
+            raise ValueError("Stage 3 selection includes a candidate outside Stage 2 model inputs")
+        selection_descriptor = {
+            "schema_version": SELECTION_SCHEMA,
+            "selection_id": selection["selection_id"],
+            "search_identity": selection["search_identity"],
+            "sha256": sha256_file(selection_path),
+            "records": len(selection["records"]),
+        }
+
     records: list[dict[str, Any]] = []
-    for candidate_id in requested_ids:
-        candidate = by_id[candidate_id]
+    for candidate in selected_candidates:
+        candidate_id = candidate["candidate_id"]
         sequence = candidate.get("amino_acid_sequence")
         if (
             not isinstance(sequence, str)
@@ -218,12 +304,21 @@ def build_structure_job(
             "records": len(records),
         },
     }
+    if selection_descriptor is not None:
+        job["selection"] = selection_descriptor
     job["job_identity"] = _identity(job, "job_identity")
     return config, source, job, fasta
 
 
-def _validate_existing_job(directory: Path, job: dict[str, Any], fasta: bytes) -> None:
+def _validate_existing_job(
+    directory: Path,
+    job: dict[str, Any],
+    fasta: bytes,
+    selection_bytes: bytes | None,
+) -> None:
     expected_files = {"job-manifest.json", "sequences.fasta"}
+    if selection_bytes is not None:
+        expected_files.add("selection.json")
     actual_files = {
         path.relative_to(directory).as_posix()
         for path in directory.rglob("*")
@@ -239,6 +334,43 @@ def _validate_existing_job(directory: Path, job: dict[str, Any], fasta: bytes) -
         raise ValueError("Existing Stage 3 job manifest differs from requested job")
     if (directory / "sequences.fasta").read_bytes() != fasta:
         raise ValueError("Existing Stage 3 job FASTA differs from requested job")
+    if (
+        selection_bytes is not None
+        and (directory / "selection.json").read_bytes() != selection_bytes
+    ):
+        raise ValueError("Existing Stage 3 job selection differs from requested selection")
+
+
+def _write_deterministic_archive(
+    archive_path: Path,
+    job_dir: Path,
+    names: list[str],
+) -> None:
+    temporary_archive = archive_path.with_name(
+        f".{archive_path.name}.tmp-{os.getpid()}"
+    )
+    try:
+        with temporary_archive.open("wb") as raw:
+            with gzip.GzipFile(fileobj=raw, mode="wb", filename="", mtime=0) as compressed:
+                with tarfile.open(
+                    fileobj=compressed,
+                    mode="w",
+                    format=tarfile.PAX_FORMAT,
+                ) as archive:
+                    for name in names:
+                        content = (job_dir / name).read_bytes()
+                        member = tarfile.TarInfo(name)
+                        member.size = len(content)
+                        member.mode = 0o644
+                        member.mtime = 0
+                        member.uid = 0
+                        member.gid = 0
+                        member.uname = ""
+                        member.gname = ""
+                        archive.addfile(member, BytesIO(content))
+        os.replace(temporary_archive, archive_path)
+    finally:
+        temporary_archive.unlink(missing_ok=True)
 
 
 def write_structure_job(
@@ -248,13 +380,20 @@ def write_structure_job(
     output_root: str | Path | None = None,
     created_at: datetime | None = None,
     maximum_sequence_length: int = 1024,
+    selection_manifest: str | Path | None = None,
 ) -> dict[str, Any]:
     config, source, job, fasta = build_structure_job(
         project_config,
         source_run_dir=source_run_dir,
         created_at=created_at,
         maximum_sequence_length=maximum_sequence_length,
+        selection_manifest=selection_manifest,
     )
+    selection_bytes = None
+    if selection_manifest is not None:
+        selection_bytes = Path(selection_manifest).expanduser().resolve().read_bytes()
+        if hashlib.sha256(selection_bytes).hexdigest() != job["selection"]["sha256"]:
+            raise ValueError("Stage 3 selection changed while the job was being prepared")
     root = (
         Path(output_root).expanduser().resolve()
         if output_root is not None
@@ -264,7 +403,7 @@ def write_structure_job(
     job_dir = root / job["job_identity"]
     archive_path = root / f"{job['job_identity']}.tar.gz"
     if job_dir.exists():
-        _validate_existing_job(job_dir, job, fasta)
+        _validate_existing_job(job_dir, job, fasta, selection_bytes)
     else:
         temporary = Path(tempfile.mkdtemp(prefix=f".{job['job_identity']}.", dir=root))
         try:
@@ -272,22 +411,16 @@ def write_structure_job(
                 _json_text(job), encoding="utf-8"
             )
             (temporary / "sequences.fasta").write_bytes(fasta)
+            if selection_bytes is not None:
+                (temporary / "selection.json").write_bytes(selection_bytes)
             os.replace(temporary, job_dir)
         except Exception:
             shutil.rmtree(temporary, ignore_errors=True)
             raise
-    if archive_path.exists():
-        archive_path.unlink()
-    temporary_archive = archive_path.with_name(
-        f".{archive_path.name}.tmp-{os.getpid()}"
-    )
-    try:
-        with tarfile.open(temporary_archive, "w:gz") as archive:
-            for name in ("job-manifest.json", "sequences.fasta"):
-                archive.add(job_dir / name, arcname=name, recursive=False)
-        os.replace(temporary_archive, archive_path)
-    finally:
-        temporary_archive.unlink(missing_ok=True)
+    names = ["job-manifest.json", "sequences.fasta"]
+    if selection_bytes is not None:
+        names.append("selection.json")
+    _write_deterministic_archive(archive_path, job_dir, names)
     return {
         "schema_version": 1,
         "stage_id": STRUCTURE_STAGE_ID,

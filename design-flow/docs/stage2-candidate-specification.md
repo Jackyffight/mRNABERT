@@ -1,6 +1,6 @@
 # Stage 2 Candidate Specification
 
-Status: implemented as a provisional, audited candidate batch
+Status: implemented as a provisional, audited multi-fidelity candidate search
 
 ## Purpose / 目的
 
@@ -50,7 +50,13 @@ The implementation:
 7. compares sequence-derived annotations with supplied claims;
 8. deduplicates model execution while preserving candidate aliases and evidence;
 9. materializes approved component/order/linker grammars under a content identity;
-10. exports a provisional structure-model FASTA without silently releasing it.
+10. consumes checksum-bound Stage 3-5 evidence to propose alternative source boundaries;
+11. explores declared architectures with independent per-junction linkers;
+12. preserves the full bounded eligible pool separately from the materialized panel;
+13. emits a checksum-bound, diversity-preserving Stage 3 selection;
+14. emits pinned external-model jobs and validates returned substitutions before
+    creating child candidates;
+15. exports a provisional structure-model FASTA without silently releasing it.
 
 No candidate sequence is generated implicitly. `generate-stage2-proposals` requires
 an approved or Mock-approved grammar, a verified seed run, explicit component slots,
@@ -66,13 +72,37 @@ The seed Stage 2 run contains nine records:
 - 4 supplied truncations;
 - 2 supplied fusion constructs: ALAB and ALAL.
 
-The first grammar-bounded expansion considers 184 technical combinations across
+The first grammar-bounded baseline expansion considers 184 technical combinations across
 pair, triple, and four-component templates and four linker hypotheses. One direct
 four-component sequence is identical to supplied `manual-alab`, so it is skipped.
 The expanded Stage 2 run therefore contains 192 records: 9 seeds and 183 generated
 proposals. All pass digital sequence/lineage checks; only the three immutable source
 controls are formally structure-ready. The 189 manual/generated records remain
 quarantined for review and are suitable only for exploratory screening.
+
+The evidence-guided expansion keeps all 192 baseline records and adds a second,
+explicitly bounded search layer:
+
+- 36 topology-safe source-boundary candidates selected around manual, signal, TM,
+  and structure-confidence anchors;
+- 270,240 configurations considered after parent-order and linker-pattern budgets;
+- 24,464 unique fusion sequences admitted to the bounded eligible pool after
+  duplicate and length checks;
+- 2,048 new fusions materialized into the canonical candidate specification;
+- 2,276 canonical Stage 2 records total;
+- 384 Stage 3 selections: 9 source/manual controls, 48 stratified generated-baseline
+  controls, 36 boundary candidates, and 291 new fusion candidates.
+
+The eligible pool, materialized panel, and expensive-folding selection are separate
+artifacts. Therefore a compute budget cannot silently erase a searched hypothesis.
+The counts are outputs of `stage2-search-policy.json`, not claims that the space is
+exhaustive or biologically optimal.
+
+The supplied `b5-trunc` remains visible in the 192-record baseline, but it overlaps
+the versioned TM interval at residue 189 and is therefore excluded as a parent of
+new search-generated fusions. New B5 boundary candidates end before that interval.
+This illustrates the distinction between retaining a historical control and using
+it to expand the next candidate family.
 
 ## Why Nine, Not One Hundred? / 为什么是 9 个而不是 100 个？
 
@@ -93,7 +123,8 @@ only through versioned rules for:
 - linker, signal-peptide, tag, and cleavage-site libraries;
 - maximum length, topology, and expression constraints;
 - duplicate handling, diversity targets, and control requirements;
-- the cheap filters and selection rule used to reduce a larger pool to 100.
+- the cheap filters and selection rule used to reduce a larger pool to a declared
+  expensive-compute panel.
 
 Without those rules, 100 candidates would be arbitrary permutations that consume
 compute without improving scientific coverage. The current grammar enumerates 183
@@ -142,6 +173,28 @@ Generate and verify the expanded proposal pool:
   /absolute/path/to/input/stage2/proposals/<generation-identity>
 ```
 
+Generate and verify the evidence-guided multi-family pool:
+
+```bash
+./vaxflow search-stage2 projects/three-protein/project.json \
+  --from-run /absolute/path/to/verified-192-candidate-stage2-run \
+  --evidence-run /absolute/path/to/verified-stage4-5-run \
+  --policy projects/three-protein/stage2-search-policy.json
+
+./vaxflow verify-stage2-search \
+  /absolute/path/to/input/stage2/searches/<search-identity>
+```
+
+After an external model executes a `ready_for_external_execution` job, import its
+result through the residue-mask contract:
+
+```bash
+./vaxflow import-stage2-model-proposals projects/three-protein/project.json \
+  --search-dir /absolute/path/to/input/stage2/searches/<search-identity> \
+  --job-id esm3-constrained-junction-<identity-prefix> \
+  --results /absolute/path/to/model-results.json
+```
+
 Create an immutable continuation run:
 
 ```bash
@@ -174,18 +227,32 @@ The proposal-generation directory separately contains frozen grammar and seed
 snapshots, `proposal_batch.json`, an inline generated specification, proposal
 CSV/FASTA, a bilingual report, and an artifact index.
 
+The multi-family search directory additionally contains:
+
+- `atomic_components.*`: evidence-guided source-boundary panel;
+- `candidate_pool.*`: all 24,464 unique sequences admitted by the bounded scoring policy;
+- `materialized_fusion_panel.*`: the 2,048 fusions entering the canonical Stage 2 batch;
+- `stage3_selection.json` and FASTA: the exact 384-candidate expensive-compute panel;
+- `external_model_jobs.json`: pinned ESM3 and paired ProteinMPNN requests with
+  mutable/protected residue masks;
+- `inputs/evidence_bundle.json`: frozen Stage 3-5 evidence and hashes;
+- `search_summary.json`, bilingual `report.html`, and a self-verifying artifact index.
+
 ## Model Order / 模型顺序
 
-1. The deterministic enumerator is the only generator executed in this expansion.
-2. **ESMFold2** evaluates the frozen protein pool in Stage 3.
+1. The deterministic grammar baseline and evidence-guided boundary/linker/architecture
+   search are the generators executed locally in this expansion.
+2. **ESMFold2** evaluates the checksum-bound 384-candidate panel in Stage 3.
 3. **NetMHCpan/NetMHCIIpan** evaluate declared immune-presentation evidence in Stage 4.
 4. **TMBed/metapredict** evaluate topology and disorder in Stage 5.
-5. **ProteinMPNN** remains deferred until a backbone and authorized residue mask
-   exist; it may not rewrite antigen residues in round-000.
-6. **Evo2** and **mRNABERT** belong to constrained nucleotide exploration and
+5. **ESM3** has a pinned constrained-junction proposal job for 64 selected parents.
+   The request is ready, but ESM3 has not executed until a validated result is imported.
+6. **ProteinMPNN** remains deferred until a verified backbone exists. Official and
+   custom checkpoints are represented as paired, structure-backed experimental arms.
+7. **Evo2** and **mRNABERT** belong to constrained nucleotide exploration and
    scoring in Stage 6B, after an exact protein candidate is selected.
-7. Free protein/backbone generation such as ESM3 or RFdiffusion is not applicable
-   to the current source-antigen preservation contract.
+8. Unconstrained backbone or antigen rewriting remains outside the current
+   source-antigen preservation contract.
 
 This separation allows many tools to contribute without letting one model generate,
 score, and approve its own proposal.

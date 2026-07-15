@@ -46,6 +46,11 @@ from .structure_job import write_structure_job
 from .structure_assessment import analyze_structure_results
 from .structure_reporting import write_structure_run
 from .stage5_model_adapter import prepare_stage5_sequence_evidence
+from .stage2_external_proposals import (
+    verify_stage2_model_import,
+    write_stage2_model_import,
+)
+from .stage2_search import verify_stage2_search, write_stage2_search
 from .verification import verify_run
 from .workflow import CURRENT_STAGE_ID
 
@@ -121,6 +126,34 @@ def _build_parser() -> argparse.ArgumentParser:
         help="recompute and verify a materialized Stage 2 proposal directory",
     )
     verify_stage2_proposals_parser.add_argument("proposal_dir", type=Path)
+    search_stage2_parser = subparsers.add_parser(
+        "search-stage2",
+        help="expand a Stage 2 baseline with evidence-guided multi-family search",
+    )
+    search_stage2_parser.add_argument("project_config", type=Path)
+    search_stage2_parser.add_argument("--from-run", type=Path, required=True)
+    search_stage2_parser.add_argument("--evidence-run", type=Path, required=True)
+    search_stage2_parser.add_argument("--policy", type=Path, required=True)
+    search_stage2_parser.add_argument("--output-root", type=Path)
+    verify_stage2_search_parser = subparsers.add_parser(
+        "verify-stage2-search",
+        help="recompute and verify a materialized Stage 2 multi-family search",
+    )
+    verify_stage2_search_parser.add_argument("search_dir", type=Path)
+    import_stage2_model_parser = subparsers.add_parser(
+        "import-stage2-model-proposals",
+        help="validate constrained external-model proposals and return them to Stage 2",
+    )
+    import_stage2_model_parser.add_argument("project_config", type=Path)
+    import_stage2_model_parser.add_argument("--search-dir", type=Path, required=True)
+    import_stage2_model_parser.add_argument("--results", type=Path, required=True)
+    import_stage2_model_parser.add_argument("--job-id", required=True)
+    import_stage2_model_parser.add_argument("--output-root", type=Path)
+    verify_stage2_model_parser = subparsers.add_parser(
+        "verify-stage2-model-import",
+        help="recompute and verify an imported Stage 2 model-proposal directory",
+    )
+    verify_stage2_model_parser.add_argument("import_dir", type=Path)
     verify_parser = subparsers.add_parser(
         "verify-run",
         help="verify hashes and cross-file consistency for an immutable run",
@@ -140,6 +173,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output-root",
         type=Path,
         help="external transfer directory; defaults under the project runtime root",
+    )
+    prepare_stage3_parser.add_argument(
+        "--selection-manifest",
+        type=Path,
+        help="checksum-bound Stage 3 selection emitted by search-stage2",
     )
     import_stage3_parser = subparsers.add_parser(
         "import-stage3",
@@ -472,6 +510,69 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  ERROR {error}")
             return 0 if result["status"] == "pass" else 2
 
+        if args.command == "verify-stage2-search":
+            result = verify_stage2_search(args.search_dir)
+            print(
+                f"Stage 2 search {result['identity']}: "
+                f"status={result['status']} errors={len(result['errors'])}"
+            )
+            for error in result["errors"]:
+                print(f"  ERROR {error}")
+            return 0 if result["status"] == "pass" else 2
+
+        if args.command == "verify-stage2-model-import":
+            result = verify_stage2_model_import(args.import_dir)
+            print(
+                f"Stage 2 model import {result['identity']}: "
+                f"status={result['status']} errors={len(result['errors'])}"
+            )
+            for error in result["errors"]:
+                print(f"  ERROR {error}")
+            return 0 if result["status"] == "pass" else 2
+
+        if args.command == "import-stage2-model-proposals":
+            imported = write_stage2_model_import(
+                args.project_config,
+                search_dir=args.search_dir,
+                results_path=args.results,
+                job_id=args.job_id,
+                output_root=args.output_root,
+            )
+            print(
+                "Stage 2 external-model import: "
+                f"identity={imported['identity']} "
+                f"accepted={imported['accepted_records']} "
+                f"skipped={imported['skipped_records']}"
+            )
+            print(f"Import artifacts: {imported['output_dir']}")
+            print(f"Candidate specification: {imported['candidate_specification']}")
+            print(f"Bilingual report: {imported['report']}")
+            return 0
+
+        if args.command == "search-stage2":
+            searched = write_stage2_search(
+                args.project_config,
+                policy_path=args.policy,
+                seed_run_dir=args.from_run,
+                evidence_run_dir=args.evidence_run,
+                output_root=args.output_root,
+            )
+            print(
+                "Stage 2 multi-family search: "
+                f"identity={searched['identity']} "
+                f"atomic={searched['generated_atomic_components']} "
+                f"eligible_fusions={searched['eligible_unique_fusions']} "
+                f"materialized_fusions={searched['materialized_fusions']} "
+                f"total={searched['total_candidates']} "
+                f"stage3={searched['stage3_selected_candidates']}"
+            )
+            print(f"Search artifacts: {searched['output_dir']}")
+            print(f"Candidate specification: {searched['candidate_specification']}")
+            print(f"Stage 3 selection: {searched['stage3_selection']}")
+            print(f"External model jobs: {searched['external_model_jobs']}")
+            print(f"Bilingual report: {searched['report']}")
+            return 0
+
         if args.command == "generate-stage2-proposals":
             generated = write_proposal_generation(
                 args.project_config,
@@ -497,6 +598,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.project_config,
                 source_run_dir=args.from_run,
                 output_root=args.output_root,
+                selection_manifest=args.selection_manifest,
             )
             print(
                 f"Stage 3 exploratory job: identity={prepared['job_identity']} "

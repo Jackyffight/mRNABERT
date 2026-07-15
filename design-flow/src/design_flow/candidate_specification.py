@@ -600,15 +600,39 @@ def _declared_concatenation_components(
         return None
     parent_keys = list(manual.proposal.get("parent_candidate_keys", []))
     parameters = manual.proposal.get("generator", {}).get("parameters", {})
-    linker = parameters.get("linker_sequence")
-    if not isinstance(linker, str):
+    linker_sequences = parameters.get("linker_sequences")
+    linker_ids = parameters.get("linker_ids")
+    if linker_sequences is None:
+        linker = parameters.get("linker_sequence")
+        if not isinstance(linker, str):
+            raise ValueError(
+                f"{manual.candidate_key} ordered concatenation has no linker sequence"
+            )
+        linker_sequences = [linker] * max(0, len(parent_keys) - 1)
+        linker_ids = [parameters.get("linker_id")] * len(linker_sequences)
+    if (
+        not isinstance(linker_sequences, list)
+        or len(linker_sequences) != max(0, len(parent_keys) - 1)
+        or not all(isinstance(linker, str) for linker in linker_sequences)
+    ):
         raise ValueError(
-            f"{manual.candidate_key} ordered concatenation has no linker_sequence"
+            f"{manual.candidate_key} linker_sequences must match its parent junctions"
+        )
+    if linker_ids is None:
+        linker_ids = [None] * len(linker_sequences)
+    if not isinstance(linker_ids, list) or len(linker_ids) != len(linker_sequences):
+        raise ValueError(
+            f"{manual.candidate_key} linker_ids must match linker_sequences"
         )
     parent_sequences = [parent_records[key]["aa"] for key in parent_keys]
-    if linker.join(parent_sequences) != sequence:
+    reconstructed = "".join(
+        parent_sequence
+        + (linker_sequences[index] if index < len(linker_sequences) else "")
+        for index, parent_sequence in enumerate(parent_sequences)
+    )
+    if reconstructed != sequence:
         raise ValueError(
-            f"{manual.candidate_key} sequence differs from its declared parents and linker"
+            f"{manual.candidate_key} sequence differs from its declared parents and linkers"
         )
     components: list[dict[str, Any]] = []
     offset = 0
@@ -620,7 +644,8 @@ def _declared_concatenation_components(
             component["candidate_end"] = offset + int(raw_component["candidate_end"])
             components.append(component)
         offset += len(parent["aa"])
-        if linker and parent_index < len(parent_keys) - 1:
+        if parent_index < len(linker_sequences) and linker_sequences[parent_index]:
+            linker = linker_sequences[parent_index]
             components.append(
                 {
                     "component_type": "addition",
@@ -629,10 +654,103 @@ def _declared_concatenation_components(
                     "sequence": linker,
                     "sequence_sha256": _sha256_text(linker),
                     "declared_role": "linker",
-                    "linker_id": parameters.get("linker_id"),
+                    "linker_id": linker_ids[parent_index],
                 }
             )
             offset += len(linker)
+    return components, parent_keys
+
+
+def _declared_substitution_components(
+    manual: ManualCandidateSpec,
+    sequence: str,
+    parent_records: dict[str, dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]] | None:
+    if manual.proposal.get("transformation") != "constrained_substitution":
+        return None
+    parent_keys = list(manual.proposal.get("parent_candidate_keys", []))
+    if len(parent_keys) != 1:
+        raise ValueError(
+            f"{manual.candidate_key} constrained substitution requires one parent"
+        )
+    parent_key = parent_keys[0]
+    parent = parent_records[parent_key]
+    parent_sequence = parent["aa"]
+    if len(sequence) != len(parent_sequence):
+        raise ValueError(
+            f"{manual.candidate_key} constrained substitution changed sequence length"
+        )
+    parameters = manual.proposal.get("generator", {}).get("parameters", {})
+    mutations = parameters.get("mutations")
+    if not isinstance(mutations, list) or not mutations:
+        raise ValueError(f"{manual.candidate_key} has no declared mutations")
+    declared_by_position: dict[int, dict[str, Any]] = {}
+    for index, mutation in enumerate(mutations):
+        if not isinstance(mutation, dict):
+            raise ValueError(
+                f"{manual.candidate_key} mutation {index} must be an object"
+            )
+        position = mutation.get("position")
+        before = mutation.get("from")
+        after = mutation.get("to")
+        if (
+            not isinstance(position, int)
+            or isinstance(position, bool)
+            or position < 1
+            or position > len(sequence)
+            or not isinstance(before, str)
+            or len(before) != 1
+            or not isinstance(after, str)
+            or len(after) != 1
+            or before == after
+            or position in declared_by_position
+        ):
+            raise ValueError(
+                f"{manual.candidate_key} mutation {index} is invalid or duplicated"
+            )
+        if parent_sequence[position - 1] != before or sequence[position - 1] != after:
+            raise ValueError(
+                f"{manual.candidate_key} mutation {position} differs from parent/child"
+            )
+        declared_by_position[position] = mutation
+    observed_positions = {
+        position
+        for position, (before, after) in enumerate(
+            zip(parent_sequence, sequence, strict=True),
+            1,
+        )
+        if before != after
+    }
+    if observed_positions != set(declared_by_position):
+        raise ValueError(
+            f"{manual.candidate_key} observed substitutions differ from its declaration"
+        )
+
+    components: list[dict[str, Any]] = []
+    for raw_component in parent["components"]:
+        component = dict(raw_component)
+        start = int(component["candidate_start"])
+        end = int(component["candidate_end"])
+        component_mutations = [
+            declared_by_position[position]
+            for position in sorted(declared_by_position)
+            if start <= position <= end
+        ]
+        if component_mutations:
+            original_type = str(component["component_type"])
+            component["parent_component_type"] = original_type
+            component["parent_candidate_key"] = parent_key
+            component["sequence_relation"] = "constrained_substitution"
+            component["mutations"] = component_mutations
+            parent_component_sequence = str(raw_component["sequence"])
+            component["parent_sequence"] = parent_component_sequence
+            component["parent_sequence_sha256"] = _sha256_text(
+                parent_component_sequence
+            )
+            component_sequence = sequence[start - 1 : end]
+            component["sequence"] = component_sequence
+            component["sequence_sha256"] = _sha256_text(component_sequence)
+        components.append(component)
     return components, parent_keys
 
 
@@ -915,8 +1033,18 @@ def analyze_candidate_specification(
             aa,
             parent_records,
         )
-        if declared_concatenation is not None:
-            components, observed_component_keys = declared_concatenation
+        declared_substitution = _declared_substitution_components(
+            manual,
+            aa,
+            parent_records,
+        )
+        if declared_concatenation is not None and declared_substitution is not None:
+            raise ValueError(
+                f"{manual.candidate_key} declares multiple component transformations"
+            )
+        declared_transformation = declared_concatenation or declared_substitution
+        if declared_transformation is not None:
+            components, observed_component_keys = declared_transformation
         else:
             observed_component_keys = (
                 _infer_component_keys(aa, component_library)
@@ -932,7 +1060,9 @@ def analyze_candidate_specification(
         additions = [
             component for component in components if component["component_type"] == "addition"
         ]
-        if additions and declared_concatenation is None:
+        raw["components"] = components
+        parent_records[manual.candidate_key]["components"] = components
+        if additions and declared_transformation is None:
             annotation_conflict = True
             candidate_issues.append(
                 QCIssue(

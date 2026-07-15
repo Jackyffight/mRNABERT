@@ -12,7 +12,9 @@ and LLM-authored structure conclusions are not authoritative workflow steps.
 The stage has three code paths:
 
 1. `vaxflow prepare-stage3` freezes exact Stage 2 candidate sequences, lineage,
-   model revisions, and inference parameters into a two-file job archive.
+   model revisions, inference parameters, and the optional multi-fidelity selection
+   into a checksum-bound job archive. Search jobs contain `job-manifest.json`,
+   `sequences.fasta`, and `selection.json`.
 2. `ProteinMPNN/design_flow_stage3/run_stage3_esmfold2.sh` validates the job,
    runs the already deployed pinned ESMFold2-Fast runtime, and returns a bounded,
    resumable result archive.
@@ -36,6 +38,12 @@ Ruleset `structure-exploratory-rules-v1` computes:
 The fixed thresholds emit review flags only. They do not classify experimental
 folding, immunogenicity, safety, or efficacy, and they do not rank or reject a
 candidate.
+
+For the current multi-family search, Stage 3 does not fold all 2,276 materialized
+records. It consumes the exact 384-record `stage3_selection.json`; the manifest
+binds every candidate key, AA hash, length, selection tier, search identity, and
+budget. The importer revalidates the same snapshot against the immutable Stage 2
+candidate batch before accepting any PDB.
 
 ## LLM Role
 

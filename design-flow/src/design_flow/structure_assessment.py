@@ -23,6 +23,7 @@ from .structure_job import (
     _identity,
     _load_json,
     _resolve_stage2_run,
+    _validate_selection,
 )
 from .structure_metrics import (
     ParsedStructure,
@@ -174,11 +175,33 @@ def _validate_job_against_stage2(
         "candidate_batch_sha256": sha256_file(batch_path),
     }:
         raise ValueError("Stage 3 job lineage differs from the verified Stage 2 run")
-    selected = [
-        candidate
-        for candidate in candidate_batch["candidates"]
-        if candidate["exploratory_structure_ready"] and candidate["duplicate_of"] is None
-    ]
+    selection_descriptor = job.get("selection")
+    if selection_descriptor is None:
+        selected = [
+            candidate
+            for candidate in candidate_batch["candidates"]
+            if candidate["exploratory_structure_ready"]
+            and candidate["duplicate_of"] is None
+        ]
+    else:
+        selection_path = job_dir / "selection.json"
+        if not selection_path.is_file():
+            raise ValueError("Stage 3 job is missing its selection snapshot")
+        selection = _load_json(selection_path)
+        expected_descriptor = {
+            "schema_version": selection["schema_version"],
+            "selection_id": selection["selection_id"],
+            "search_identity": selection["search_identity"],
+            "sha256": sha256_file(selection_path),
+            "records": len(selection.get("records", [])),
+        }
+        if selection_descriptor != expected_descriptor:
+            raise ValueError("Stage 3 job selection descriptor mismatch")
+        selected = _validate_selection(
+            selection,
+            candidate_batch,
+            source_manifest["project_id"],
+        )
     expected_records = [
         {
             "candidate_id": candidate["candidate_id"],

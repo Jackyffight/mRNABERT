@@ -24,6 +24,10 @@ intake through provisional integrated ranking:
 - round-aware proposal lineage and evaluator-generated redesign requests;
 - JSON/CSV audit records and self-contained bilingual HTML reports.
 - a Stage 2 candidate specification contract for source controls, truncations, and fusions;
+- evidence-guided Stage 2 boundary, orientation, independent-linker, and architecture
+  search with a frozen full pool, materialized panel, and compute-budgeted selection;
+- constrained ESM3/ProteinMPNN proposal contracts whose outputs must pass residue-mask,
+  model-pin, lineage, mutation-count, hash, and deduplication checks before re-entry;
 - deterministic AA/CDS terminal-addition, source-range, and component-order inference;
 - immutable continuation runs with sealed Stage 1 provenance;
 - provisional, deduplicated ESMFold2 FASTA export and explicit model handoff state;
@@ -147,6 +151,23 @@ small FASTA files. Its bilingual report separates the generator actually execute
 from downstream or non-applicable model adapters. Run the generated specification
 against the Stage 1 parent to freeze the expanded Stage 2 batch.
 
+Run the evidence-guided multi-family search after Stage 4/5 evidence is available:
+
+```bash
+./vaxflow search-stage2 projects/three-protein/project.json \
+  --from-run /absolute/path/to/verified-192-candidate-stage2-run \
+  --evidence-run /absolute/path/to/verified-stage4-5-run \
+  --policy projects/three-protein/stage2-search-policy.json
+
+./vaxflow verify-stage2-search \
+  /absolute/path/to/input/stage2/searches/<search-identity>
+```
+
+The search preserves three separate scales: the complete bounded eligible pool,
+the smaller materialized Stage 2 panel, and the still smaller expensive Stage 3
+selection. An external model output is not a candidate until it is imported through
+`import-stage2-model-proposals` and the resulting directory verifies.
+
 The Stage 2 node writes `candidate_batch.json`, `proposal_lineage.json`,
 `redesign_requests.json`, review CSV files, a bilingual node report, and
 `structure_candidates.fasta`. The latter is an explicitly provisional ESMFold2
@@ -156,7 +177,8 @@ Prepare the checksum-bound exploratory Stage 3 transfer archive:
 
 ```bash
 ./vaxflow prepare-stage3 projects/three-protein/project.json \
-  --from-run /absolute/path/to/verified-stage2-run
+  --from-run /absolute/path/to/verified-stage2-run \
+  --selection-manifest /absolute/path/to/stage3_selection.json
 ```
 
 Only the resulting `.tar.gz` archive must be transferred to the GPU server. The

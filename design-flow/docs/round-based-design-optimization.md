@@ -63,12 +63,15 @@ kitchen line, not enough to claim that the restaurant explored every possible di
 
 ## Current Implementation Boundary
 
-Version 0.14 implements the design-round contracts, approval gate, proposal
+Version 0.15 implements the design-round contracts, approval gate, proposal
 lineage, evaluator feedback artifacts, Stage 7 feedback aggregation, and an explicit
 Stage 2 combinatorial generator. The first grammar-bounded expansion starts from
 nine source/manual seeds, materializes 183 unique proposals, and skips one exact
-duplicate of an existing manual construct. The resulting 192-record pool remains
-Mock-only and unapproved for scientific release.
+duplicate of an existing manual construct. That 192-record batch remains the
+preserved baseline. A second evidence-guided search freezes a 24,464-sequence
+eligible fusion pool, materializes 2,048 new fusions, and selects 384 candidates for
+Stage 3 under a versioned compute budget. All remain Mock-only and unapproved for
+scientific release.
 
 Scientific or model-driven generators must emit the same validated proposal schema.
 Registering a model role does not mean that model ran: every adapter remains

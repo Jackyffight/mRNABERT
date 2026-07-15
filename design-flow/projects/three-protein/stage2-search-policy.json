@@ -1,0 +1,149 @@
+{
+  "schema_version": "vaxflow.stage2-search-policy.v1",
+  "policy_id": "three-protein-round-000-multifamily-search-v1",
+  "project_id": "three-protein-vaccine",
+  "design_round_id": "round-000",
+  "status": "approved_for_mock_execution",
+  "batch_label": "Round-000 evidence-guided multi-family proposal pool",
+  "maximum_aa_length": 1024,
+  "boundary_search": {
+    "offsets": [-9, -6, -3, 0, 3, 6, 9],
+    "minimum_segment_length": 60,
+    "maximum_variants_per_source": 12,
+    "exclude_signal_peptide_overlap": true,
+    "exclude_transmembrane_overlap": true
+  },
+  "linkers": [
+    {
+      "linker_id": "direct",
+      "sequence": "",
+      "class": "no_linker_control",
+      "rationale": "Preserve direct concatenation as a technical control."
+    },
+    {
+      "linker_id": "gs2",
+      "sequence": "GS",
+      "class": "short_flexible",
+      "rationale": "Represent the shortest glycine-serine junction hypothesis."
+    },
+    {
+      "linker_id": "ggs3",
+      "sequence": "GGS",
+      "class": "short_flexible",
+      "rationale": "Represent a three-residue flexible junction hypothesis."
+    },
+    {
+      "linker_id": "flex5",
+      "sequence": "GGGGS",
+      "class": "flexible",
+      "rationale": "Represent one G4S repeat."
+    },
+    {
+      "linker_id": "flex10",
+      "sequence": "GGGGSGGGGS",
+      "class": "flexible",
+      "rationale": "Represent two G4S repeats."
+    },
+    {
+      "linker_id": "flex15",
+      "sequence": "GGGGSGGGGSGGGGS",
+      "class": "long_flexible",
+      "rationale": "Represent three G4S repeats."
+    },
+    {
+      "linker_id": "rigid5",
+      "sequence": "EAAAK",
+      "class": "rigid_helical",
+      "rationale": "Represent one EAAAK repeat."
+    },
+    {
+      "linker_id": "rigid10",
+      "sequence": "EAAAKEAAAK",
+      "class": "long_rigid_helical",
+      "rationale": "Represent two EAAAK repeats."
+    }
+  ],
+  "architecture_templates": [
+    {
+      "template_id": "pair-a33-b5-search",
+      "source_slots": ["A33", "B5"],
+      "order_policy": "all_permutations",
+      "require_distinct_same_source": true,
+      "rationale": "Search A33-B5 boundary, orientation, and linker hypotheses."
+    },
+    {
+      "template_id": "pair-a33-l1-search",
+      "source_slots": ["A33", "L1"],
+      "order_policy": "all_permutations",
+      "require_distinct_same_source": true,
+      "rationale": "Search A33-L1 boundary, orientation, and linker hypotheses."
+    },
+    {
+      "template_id": "pair-b5-l1-search",
+      "source_slots": ["B5", "L1"],
+      "order_policy": "all_permutations",
+      "require_distinct_same_source": true,
+      "rationale": "Search B5-L1 boundary, orientation, and linker hypotheses."
+    },
+    {
+      "template_id": "triple-a33-b5-l1-search",
+      "source_slots": ["A33", "B5", "L1"],
+      "order_policy": "all_permutations",
+      "require_distinct_same_source": true,
+      "rationale": "Search all A33-B5-L1 orders with independent junction linkers."
+    },
+    {
+      "template_id": "quad-a33a-a33b-b5-l1-search",
+      "source_slots": ["A33", "A33", "B5", "L1"],
+      "order_policy": "all_permutations",
+      "require_distinct_same_source": true,
+      "rationale": "Search the supplied two-A33 architecture with evidence-guided boundaries and independent junction linkers."
+    }
+  ],
+  "objective_weights": {
+    "mhc_retention": 0.25,
+    "structure_confidence": 0.2,
+    "disorder_avoidance": 0.15,
+    "manual_boundary_support": 0.15,
+    "compactness": 0.05,
+    "sequence_liability": 0.2
+  },
+  "budgets": {
+    "maximum_parent_orders_per_template": 2048,
+    "maximum_linker_patterns_per_template": 64,
+    "maximum_scored_fusions_per_template": 8192,
+    "maximum_materialized_fusions": 2048,
+    "maximum_stage3_candidates": 384,
+    "maximum_baseline_generated_stage3_candidates": 48,
+    "maximum_external_model_parents": 64
+  },
+  "external_model_jobs": [
+    {
+      "adapter_id": "esm3-constrained-junction",
+      "model_name": "ESM3-small-open",
+      "model_revision": "esm3-sm-open-v1",
+      "status": "ready_for_external_execution",
+      "variants_per_parent": 8,
+      "junction_flank_residues": 3,
+      "maximum_substitutions": 6
+    },
+    {
+      "adapter_id": "proteinmpnn-official-v48-020",
+      "model_name": "ProteinMPNN",
+      "model_revision": "v_48_020-c9cb4a671d79604111231f8dbfc7c590e06f1197453b7a6854ac6661a642f5bd",
+      "status": "blocked_on_stage3_structure",
+      "variants_per_parent": 8,
+      "junction_flank_residues": 3,
+      "maximum_substitutions": 6
+    },
+    {
+      "adapter_id": "proteinmpnn-2026-stage2a-paired",
+      "model_name": "ProteinMPNN",
+      "model_revision": "proteinmpnn-2026-stage2a-08fc2549004d0e8a8b1ac1983dd4e94772f15445732926d8f7e677a4464ba6f7",
+      "status": "blocked_on_stage3_structure",
+      "variants_per_parent": 8,
+      "junction_flank_residues": 3,
+      "maximum_substitutions": 6
+    }
+  ]
+}
