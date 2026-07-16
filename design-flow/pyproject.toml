@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vaccine-design-flow"
-version = "0.17.0"
+version = "0.18.0"
 description = "Traceable design-build-test-learn workflow for vaccine constructs"
 requires-python = ">=3.11"
 dependencies = []

@@ -9,8 +9,13 @@ from pathlib import Path
 import tempfile
 from typing import Any
 
-from .assessment_specs import DEVELOPABILITY_STAGE_ID
+from .assessment_specs import DEVELOPABILITY_STAGE_ID, load_structure_candidate_scope
 from .config import ProjectConfig, load_project_config
+from .stage6_routing import (
+    archive_runtime_file,
+    initialize_stage6_routing,
+    routing_descriptor,
+)
 from .structure_job import _load_json
 from .verification import verify_run
 
@@ -66,31 +71,58 @@ def _resolve_stage5_run(config: ProjectConfig, source_run_dir: Path | None) -> P
     return source
 
 
-def _candidate_bindings(source_run: Path) -> list[dict[str, str]]:
-    batch = _load_json(source_run / "nodes/candidate_specification/candidate_batch.json")
-    return [
-        {
-            "candidate_id": candidate["candidate_id"],
-            "candidate_key": candidate["candidate_key"],
-            "amino_acid_sha256": candidate["amino_acid_sha256"],
-        }
-        for candidate in batch["candidates"]
-        if candidate.get("duplicate_of") is None
-    ]
+def _candidate_bindings(
+    source_run: Path,
+    routing_manifest: dict[str, Any],
+) -> list[dict[str, Any]]:
+    scoped_batch = load_structure_candidate_scope(source_run)["candidate_batch"]
+    candidate_by_id = {
+        candidate["candidate_id"]: candidate
+        for candidate in scoped_batch["candidates"]
+    }
+    bindings = []
+    for record in routing_manifest["records"]:
+        if not record["product_drafting_eligible"]:
+            continue
+        candidate = candidate_by_id.get(record["candidate_id"])
+        if (
+            candidate is None
+            or candidate["candidate_key"] != record["candidate_key"]
+            or candidate["amino_acid_sha256"] != record["amino_acid_sha256"]
+        ):
+            raise ValueError(
+                f"Stage 6 routing differs from active candidate: {record['candidate_id']}"
+            )
+        bindings.append(
+            {
+                "candidate_id": candidate["candidate_id"],
+                "candidate_key": candidate["candidate_key"],
+                "amino_acid_sha256": candidate["amino_acid_sha256"],
+                "routing_lane": record["lane"],
+                "expensive_followup_eligible": record[
+                    "expensive_followup_eligible"
+                ],
+            }
+        )
+    if len(bindings) != routing_manifest["counts"]["product_drafting"]:
+        raise ValueError("Stage 6 routing product-drafting count mismatch")
+    return bindings
 
 
 def default_protein_product_specification(
     config: ProjectConfig,
     source_run: Path,
+    routing: dict[str, Any],
 ) -> dict[str, Any]:
-    bindings = _candidate_bindings(source_run)
+    bindings = _candidate_bindings(source_run, routing["manifest"])
     context_declared = config.protein_expression_host.strip().lower() != "unspecified"
     return {
-        "schema_version": 1,
-        "specification_id": f"{config.project_id}-protein-product-v1",
+        "schema_version": 2,
+        "specification_id": f"{config.project_id}-protein-product-v2",
         "stage_id": PROTEIN_PRODUCT_STAGE_ID,
         "mode": "exploratory",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "routing": routing_descriptor(config, routing),
         "selection": {
             "status": "draft",
             "candidates": bindings,
@@ -126,15 +158,17 @@ def default_protein_product_specification(
 def default_mrna_product_specification(
     config: ProjectConfig,
     source_run: Path,
+    routing: dict[str, Any],
 ) -> dict[str, Any]:
-    bindings = _candidate_bindings(source_run)
+    bindings = _candidate_bindings(source_run, routing["manifest"])
     target_declared = config.mrna_target_species.strip().lower() != "unspecified"
     return {
-        "schema_version": 1,
-        "specification_id": f"{config.project_id}-mrna-product-v1",
+        "schema_version": 2,
+        "specification_id": f"{config.project_id}-mrna-product-v2",
         "stage_id": MRNA_PRODUCT_STAGE_ID,
         "mode": "exploratory",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "routing": routing_descriptor(config, routing),
         "selection": {
             "status": "draft",
             "candidates": bindings,
@@ -193,6 +227,7 @@ def initialize_product_specifications(
     project_config: str | Path,
     *,
     source_run_dir: str | Path | None = None,
+    refresh_selection: bool = False,
 ) -> dict[str, Any]:
     config = load_project_config(Path(project_config))
     source = _resolve_stage5_run(
@@ -201,20 +236,163 @@ def initialize_product_specifications(
     )
     protein_path = config.runtime_root / PROTEIN_SPEC_RELATIVE
     mrna_path = config.runtime_root / MRNA_SPEC_RELATIVE
-    created: list[str] = []
+    routing = initialize_stage6_routing(
+        config,
+        source,
+        refresh=refresh_selection,
+    )
+    expected_protein = default_protein_product_specification(
+        config, source, routing
+    )
+    expected_mrna = default_mrna_product_specification(config, source, routing)
+    created: list[str] = list(routing["created"])
+    archived: list[str] = list(routing["archived"])
     if not protein_path.exists():
-        _atomic_json(protein_path, default_protein_product_specification(config, source))
+        _atomic_json(protein_path, expected_protein)
         created.append(str(protein_path))
+    elif not _specification_matches_routing(protein_path, expected_protein):
+        if not refresh_selection:
+            raise ValueError(
+                "Protein Stage 6 specification selection is stale; rerun "
+                "init-stage6 with --refresh-selection"
+            )
+        archived.append(
+            str(
+                archive_runtime_file(
+                    protein_path,
+                    config.runtime_root / "input/stage6/history",
+                )
+            )
+        )
+        _atomic_json(
+            protein_path,
+            _refresh_protein_specification(
+                _load_json(protein_path), expected_protein
+            ),
+        )
     if not mrna_path.exists():
-        _atomic_json(mrna_path, default_mrna_product_specification(config, source))
+        _atomic_json(mrna_path, expected_mrna)
         created.append(str(mrna_path))
+    elif not _specification_matches_routing(mrna_path, expected_mrna):
+        if not refresh_selection:
+            raise ValueError(
+                "mRNA Stage 6 specification selection is stale; rerun "
+                "init-stage6 with --refresh-selection"
+            )
+        archived.append(
+            str(
+                archive_runtime_file(
+                    mrna_path,
+                    config.runtime_root / "input/stage6/history",
+                )
+            )
+        )
+        _atomic_json(
+            mrna_path,
+            _refresh_mrna_specification(_load_json(mrna_path), expected_mrna),
+        )
     return {
         "project_id": config.project_id,
         "source_run": str(source),
         "protein_specification": str(protein_path),
         "mrna_specification": str(mrna_path),
+        "routing_policy": str(routing["policy_path"]),
+        "routing_manifest": str(routing["manifest_path"]),
+        "routing_counts": routing["manifest"]["counts"],
         "created": created,
+        "archived": archived,
     }
+
+
+def _specification_matches_routing(
+    path: Path,
+    expected: dict[str, Any],
+) -> bool:
+    try:
+        current = _load_json(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    constructs_match = True
+    if "constructs" in expected:
+        current_constructs = current.get("constructs")
+        constructs_match = (
+            isinstance(current_constructs, dict)
+            and set(current_constructs)
+            == {
+                binding["candidate_id"]
+                for binding in expected["selection"]["candidates"]
+            }
+        )
+    return (
+        current.get("schema_version") == 2
+        and current.get("stage_id") == expected["stage_id"]
+        and current.get("routing") == expected["routing"]
+        and current.get("selection", {}).get("candidates")
+        == expected["selection"]["candidates"]
+        and constructs_match
+    )
+
+
+def _refresh_protein_specification(
+    current: dict[str, Any],
+    expected: dict[str, Any],
+) -> dict[str, Any]:
+    refreshed = dict(expected)
+    for field in (
+        "expression_context",
+        "codon_usage_table_path",
+        "policy",
+    ):
+        if field in current:
+            refreshed[field] = current[field]
+    current_constructs = current.get("constructs", {})
+    if not isinstance(current_constructs, dict):
+        current_constructs = {}
+    refreshed["constructs"] = {
+        candidate_id: current_constructs.get(candidate_id, declaration)
+        for candidate_id, declaration in expected["constructs"].items()
+    }
+    refreshed["selection"] = {
+        **expected["selection"],
+        "status": "draft",
+    }
+    return refreshed
+
+
+def _refresh_mrna_specification(
+    current: dict[str, Any],
+    expected: dict[str, Any],
+) -> dict[str, Any]:
+    refreshed = dict(expected)
+    for field in (
+        "target_context",
+        "manufacturing_context",
+        "codon_usage_table_path",
+        "generation",
+        "constraints",
+        "noncoding_elements",
+        "policy",
+    ):
+        if field in current:
+            refreshed[field] = current[field]
+    selected_ids = {
+        binding["candidate_id"]
+        for binding in expected["selection"]["candidates"]
+    }
+    current_controls = current.get("provided_coding_sequences", [])
+    if not isinstance(current_controls, list):
+        current_controls = []
+    refreshed["provided_coding_sequences"] = [
+        declaration
+        for declaration in current_controls
+        if isinstance(declaration, dict)
+        and declaration.get("candidate_id") in selected_ids
+    ]
+    refreshed["selection"] = {
+        **expected["selection"],
+        "status": "draft",
+    }
+    return refreshed
 
 
 def resolve_runtime_input(
@@ -236,7 +414,7 @@ def resolve_runtime_input(
 def _load_specification(path: Path, stage_id: str) -> dict[str, Any]:
     document = _load_json(path)
     if (
-        document.get("schema_version") != 1
+        document.get("schema_version") != 2
         or document.get("stage_id") != stage_id
         or document.get("mode") != "exploratory"
     ):

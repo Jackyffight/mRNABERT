@@ -268,6 +268,14 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="verified combined Stage 4/5 run; defaults to the project's latest run",
     )
+    init_stage6_parser.add_argument(
+        "--refresh-selection",
+        action="store_true",
+        help=(
+            "archive and migrate stale Stage 6 specifications to the current "
+            "checksum-bound routing manifest"
+        ),
+    )
     run_stage6_parser = subparsers.add_parser(
         "run-stage6",
         help="write deterministic Stage 6A protein and Stage 6B mRNA product nodes",
@@ -726,11 +734,24 @@ def main(argv: list[str] | None = None) -> int:
             initialized = initialize_product_specifications(
                 args.project_config,
                 source_run_dir=args.from_run,
+                refresh_selection=args.refresh_selection,
             )
             print(f"Stage 6 specifications: source_run={initialized['source_run']}")
+            print(f"Routing policy: {initialized['routing_policy']}")
+            print(f"Routing manifest: {initialized['routing_manifest']}")
+            counts = initialized["routing_counts"]
+            print(
+                "Routing counts: "
+                f"active={counts['active']} priority={counts['priority']} "
+                f"diversity_rescue={counts['diversity_rescue']} "
+                f"archive={counts['archive']} "
+                f"product_drafting={counts['product_drafting']} "
+                f"expensive_followup={counts['expensive_followup']}"
+            )
             print(f"Protein specification: {initialized['protein_specification']}")
             print(f"mRNA specification: {initialized['mrna_specification']}")
             print(f"Created files: {len(initialized['created'])}")
+            print(f"Archived stale files: {len(initialized['archived'])}")
             return 0
 
         if args.command == "run-stage6":

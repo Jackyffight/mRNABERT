@@ -73,6 +73,7 @@ def render_protein_product_report(
     rows = "".join(
         "<tr>"
         f"<td><b>{escape(product['candidate_key'])}</b><span>{escape(product['design_id'])}</span></td>"
+        f"<td>{escape(product['routing_lane'])}<span>{'model follow-up / 模型复核' if product['expensive_followup_eligible'] else 'draft only / 仅产品草案'}</span></td>"
         f"<td>{len(product['antigen_sequence'])}</td><td>{len(product['expression_sequence'])}</td>"
         f"<td>{len(product['elements'])}</td><td>{escape(product['coding_source'])}</td>"
         f"<td>{'yes / 是' if product['translation_verified'] else 'no / 否'}</td>"
@@ -82,7 +83,7 @@ def render_protein_product_report(
     )
     body = (
         "<h2>Exact product constructs / 精确产品构建体</h2><div class='table-wrap'><table><thead><tr>"
-        "<th>Candidate / 候选</th><th>Antigen aa / 抗原</th><th>Expression aa / 表达构建</th>"
+        "<th>Candidate / 候选</th><th>Routing / 路由</th><th>Antigen aa / 抗原</th><th>Expression aa / 表达构建</th>"
         "<th>Additions / 附加元件</th><th>CDS source / 来源</th><th>Translation / 翻译</th><th>Structure recheck / 结构复核</th>"
         f"</tr></thead><tbody>{rows}</tbody></table></div><h2>Missing requirements / 缺失要求</h2>{_requirements(result)}"
     )
@@ -95,11 +96,15 @@ def render_protein_product_report(
         ruleset_id=result["ruleset_id"],
         metrics=[
             (str(len(result["products"])), "Products / 产品"),
+            (
+                str(result["routing"]["counts"]["expensive_followup"]),
+                "Model follow-up / 模型复核",
+            ),
             (str(sum(bool(item["elements"]) for item in result["products"])), "Modified constructs / 改造构建"),
             (str(sum(item["translation_verified"] for item in result["products"])), "Verified CDS / 已验证 CDS"),
             (str(len(result["requirements"])), "Missing requirements / 缺失要求"),
         ],
-        notice="An exact construct specification is not evidence of expression, purification yield, stability, or efficacy. / 精确构建体定义不等于表达、纯化产率、稳定性或有效性证据。",
+        notice="All routed candidates receive low-cost product drafts. Only priority and diversity_rescue records enter expensive model follow-up. Exact constructs are not expression or efficacy evidence. / 所有已路由候选都会生成低成本产品草案；只有 priority 和 diversity_rescue 进入昂贵模型复核。精确构建体不等于表达或有效性证据。",
         body=body,
         actions=actions,
     )
@@ -114,6 +119,7 @@ def render_mrna_product_report(
     rows = "".join(
         "<tr>"
         f"<td><b>{escape(design['candidate_key'])}</b><span>{escape(design['design_id'])}</span></td>"
+        f"<td>{escape(design['routing_lane'])}<span>{'model follow-up / 模型复核' if design['expensive_followup_eligible'] else 'draft only / 仅产品草案'}</span></td>"
         f"<td>{escape(design['design_type'])}</td><td>{_value(design['metrics']['cai_proxy'])}</td>"
         f"<td>{_value(design['metrics']['gc_fraction'])}</td><td>{design['metrics']['longest_homopolymer']}</td>"
         f"<td>{'yes / 是' if design['translation_verified'] else 'no / 否'}</td>"
@@ -123,7 +129,7 @@ def render_mrna_product_report(
     )
     body = (
         "<h2>Audited coding designs / 已审计编码设计</h2><div class='table-wrap'><table><thead><tr>"
-        "<th>Candidate / 候选</th><th>Type / 类型</th><th>CAI proxy</th><th>GC</th>"
+        "<th>Candidate / 候选</th><th>Routing / 路由</th><th>Type / 类型</th><th>CAI proxy</th><th>GC</th>"
         "<th>Longest homopolymer / 最长同聚物</th><th>Translation / 翻译</th><th>Construct / 构建体</th>"
         f"</tr></thead><tbody>{rows}</tbody></table></div><h2>Missing requirements / 缺失要求</h2>{_requirements(result)}"
     )
@@ -137,6 +143,10 @@ def render_mrna_product_report(
         metrics=[
             (str(len(result["designs"])), "Audited designs / 已审计设计"),
             (
+                str(result["routing"]["counts"]["expensive_followup"]),
+                "Model follow-up candidates / 模型复核候选",
+            ),
+            (
                 str(
                     sum(
                         item["design_type"].startswith("synonymous_")
@@ -148,7 +158,7 @@ def render_mrna_product_report(
             (str(len(result["rejected_designs"])), "Rejected trials / 拒绝试验"),
             (str(len(result["requirements"])), "Missing requirements / 缺失要求"),
         ],
-        notice="Language-model or codon scores cannot replace translation identity, hard constraints, licensed non-coding elements, or experimental validation. / 语言模型或密码子评分不能替代翻译一致性、硬约束、获准的非编码元件和实验验证。",
+        notice="All routed candidates may receive low-cost coding drafts; expensive Evo2/model follow-up is allocated only to priority and diversity_rescue. Scores cannot replace translation identity or experimental validation. / 所有已路由候选都可生成低成本编码草案；昂贵的 Evo2/模型复核仅分配给 priority 和 diversity_rescue。评分不能替代翻译一致性或实验验证。",
         body=body,
         actions=actions,
     )

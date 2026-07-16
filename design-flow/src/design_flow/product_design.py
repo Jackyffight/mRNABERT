@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 from typing import Any
 
+from .assessment_specs import load_structure_candidate_scope
 from .config import ProjectConfig, load_project_config
 from .product_specs import (
     CODON_USAGE_SCHEMA,
@@ -24,6 +25,7 @@ from .product_specs import (
     resolve_runtime_input,
 )
 from .qc import CANONICAL_AMINO_ACIDS, CODON_TABLE, normalize_nucleotide, translate_cds
+from .stage6_routing import resolve_stage6_routing
 from .structure_job import _load_json
 from .verification import sha256_file
 
@@ -44,6 +46,9 @@ class ProductDesignAnalysis:
     protein_specification_path: Path
     mrna_specification: dict[str, Any]
     mrna_specification_path: Path
+    routing_manifest: dict[str, Any]
+    routing_manifest_path: Path
+    routing_policy_path: Path
     input_paths: dict[str, Path]
     protein_result: dict[str, Any]
     mrna_result: dict[str, Any]
@@ -64,11 +69,28 @@ def _validate_bindings(
     specification: dict[str, Any],
     candidate_by_id: dict[str, dict[str, Any]],
     field_name: str,
+    routing_manifest: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
     selection = specification.get("selection")
     if not isinstance(selection, dict) or not isinstance(selection.get("candidates"), list):
         raise ValueError(f"{field_name}.selection.candidates must be an array")
     bindings = selection["candidates"]
+    if routing_manifest is not None:
+        expected_bindings = [
+            {
+                "candidate_id": record["candidate_id"],
+                "candidate_key": record["candidate_key"],
+                "amino_acid_sha256": record["amino_acid_sha256"],
+                "routing_lane": record["lane"],
+                "expensive_followup_eligible": record[
+                    "expensive_followup_eligible"
+                ],
+            }
+            for record in routing_manifest["records"]
+            if record["product_drafting_eligible"]
+        ]
+        if bindings != expected_bindings:
+            raise ValueError(f"{field_name} routing binding differs from manifest")
     selected: list[dict[str, Any]] = []
     seen: set[str] = set()
     for index, binding in enumerate(bindings):
@@ -275,11 +297,25 @@ def _protein_analysis(
     candidate_batch: dict[str, Any],
     codon_usage: dict[str, Any] | None,
     input_paths: dict[str, Path],
+    routing_manifest: dict[str, Any] | None,
 ) -> dict[str, Any]:
     candidate_by_id = {
         candidate["candidate_id"]: candidate for candidate in candidate_batch["candidates"]
     }
-    selected = _validate_bindings(spec, candidate_by_id, "protein_product")
+    selected = _validate_bindings(
+        spec,
+        candidate_by_id,
+        "protein_product",
+        routing_manifest,
+    )
+    routing_by_id = (
+        {
+            record["candidate_id"]: record
+            for record in routing_manifest["records"]
+        }
+        if routing_manifest is not None
+        else {}
+    )
     constructs = spec.get("constructs")
     if not isinstance(constructs, dict) or set(constructs) != {
         candidate["candidate_id"] for candidate in selected
@@ -397,7 +433,9 @@ def _protein_analysis(
             "elements": elements,
             "specification_id": spec["specification_id"],
         }
-        products.append({
+        if routing_manifest is not None:
+            product_identity["routing_id"] = routing_manifest["routing_id"]
+        product = {
             "design_id": f"protein-{_canonical_json_sha256(product_identity)[:16]}",
             "candidate_id": candidate_id,
             "candidate_key": candidate["candidate_key"],
@@ -414,10 +452,41 @@ def _protein_analysis(
             "translation_verified": coding_sequence is not None,
             "requires_structure_recheck": expression_sequence != antigen,
             "status": "draft" if requirements else "audited",
-        })
-    product_batch_sha = _canonical_json_sha256(
-        [{key: product[key] for key in ("design_id", "expression_sequence_sha256")} for product in products]
-    )
+        }
+        if routing_manifest is not None:
+            routing = routing_by_id[candidate_id]
+            product["routing_lane"] = routing["lane"]
+            product["expensive_followup_eligible"] = routing[
+                "expensive_followup_eligible"
+            ]
+        products.append(product)
+    if routing_manifest is None:
+        product_batch_sha = _canonical_json_sha256(
+            [
+                {
+                    key: product[key]
+                    for key in ("design_id", "expression_sequence_sha256")
+                }
+                for product in products
+            ]
+        )
+    else:
+        product_batch_sha = _canonical_json_sha256(
+            {
+                "routing_id": routing_manifest["routing_id"],
+                "products": [
+                    {
+                        key: product[key]
+                        for key in (
+                            "design_id",
+                            "expression_sequence_sha256",
+                            "routing_lane",
+                        )
+                    }
+                    for product in products
+                ],
+            }
+        )
     adapter_states = {}
     product_ids = {product["design_id"] for product in products}
     for adapter_id in PROTEIN_ADAPTER_IDS:
@@ -444,7 +513,7 @@ def _protein_analysis(
             requirement["requirement_id"].endswith(product["candidate_id"])
             for requirement in requirements
         ) else "draft_audited"
-    return {
+    result = {
         "schema_version": 1,
         "stage_id": PROTEIN_PRODUCT_STAGE_ID,
         "mode": "exploratory",
@@ -464,6 +533,12 @@ def _protein_analysis(
             "External expression and structure evidence remains not_evaluated until supplied.",
         ],
     }
+    if routing_manifest is not None:
+        result["routing"] = {
+            "routing_id": routing_manifest["routing_id"],
+            "counts": routing_manifest["counts"],
+        }
+    return result
 
 
 def _longest_homopolymer(sequence: str) -> int:
@@ -645,11 +720,25 @@ def _mrna_analysis(
     candidate_batch: dict[str, Any],
     codon_usage: dict[str, Any] | None,
     input_paths: dict[str, Path],
+    routing_manifest: dict[str, Any] | None,
 ) -> dict[str, Any]:
     candidate_by_id = {
         candidate["candidate_id"]: candidate for candidate in candidate_batch["candidates"]
     }
-    selected = _validate_bindings(spec, candidate_by_id, "mrna_product")
+    selected = _validate_bindings(
+        spec,
+        candidate_by_id,
+        "mrna_product",
+        routing_manifest,
+    )
+    routing_by_id = (
+        {
+            record["candidate_id"]: record
+            for record in routing_manifest["records"]
+        }
+        if routing_manifest is not None
+        else {}
+    )
     policy = spec.get("policy", {})
     stop_codon = policy.get("terminal_stop_codon", "TAA")
     if CODON_TABLE.get(stop_codon) != "*":
@@ -878,9 +967,39 @@ def _mrna_analysis(
                     selection_basis=record["selection_basis"],
                 )
             )
-    design_batch_sha = _canonical_json_sha256(
-        [{key: design[key] for key in ("design_id", "coding_sequence_sha256")} for design in designs]
-    )
+    if routing_manifest is None:
+        design_batch_sha = _canonical_json_sha256(
+            [
+                {
+                    key: design[key]
+                    for key in ("design_id", "coding_sequence_sha256")
+                }
+                for design in designs
+            ]
+        )
+    else:
+        for design in designs:
+            routing = routing_by_id[design["candidate_id"]]
+            design["routing_lane"] = routing["lane"]
+            design["expensive_followup_eligible"] = routing[
+                "expensive_followup_eligible"
+            ]
+        design_batch_sha = _canonical_json_sha256(
+            {
+                "routing_id": routing_manifest["routing_id"],
+                "designs": [
+                    {
+                        key: design[key]
+                        for key in (
+                            "design_id",
+                            "coding_sequence_sha256",
+                            "routing_lane",
+                        )
+                    }
+                    for design in designs
+                ],
+            }
+        )
     adapter_states = {}
     design_ids = {design["design_id"] for design in designs}
     for adapter_id in MRNA_ADAPTER_IDS:
@@ -928,6 +1047,11 @@ def _mrna_analysis(
     }
     if manufacturing_context is not None:
         result["manufacturing_context"] = manufacturing_context
+    if routing_manifest is not None:
+        result["routing"] = {
+            "routing_id": routing_manifest["routing_id"],
+            "counts": routing_manifest["counts"],
+        }
     return result
 
 
@@ -989,13 +1113,20 @@ def analyze_product_designs(
         config, Path(source_run_dir) if source_run_dir is not None else None
     )
     source_manifest = _load_json(source / "manifest.json")
-    candidate_batch = _load_json(
-        source / "nodes/candidate_specification/candidate_batch.json"
-    )
+    candidate_batch = load_structure_candidate_scope(source)["candidate_batch"]
     protein_spec, protein_path, mrna_spec, mrna_path = load_product_specifications(config)
+    if protein_spec.get("routing") != mrna_spec.get("routing"):
+        raise ValueError("Protein and mRNA Stage 6 routing descriptors differ")
+    routing_manifest, routing_manifest_path, routing_policy_path = (
+        resolve_stage6_routing(config, source, protein_spec.get("routing"))
+    )
     input_paths = {
         "protein_specification": protein_path,
         "mrna_specification": mrna_path,
+        "protein_routing_manifest": routing_manifest_path,
+        "protein_routing_policy": routing_policy_path,
+        "mrna_routing_manifest": routing_manifest_path,
+        "mrna_routing_policy": routing_policy_path,
     }
     protein_codon_path = resolve_runtime_input(
         config, protein_spec.get("codon_usage_table_path"), "protein.codon_usage_table_path"
@@ -1016,10 +1147,22 @@ def analyze_product_designs(
         mrna_codon = _load_codon_usage(mrna_codon_path)
         input_paths["mrna_codon_usage"] = mrna_codon_path
     protein_result = _protein_analysis(
-        config, protein_spec, protein_path, candidate_batch, protein_codon, input_paths
+        config,
+        protein_spec,
+        protein_path,
+        candidate_batch,
+        protein_codon,
+        input_paths,
+        routing_manifest,
     )
     mrna_result = _mrna_analysis(
-        config, mrna_spec, mrna_path, candidate_batch, mrna_codon, input_paths
+        config,
+        mrna_spec,
+        mrna_path,
+        candidate_batch,
+        mrna_codon,
+        input_paths,
+        routing_manifest,
     )
     _apply_upstream_developability_requirement(
         source, protein_result, mrna_result
@@ -1033,6 +1176,9 @@ def analyze_product_designs(
         protein_specification_path=protein_path,
         mrna_specification=mrna_spec,
         mrna_specification_path=mrna_path,
+        routing_manifest=routing_manifest,
+        routing_manifest_path=routing_manifest_path,
+        routing_policy_path=routing_policy_path,
         input_paths=input_paths,
         protein_result=protein_result,
         mrna_result=mrna_result,

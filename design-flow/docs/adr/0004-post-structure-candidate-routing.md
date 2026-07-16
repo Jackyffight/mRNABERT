@@ -49,11 +49,18 @@ selection while still controlling expensive downstream work. Fusion architecture
 remain represented long enough for component confidence, junction liabilities,
 immune evidence, and developability evidence to influence the decision.
 
-The current 27-record priority count is run-specific, not a permanent quota. The
-diversity-rescue size and expensive-compute budgets must be added as versioned policy
-before the next costly model round; they must not be chosen ad hoc from the report.
+The current 27-record priority count is run-specific, not a permanent quota. Pipeline
+version 0.18 implements the required versioned policy and checksum-bound manifest.
+Its default diversity-rescue budget is 64, with deterministic feature coverage and
+explicit uncovered-feature reporting rather than ad hoc report selection.
 
 The first full active-set Stage 4/5 execution subsequently completed for all 384
 candidates. This validates the all-candidate low-cost route. It does not alter the
 decision that Stage 6 generation and later expensive model calls require an explicit
 priority/diversity/archive routing manifest.
+
+The first verified 384-candidate Stage 6 execution assigned 27 priority, 25 diversity rescue,
+and 332 archive candidates while covering all 53 declared diversity features. All
+384 remain eligible for low-cost product drafting; 52 are eligible for automatic
+expensive-model follow-up. Run `20260716T060350582289Z-stage6-29403999` passed all
+20 deterministic verification checks.

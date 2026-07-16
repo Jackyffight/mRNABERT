@@ -177,6 +177,8 @@ def _bundle(
         "mode": "exploratory",
         "ruleset_id": result["ruleset_id"],
         "design_count": len(result[item_name]),
+        "routing_id": result["routing"]["routing_id"],
+        "routing_counts": result["routing"]["counts"],
         "missing_requirement_count": len(result["requirements"]),
         "open_human_actions": len(open_actions),
         "due_human_actions": len(due_actions),
@@ -198,6 +200,7 @@ def _bundle(
             "checks": [
                 {"check_id": "stage4-5-parent-verified", "status": "pass"},
                 {"check_id": "candidate-bindings-exact", "status": "pass"},
+                {"check_id": "candidate-routing-exact", "status": "pass"},
                 {"check_id": "translation-identity-enforced", "status": "pass"},
                 {"check_id": "product-release-gate-disabled", "status": "pass"},
             ],
@@ -209,6 +212,7 @@ def _bundle(
             "operations": (
                 [
                     "bind_antigen_candidate_hashes",
+                    "enforce_stage6_candidate_routing",
                     "assemble_declared_expression_elements",
                     "separate_antigen_expression_and_final_product_sequences",
                     "verify_exact_cds_translation",
@@ -217,6 +221,7 @@ def _bundle(
                 if stage_id == PROTEIN_PRODUCT_STAGE_ID
                 else [
                     "bind_antigen_candidate_hashes",
+                    "enforce_stage6_candidate_routing",
                     "retain_source_cds_controls",
                     "import_declared_coding_controls_with_exact_translation_audit",
                     "generate_seeded_synonymous_trials_when_enabled",
@@ -233,6 +238,7 @@ def _bundle(
             "requirements": result["requirements"],
             "checks": [
                 {"check_id": "exact-sequences-and-hashes-present", "status": "pass"},
+                {"check_id": "expensive-followup-routing-enforced", "status": "pass"},
                 {"check_id": "missing-model-evidence-not-imputed", "status": "pass"},
                 {"check_id": "no-synthesis-release-claim", "status": "pass"},
             ],
@@ -251,7 +257,10 @@ def _bundle(
             "formal_readiness": "needs_human_input" if due_actions else "ready",
             "blocking_action_ids": [action["action_id"] for action in due_actions],
             "carried_human_actions": open_actions,
-            "carried_forward": {"result_sha256": None},
+            "carried_forward": {
+                "result_sha256": None,
+                "routing_id": result["routing"]["routing_id"],
+            },
             "limitations": result["limitations"],
         },
         "result": result,
@@ -379,6 +388,7 @@ def write_product_design_run(
             _csv_text(
                 [
                     "design_id", "candidate_id", "candidate_key", "coding_source",
+                    "routing_lane", "expensive_followup_eligible",
                     "translation_verified", "requires_structure_recheck", "status",
                 ],
                 products,
@@ -400,7 +410,12 @@ def write_product_design_run(
                 if item["coding_sequence_dna"]
             ]),
         )
-        recheck = [item for item in products if item["requires_structure_recheck"]]
+        recheck = [
+            item
+            for item in products
+            if item["requires_structure_recheck"]
+            and item["expensive_followup_eligible"]
+        ]
         _atomic_write(
             protein_node / "structure_recheck_candidates.fasta",
             _fasta([(item["design_id"], item["expression_sequence"]) for item in recheck]),
@@ -423,10 +438,36 @@ def write_product_design_run(
             }),
         )
         _atomic_write(
+            protein_node / "model_followup_manifest.json",
+            _json_text(
+                {
+                    "schema_version": "vaxflow.stage6-model-followup.v1",
+                    "routing_id": analysis.routing_manifest["routing_id"],
+                    "modality": "recombinant_protein",
+                    "records": [
+                        {
+                            "design_id": item["design_id"],
+                            "candidate_id": item["candidate_id"],
+                            "routing_lane": item["routing_lane"],
+                            "sequence_sha256": item[
+                                "expression_sequence_sha256"
+                            ],
+                            "requires_structure_recheck": item[
+                                "requires_structure_recheck"
+                            ],
+                        }
+                        for item in products
+                        if item["expensive_followup_eligible"]
+                    ],
+                }
+            ),
+        )
+        _atomic_write(
             mrna_node / "designs.csv",
             _csv_text(
                 [
                     "design_id", "candidate_id", "candidate_key", "design_type",
+                    "routing_lane", "expensive_followup_eligible",
                     "selection_basis", "translation_verified", "status",
                     "coding_sequence_sha256",
                 ],
@@ -453,6 +494,28 @@ def write_product_design_run(
                     {**item, "metrics": json.dumps(item["metrics"], sort_keys=True)}
                     for item in analysis.mrna_result["rejected_designs"]
                 ],
+            ),
+        )
+        _atomic_write(
+            mrna_node / "model_followup_manifest.json",
+            _json_text(
+                {
+                    "schema_version": "vaxflow.stage6-model-followup.v1",
+                    "routing_id": analysis.routing_manifest["routing_id"],
+                    "modality": "mrna",
+                    "records": [
+                        {
+                            "design_id": item["design_id"],
+                            "candidate_id": item["candidate_id"],
+                            "routing_lane": item["routing_lane"],
+                            "coding_sequence_sha256": item[
+                                "coding_sequence_sha256"
+                            ],
+                        }
+                        for item in designs
+                        if item["expensive_followup_eligible"]
+                    ],
+                }
             ),
         )
         protein_bundle["handoff"]["carried_forward"]["result_sha256"] = sha256_file(
@@ -514,6 +577,15 @@ def write_product_design_run(
                 **analysis.source_manifest["counts"],
                 "protein_products": len(products),
                 "mrna_designs": len(designs),
+                "stage6_priority_candidates": analysis.routing_manifest["counts"][
+                    "priority"
+                ],
+                "stage6_diversity_rescue_candidates": analysis.routing_manifest[
+                    "counts"
+                ]["diversity_rescue"],
+                "stage6_archive_candidates": analysis.routing_manifest["counts"][
+                    "archive"
+                ],
                 "protein_missing_requirements": len(analysis.protein_result["requirements"]),
                 "mrna_missing_requirements": len(analysis.mrna_result["requirements"]),
             },
@@ -521,6 +593,12 @@ def write_product_design_run(
                 "parent_run_id": analysis.source_manifest["run_id"],
                 "protein_specification_sha256": sha256_file(analysis.protein_specification_path),
                 "mrna_specification_sha256": sha256_file(analysis.mrna_specification_path),
+                "routing_manifest_sha256": sha256_file(
+                    analysis.routing_manifest_path
+                ),
+                "routing_policy_sha256": sha256_file(
+                    analysis.routing_policy_path
+                ),
             },
             "nodes": nodes,
             "artifacts": {

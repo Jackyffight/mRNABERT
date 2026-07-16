@@ -232,6 +232,20 @@ Initialize and run both Stage 6 product branches:
   --from-run /absolute/path/to/verified-stage4-5-run
 ```
 
+Stage 6 initialization writes a checksum-bound three-lane routing manifest. The
+specifications bind every active Stage 3 candidate and protein drafts cover that
+complete set. mRNA coding drafts are emitted only when an exact source/provided CDS
+or a versioned codon table exists. Expensive model follow-up is restricted to
+`priority` and `diversity_rescue`. Existing pre-routing specifications must be
+archived and migrated explicitly with `init-stage6 --refresh-selection`. See
+[Stage 6 Candidate Routing](docs/stage6-candidate-routing.md). The reusable Mock-run
+command is:
+
+```bash
+/data00/home/wangzhi.wit/models/mRNABERT/design-flow/scripts/run_stage6_routed.sh \
+  /absolute/path/to/verified-stage4-5-run
+```
+
 Stage 6A writes exact protein constructs, coding sequences, and an ESMFold2 structure
 recheck payload for constructs changed by expression additions. Stage 6B retains
 source-CDS controls and, after a versioned 61-codon table is configured, creates

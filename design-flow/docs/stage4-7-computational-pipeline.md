@@ -1,6 +1,6 @@
 # Stage 4-7 Computational Pipeline
 
-Status: implemented exploratory execution path, version `0.17.0`
+Status: implemented exploratory execution path, version `0.18.0`
 
 This document defines the executable path after a verified Stage 3 structure run.
 Under workflow v2, these evaluators also emit structured next-round redesign
@@ -101,6 +101,12 @@ is still absent reopens it during recomputation.
 ./vaxflow run-stage7 projects/three-protein/project.json \
   --from-run /absolute/path/to/stage6-run
 ```
+
+Stage 6 initialization first creates the policy and checksum-bound candidate routing
+manifest described in [Stage 6 Candidate Routing](stage6-candidate-routing.md).
+Use `--refresh-selection` only to archive and migrate a stale pre-routing Stage 6
+specification. Product drafting includes all three lanes; generated expensive-model
+payloads include only `priority` and `diversity_rescue`.
 
 The `init-*` commands never overwrite existing specifications. Edit the generated
 runtime JSON, add the required data files under `runtime_root`, and rerun the matching
@@ -260,6 +266,9 @@ commands, and upgrade boundaries are recorded in
 Specification:
 `input/stage6/protein_product_specification.json`
 
+The schema-version-2 specification binds the routing policy/manifest and exact
+active Stage 3 candidate set. It cannot silently fall back to the full Stage 2 batch.
+
 For every selected antigen, the system separately records:
 
 - immutable antigen sequence;
@@ -281,6 +290,8 @@ Outputs include:
   `coding_sequences.fasta`;
 - `structure_recheck_candidates.fasta` and `structure_recheck_job.json` for an
   external ESMFold2 adapter;
+- `model_followup_manifest.json` containing only expensive-follow-up-eligible
+  products;
 - optional `structure_recheck` and `expression_support` evidence adapters.
 
 Protein adapter evidence uses schema `vaxflow.product-evidence.v1`, binds to
@@ -290,6 +301,11 @@ Protein adapter evidence uses schema `vaxflow.product-evidence.v1`, binds to
 
 Specification:
 `input/stage6/mrna_product_specification.json`
+
+The schema-version-2 specification uses the same routing identity as the protein
+branch. All lanes may receive low-cost coding drafts when an exact CDS or versioned
+codon table is available; missing coding sequences remain requirements. The
+model-follow-up manifest excludes archive candidates.
 
 The source CDS is retained as a named control whenever it translates exactly. After
 a codon table is supplied and generation is enabled, the system:

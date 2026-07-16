@@ -29,7 +29,12 @@ from design_flow.fasta import parse_fasta
 from design_flow.pipeline import analyze_project
 from design_flow.post_structure_assessment import analyze_post_structure_stages
 from design_flow.post_structure_reporting import write_post_structure_run
-from design_flow.product_design import analyze_product_designs
+from design_flow.product_design import (
+    _canonical_json_sha256,
+    _mrna_analysis,
+    _protein_analysis,
+    analyze_product_designs,
+)
 from design_flow.product_reporting import write_product_design_run
 from design_flow.product_specs import initialize_product_specifications
 from design_flow.proposal_generation import (
@@ -52,6 +57,10 @@ from design_flow.structure_assessment import analyze_structure_results
 from design_flow.structure_reporting import write_structure_run
 from design_flow.structure_job import _document_sha256, _identity
 from design_flow.structure_metrics import ResidueGeometry, geometry_metrics
+from design_flow.stage6_routing import (
+    ROUTING_MANIFEST_SCHEMA,
+    route_candidates,
+)
 from design_flow.verification import (
     _workflow_blueprint_matches,
     build_artifact_index,
@@ -2418,8 +2427,27 @@ class CandidateStageEndToEndTests(unittest.TestCase):
                 ),
                 now=datetime(2026, 7, 15, 15, 0, tzinfo=timezone.utc),
             )
-            initialize_product_specifications(
+            initialized_stage6 = initialize_product_specifications(
                 config_path, source_run_dir=stage5_run
+            )
+            routing_manifest = json.loads(
+                Path(initialized_stage6["routing_manifest"]).read_text(
+                    encoding="utf-8"
+                )
+            )
+            stage3_candidate_ids = json.loads(
+                (
+                    stage5_run
+                    / "nodes/protein_structure_assessment/handoff.json"
+                ).read_text(encoding="utf-8")
+            )["carried_forward"]["candidate_ids"]
+            self.assertEqual(
+                {record["candidate_id"] for record in routing_manifest["records"]},
+                set(stage3_candidate_ids),
+            )
+            self.assertEqual(
+                routing_manifest["counts"]["product_drafting"],
+                len(stage3_candidate_ids),
             )
             product_analysis = analyze_product_designs(
                 config_path, source_run_dir=stage5_run
@@ -2511,6 +2539,396 @@ class CandidateStageEndToEndTests(unittest.TestCase):
             self.assertIn(
                 "developability_assessment",
                 round_feedback["source_stages"],
+            )
+
+    def test_stage6_routing_is_deterministic_and_preserves_diversity(self) -> None:
+        def candidate(
+            candidate_id: str,
+            *,
+            candidate_type: str,
+            source_order: list[str],
+            linker_id: str | None = None,
+            generator_id: str = "deterministic-combinatorial-enumerator",
+        ) -> dict[str, object]:
+            components: list[dict[str, object]] = []
+            for index, source_id in enumerate(source_order):
+                if index and linker_id is not None:
+                    components.append(
+                        {
+                            "component_type": "addition",
+                            "declared_role": "linker",
+                            "linker_id": linker_id,
+                            "sequence": "GGGGS",
+                        }
+                    )
+                components.append(
+                    {
+                        "component_type": "source_segment",
+                        "source_protein_id": source_id,
+                        "source_start": 1,
+                        "source_end": 8,
+                    }
+                )
+            return {
+                "candidate_id": candidate_id,
+                "candidate_key": candidate_id,
+                "candidate_type": candidate_type,
+                "amino_acid_sha256": hashlib.sha256(
+                    candidate_id.encode("ascii")
+                ).hexdigest(),
+                "inferred_components": components,
+                "proposal": {"generator": {"id": generator_id}},
+            }
+
+        candidates = [
+            candidate(
+                "high-a",
+                candidate_type="truncation",
+                source_order=["A"],
+            ),
+            candidate(
+                "source-b",
+                candidate_type="source_control",
+                source_order=["B"],
+                generator_id="source_intake",
+            ),
+            candidate(
+                "manual-ab",
+                candidate_type="fusion",
+                source_order=["A", "B"],
+                linker_id="flex5",
+                generator_id="manual_import",
+            ),
+            candidate(
+                "generated-ab-best",
+                candidate_type="fusion",
+                source_order=["A", "B"],
+                linker_id="rigid5",
+            ),
+            candidate(
+                "generated-ab-archive",
+                candidate_type="fusion",
+                source_order=["A", "B"],
+                linker_id="rigid5",
+            ),
+        ]
+        assessments = [
+            {
+                "candidate_id": item["candidate_id"],
+                "candidate_key": item["candidate_key"],
+                "sequence_sha256": item["amino_acid_sha256"],
+                "confidence_band": (
+                    "higher_confidence"
+                    if item["candidate_id"] == "high-a"
+                    else "low_confidence"
+                ),
+                "mean_plddt": 80.0,
+                "ptm": (
+                    0.6
+                    if item["candidate_id"] == "generated-ab-best"
+                    else 0.5
+                ),
+            }
+            for item in candidates
+        ]
+        immune = [
+            {
+                "candidate_id": item["candidate_id"],
+                "categories": {
+                    "surface_accessibility_proxy": {"exposed_fraction": 0.5},
+                    "mhc_binding": {
+                        "observation_count": 10,
+                        "supported_count": 1,
+                    },
+                },
+            }
+            for item in candidates
+        ]
+        developability = [
+            {"candidate_id": item["candidate_id"], "review_liability_count": 1}
+            for item in candidates
+        ]
+        policy = {
+            "schema_version": "vaxflow.stage6-routing-policy.v1",
+            "policy_id": "fixture-routing-v1",
+            "status": "approved_for_exploratory_use",
+            "priority_confidence_bands": [
+                "higher_confidence",
+                "mixed_confidence",
+            ],
+            "forced_rescue_generator_ids": ["source_intake", "manual_import"],
+            "diversity_dimensions": [
+                "candidate_type",
+                "source_composition",
+                "source_order",
+                "architecture",
+                "linker_family",
+            ],
+            "maximum_diversity_rescue_candidates": 64,
+            "product_drafting_lanes": [
+                "priority",
+                "diversity_rescue",
+                "archive",
+            ],
+            "expensive_followup_lanes": ["priority", "diversity_rescue"],
+        }
+
+        first = route_candidates(
+            candidates,
+            assessments,
+            immune,
+            developability,
+            policy,
+        )
+        second = route_candidates(
+            list(reversed(candidates)),
+            list(reversed(assessments)),
+            list(reversed(immune)),
+            list(reversed(developability)),
+            policy,
+        )
+
+        self.assertEqual(first, second)
+        self.assertEqual(first["schema_version"], ROUTING_MANIFEST_SCHEMA)
+        lanes = {record["candidate_id"]: record["lane"] for record in first["records"]}
+        self.assertEqual(lanes["high-a"], "priority")
+        self.assertEqual(lanes["source-b"], "diversity_rescue")
+        self.assertEqual(lanes["manual-ab"], "diversity_rescue")
+        self.assertEqual(lanes["generated-ab-best"], "diversity_rescue")
+        self.assertEqual(lanes["generated-ab-archive"], "archive")
+        self.assertEqual(first["diversity_coverage"]["uncovered_features"], [])
+        self.assertTrue(
+            all(record["product_drafting_eligible"] for record in first["records"])
+        )
+        self.assertFalse(
+            next(
+                record
+                for record in first["records"]
+                if record["candidate_id"] == "generated-ab-archive"
+            )["expensive_followup_eligible"]
+        )
+        with self.assertRaisesRegex(ValueError, "exact candidate set"):
+            route_candidates(
+                candidates,
+                [*assessments, assessments[0]],
+                immune,
+                developability,
+                policy,
+            )
+        malformed_policy = json.loads(json.dumps(policy))
+        malformed_policy["priority_confidence_bands"] = [["not-a-string"]]
+        with self.assertRaisesRegex(ValueError, "policy fields"):
+            route_candidates(
+                candidates,
+                assessments,
+                immune,
+                developability,
+                malformed_policy,
+            )
+
+    def test_stage6_refresh_archives_stale_nine_candidate_style_specs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, source_run = self._write_stage2_project(root)
+            stage3_run = self._write_verified_stage3_run(
+                root, config_path, source_run, hour=16
+            )
+            initialize_assessment_specifications(
+                config_path, source_run_dir=stage3_run
+            )
+            stage5_run = write_post_structure_run(
+                analyze_post_structure_stages(
+                    config_path, source_run_dir=stage3_run
+                ),
+                now=datetime(2026, 7, 15, 17, 0, tzinfo=timezone.utc),
+            )
+            initialized = initialize_product_specifications(
+                config_path, source_run_dir=stage5_run
+            )
+            protein_path = Path(initialized["protein_specification"])
+            mrna_path = Path(initialized["mrna_specification"])
+            protein = json.loads(protein_path.read_text(encoding="utf-8"))
+            mrna = json.loads(mrna_path.read_text(encoding="utf-8"))
+            first_binding = protein["selection"]["candidates"][0]
+            protein["schema_version"] = 1
+            protein.pop("routing")
+            protein["selection"]["candidates"] = [first_binding]
+            protein["constructs"] = {
+                first_binding["candidate_id"]: protein["constructs"][
+                    first_binding["candidate_id"]
+                ]
+            }
+            mrna["schema_version"] = 1
+            mrna.pop("routing")
+            mrna["selection"]["candidates"] = [
+                mrna["selection"]["candidates"][0]
+            ]
+            protein_path.write_text(
+                json.dumps(protein, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            mrna_path.write_text(
+                json.dumps(mrna, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "stale"):
+                initialize_product_specifications(
+                    config_path, source_run_dir=stage5_run
+                )
+            refreshed = initialize_product_specifications(
+                config_path,
+                source_run_dir=stage5_run,
+                refresh_selection=True,
+            )
+
+            refreshed_protein = json.loads(
+                protein_path.read_text(encoding="utf-8")
+            )
+            refreshed_mrna = json.loads(mrna_path.read_text(encoding="utf-8"))
+            manifest = json.loads(
+                Path(refreshed["routing_manifest"]).read_text(encoding="utf-8")
+            )
+            expected_count = manifest["counts"]["product_drafting"]
+            self.assertEqual(refreshed_protein["schema_version"], 2)
+            self.assertEqual(refreshed_mrna["schema_version"], 2)
+            self.assertEqual(
+                len(refreshed_protein["selection"]["candidates"]), expected_count
+            )
+            self.assertEqual(
+                len(refreshed_mrna["selection"]["candidates"]), expected_count
+            )
+            self.assertEqual(len(refreshed["archived"]), 2)
+            self.assertTrue(
+                all(Path(path).is_file() for path in refreshed["archived"])
+            )
+            refreshed_protein["selection"]["candidates"][0][
+                "routing_lane"
+            ] = "archive"
+            protein_path.write_text(
+                json.dumps(refreshed_protein, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "routing binding"):
+                analyze_product_designs(
+                    config_path, source_run_dir=stage5_run
+                )
+
+    def test_stage6_legacy_analysis_preserves_pre_routing_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, source_run = self._write_stage2_project(root)
+            stage3_run = self._write_verified_stage3_run(
+                root, config_path, source_run, hour=17
+            )
+            initialize_assessment_specifications(
+                config_path, source_run_dir=stage3_run
+            )
+            stage5_run = write_post_structure_run(
+                analyze_post_structure_stages(
+                    config_path, source_run_dir=stage3_run
+                ),
+                now=datetime(2026, 7, 15, 18, 0, tzinfo=timezone.utc),
+            )
+            initialized = initialize_product_specifications(
+                config_path, source_run_dir=stage5_run
+            )
+            routed = analyze_product_designs(
+                config_path, source_run_dir=stage5_run
+            )
+            protein_spec = json.loads(
+                Path(initialized["protein_specification"]).read_text(
+                    encoding="utf-8"
+                )
+            )
+            mrna_spec = json.loads(
+                Path(initialized["mrna_specification"]).read_text(
+                    encoding="utf-8"
+                )
+            )
+            for specification in (protein_spec, mrna_spec):
+                specification["schema_version"] = 1
+                specification.pop("routing")
+                for binding in specification["selection"]["candidates"]:
+                    binding.pop("routing_lane")
+                    binding.pop("expensive_followup_eligible")
+            legacy_protein_path = root / "legacy-protein-spec.json"
+            legacy_mrna_path = root / "legacy-mrna-spec.json"
+            legacy_protein_path.write_text(
+                json.dumps(protein_spec, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            legacy_mrna_path.write_text(
+                json.dumps(mrna_spec, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            full_candidate_batch = json.loads(
+                (
+                    stage5_run
+                    / "nodes/candidate_specification/candidate_batch.json"
+                ).read_text(encoding="utf-8")
+            )
+
+            legacy_protein = _protein_analysis(
+                routed.config,
+                protein_spec,
+                legacy_protein_path,
+                full_candidate_batch,
+                None,
+                {},
+                None,
+            )
+            legacy_mrna = _mrna_analysis(
+                routed.config,
+                mrna_spec,
+                legacy_mrna_path,
+                full_candidate_batch,
+                None,
+                {},
+                None,
+            )
+
+            self.assertNotIn("routing", legacy_protein)
+            self.assertNotIn("routing", legacy_mrna)
+            self.assertTrue(
+                all("routing_lane" not in item for item in legacy_protein["products"])
+            )
+            self.assertTrue(
+                all("routing_lane" not in item for item in legacy_mrna["designs"])
+            )
+            self.assertNotEqual(
+                legacy_protein["products"][0]["design_id"],
+                routed.protein_result["products"][0]["design_id"],
+            )
+            self.assertEqual(
+                legacy_protein["product_batch_sha256"],
+                _canonical_json_sha256(
+                    [
+                        {
+                            key: product[key]
+                            for key in (
+                                "design_id",
+                                "expression_sequence_sha256",
+                            )
+                        }
+                        for product in legacy_protein["products"]
+                    ]
+                ),
+            )
+            self.assertEqual(
+                legacy_mrna["mrna_design_batch_sha256"],
+                _canonical_json_sha256(
+                    [
+                        {
+                            key: design[key]
+                            for key in (
+                                "design_id",
+                                "coding_sequence_sha256",
+                            )
+                        }
+                        for design in legacy_mrna["designs"]
+                    ]
+                ),
             )
 
     def test_stage7_verifier_detects_score_tampering_after_reindex(self) -> None:
