@@ -20,6 +20,8 @@ from .assessment_specs import (
     resolve_spec_path,
 )
 from .config import ProjectConfig, load_project_config
+from .continuation_state import UNSPECIFIED_VALUES
+from .requirement_gates import make_requirement
 from .structure_job import _load_json
 from .structure_metrics import ParsedStructure, parse_ca_pdb
 from .verification import sha256_file
@@ -299,14 +301,15 @@ def _immune_analysis(
         reference_id = declaration.get("reference_record_id")
         if alignment_path is None or reference_id is None:
             requirements.append(
-                {
-                    "requirement_id": f"provide-{source_id.lower()}-pathogen-alignment",
-                    "status": "missing",
-                    "description": (
-                        f"Provide a versioned multiple-sequence alignment for {source_id} "
-                        "and identify the record matching the immutable source control."
-                    ),
-                }
+                make_requirement(
+                    f"provide-{source_id.lower()}-pathogen-alignment",
+                    f"Provide a versioned multiple-sequence alignment for {source_id} "
+                    "and identify the record matching the immutable source control.",
+                    f"提供 {source_id} 的版本化多序列比对，并标明与不可变源对照匹配的记录。",
+                    requirement_class="required_before_ranking",
+                    required_before_stage="integrated_ranking",
+                    resolution_strategy="automated_enrichment",
+                )
             )
             continue
         if not isinstance(reference_id, str) or not alignment_path.is_file():
@@ -326,25 +329,29 @@ def _immune_analysis(
         or not host["population_description"].strip()
     ):
         requirements.append(
-            {
-                "requirement_id": "approve-host-population-and-mhc-panel",
-                "status": "missing",
-                "description": (
-                    f"Declare the target population for {config.intended_host_species} "
-                    "and approve a versioned host MHC allele panel."
-                ),
-            }
+            make_requirement(
+                "approve-host-population-and-mhc-panel",
+                f"Declare the target population for {config.intended_host_species} "
+                "and approve a versioned host MHC allele panel.",
+                f"声明 {config.intended_host_species} 的目标群体并批准版本化宿主 MHC 等位基因 panel。",
+                requirement_class="required_before_release",
+                required_before_stage="experiment_release",
+                resolution_strategy="human_policy_approval",
+            )
         )
     mhc_panel_path = resolve_spec_path(
         config, host.get("mhc_panel_path"), "host.mhc_panel_path"
     )
     if mhc_panel_path is None:
         requirements.append(
-            {
-                "requirement_id": "provide-versioned-host-mhc-panel",
-                "status": "missing",
-                "description": "Provide the versioned host MHC allele panel used by presentation analysis.",
-            }
+            make_requirement(
+                "provide-versioned-host-mhc-panel",
+                "Provide the versioned host MHC allele panel used by presentation analysis.",
+                "提供抗原呈递分析使用的版本化宿主 MHC 等位基因 panel。",
+                requirement_class="required_before_ranking",
+                required_before_stage="integrated_ranking",
+                resolution_strategy="automated_enrichment_and_human_approval",
+            )
         )
     else:
         if not mhc_panel_path.is_file():
@@ -352,11 +359,14 @@ def _immune_analysis(
         input_paths["mhc_panel"] = mhc_panel_path
     if spec.get("pathogen_panel", {}).get("status") != "approved":
         requirements.append(
-            {
-                "requirement_id": "approve-pathogen-sequence-panel",
-                "status": "missing",
-                "description": "Approve the isolate/strain panel represented by the source alignments.",
-            }
+            make_requirement(
+                "approve-pathogen-sequence-panel",
+                "Approve the isolate/strain panel represented by the source alignments.",
+                "批准源序列比对所代表的分离株或毒株 panel。",
+                requirement_class="required_before_release",
+                required_before_stage="experiment_release",
+                resolution_strategy="human_policy_approval",
+            )
         )
     adapter_states = {}
     for adapter_id in ADAPTER_IDS:
@@ -373,20 +383,36 @@ def _immune_analysis(
         )
         adapter_states[adapter_id] = state
         if state["status"] != "evaluated":
+            requirement_class = (
+                "required_before_release"
+                if adapter_id == "epitope_support"
+                else "required_before_ranking"
+            )
+            required_before_stage = (
+                "experiment_release"
+                if requirement_class == "required_before_release"
+                else "integrated_ranking"
+            )
             requirements.append(
-                {
-                    "requirement_id": f"provide-{adapter_id.replace('_', '-')}-evidence",
-                    "status": "missing",
-                    "description": f"Provide checksum-bound {adapter_id} adapter evidence.",
-                }
+                make_requirement(
+                    f"provide-{adapter_id.replace('_', '-')}-evidence",
+                    f"Provide checksum-bound {adapter_id} adapter evidence.",
+                    f"提供与候选校验和绑定的 {adapter_id} 适配器证据。",
+                    requirement_class=requirement_class,
+                    required_before_stage=required_before_stage,
+                    resolution_strategy="computational_or_experimental_evidence",
+                )
             )
     if spec.get("policy", {}).get("status") != "approved":
         requirements.append(
-            {
-                "requirement_id": "approve-immune-evidence-policy",
-                "status": "missing",
-                "description": "Approve population assumptions, coverage thresholds, and evidence use policy.",
-            }
+            make_requirement(
+                "approve-immune-evidence-policy",
+                "Approve population assumptions, coverage thresholds, and evidence use policy.",
+                "批准群体假设、覆盖阈值和证据使用策略。",
+                requirement_class="required_before_release",
+                required_before_stage="experiment_release",
+                resolution_strategy="human_policy_approval",
+            )
         )
 
     candidate_results = []
@@ -604,22 +630,49 @@ def _developability_analysis(
         raise ValueError("Developability policy has invalid window lengths")
     requirements = []
     context = spec.get("expression_context", {})
-    required_context_fields = (
-        "host", "compartment", "purification_strategy", "formulation_context"
-    )
-    context_complete = all(
-        isinstance(context.get(field), str)
-        and context[field].strip()
-        and context[field].strip().lower() != "unspecified"
-        for field in required_context_fields
-    )
-    if context.get("status") != "approved" or not context_complete:
+    def context_field_is_specified(field: str) -> bool:
+        value = context.get(field)
+        return (
+            isinstance(value, str)
+            and value.strip().lower() not in UNSPECIFIED_VALUES
+        )
+
+    if not context_field_is_specified("host"):
         requirements.append(
-            {
-                "requirement_id": "approve-expression-and-product-context",
-                "status": "missing",
-                "description": "Approve expression host, compartment, purification, and formulation context.",
-            }
+            make_requirement(
+                "declare-protein-expression-host",
+                "Declare the protein expression host before constructing the recombinant protein branch.",
+                "在构建重组蛋白分支前声明蛋白表达宿主。",
+                requirement_class="blocking_now",
+                required_before_stage="protein_product_design",
+                resolution_strategy="human_design_decision",
+            )
+        )
+    if not context_field_is_specified("compartment"):
+        requirements.append(
+            make_requirement(
+                "define-protein-expression-compartment",
+                "Enumerate or select the protein expression compartment as a product-design variable.",
+                "将蛋白表达区室作为产品设计变量进行枚举或选择。",
+                requirement_class="design_variable",
+                required_before_stage="experiment_release",
+                resolution_strategy="enumerate_or_select_design_variable",
+            )
+        )
+    context_fields_complete = all(
+        context_field_is_specified(field)
+        for field in ("host", "compartment", "purification_strategy", "formulation_context")
+    )
+    if context.get("status") != "approved" or not context_fields_complete:
+        requirements.append(
+            make_requirement(
+                "approve-expression-and-product-context",
+                "Approve the selected expression compartment, purification strategy, and formulation context before release.",
+                "在放行前批准选定的表达区室、纯化策略和制剂上下文。",
+                requirement_class="required_before_release",
+                required_before_stage="experiment_release",
+                resolution_strategy="human_design_decision",
+            )
         )
     adapter_states = {}
     for adapter_id in DEVELOPABILITY_ADAPTER_IDS:
@@ -636,20 +689,38 @@ def _developability_analysis(
         )
         adapter_states[adapter_id] = state
         if state["status"] != "evaluated":
+            if adapter_id in {"signal_peptide", "transmembrane_topology"}:
+                requirement_class = "design_variable"
+                resolution_strategy = "enumerate_or_select_design_variable"
+                deadline = "experiment_release"
+            elif adapter_id == "disorder":
+                requirement_class = "required_before_ranking"
+                resolution_strategy = "computational_or_experimental_evidence"
+                deadline = "integrated_ranking"
+            else:
+                requirement_class = "required_before_release"
+                resolution_strategy = "computational_or_experimental_evidence"
+                deadline = "experiment_release"
             requirements.append(
-                {
-                    "requirement_id": f"provide-{adapter_id.replace('_', '-')}-prediction",
-                    "status": "missing",
-                    "description": f"Provide checksum-bound {adapter_id} predictor evidence.",
-                }
+                make_requirement(
+                    f"provide-{adapter_id.replace('_', '-')}-prediction",
+                    f"Provide checksum-bound {adapter_id} predictor evidence.",
+                    f"提供与候选校验和绑定的 {adapter_id} 预测证据。",
+                    requirement_class=requirement_class,
+                    required_before_stage=deadline,
+                    resolution_strategy=resolution_strategy,
+                )
             )
     if policy.get("status") != "approved":
         requirements.append(
-            {
-                "requirement_id": "approve-developability-policy",
-                "status": "missing",
-                "description": "Calibrate and approve developability thresholds for release use.",
-            }
+            make_requirement(
+                "approve-developability-policy",
+                "Calibrate and approve developability thresholds for release use.",
+                "校准并批准用于实验放行的可开发性阈值。",
+                requirement_class="required_before_release",
+                required_before_stage="experiment_release",
+                resolution_strategy="human_policy_approval",
+            )
         )
     candidate_results = []
     for candidate in candidates:

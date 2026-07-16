@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .domain import ProjectConfig
+from .requirement_gates import REQUIREMENT_CLASSES
 
 
 UNSPECIFIED_VALUES = frozenset({"", "none", "tbd", "unknown", "unspecified"})
@@ -91,7 +92,7 @@ def reconcile_human_actions(
     for parent_action in parent_actions:
         action_id = str(parent_action["action_id"])
         if action_id in declared:
-            action = dict(declared[action_id])
+            action = {**parent_action, **declared[action_id]}
         else:
             action = dict(parent_action)
             resolution = _context_resolution(action_id, config)
@@ -118,26 +119,51 @@ def merge_requirement_actions(
     parent_actions: list[dict[str, Any]],
     requirements: list[dict[str, Any]],
     *,
-    required_before_stage: str,
-    question_zh: str,
+    required_before_stage: str | None = None,
+    question_zh: str | None = None,
 ) -> list[dict[str, Any]]:
     actions = [dict(action) for action in parent_actions]
-    known = {action["action_id"] for action in actions}
+    action_by_id = {action["action_id"]: action for action in actions}
     for requirement in requirements:
         action_id = requirement["requirement_id"]
-        if action_id in known:
+        requirement_class = requirement.get("requirement_class")
+        if requirement_class not in REQUIREMENT_CLASSES:
+            raise ValueError(
+                f"Requirement {action_id} has invalid class: {requirement_class}"
+            )
+        deadline = requirement.get("required_before_stage", required_before_stage)
+        if not isinstance(deadline, str) or not deadline:
+            raise ValueError(f"Requirement {action_id} has no deadline stage")
+        metadata = {
+            "question": requirement["description"],
+            "question_zh": requirement.get("description_zh")
+            or question_zh
+            or "补充并确认该版本化输入或证据。",
+            "required_before_stage": deadline,
+            "requirement_class": requirement_class,
+            "resolution_strategy": requirement["resolution_strategy"],
+            "exploratory_progress_allowed": requirement[
+                "exploratory_progress_allowed"
+            ],
+        }
+        if action_id in action_by_id:
+            action_by_id[action_id].update(
+                {
+                    **metadata,
+                    "status": "open",
+                    "resolution": "",
+                    "resolution_zh": "",
+                }
+            )
             continue
-        actions.append(
-            {
-                "action_id": action_id,
-                "question": requirement["description"],
-                "question_zh": question_zh,
-                "required_before_stage": required_before_stage,
-                "status": "open",
-                "owner": "unassigned",
-                "resolution": "",
-                "resolution_zh": "",
-            }
-        )
-        known.add(action_id)
+        action = {
+            "action_id": action_id,
+            **metadata,
+            "status": "open",
+            "owner": "unassigned",
+            "resolution": "",
+            "resolution_zh": "",
+        }
+        actions.append(action)
+        action_by_id[action_id] = action
     return actions

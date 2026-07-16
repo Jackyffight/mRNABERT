@@ -20,6 +20,7 @@ from .continuation_state import (
     reconcile_human_actions,
 )
 from .post_structure_assessment import _developability_analysis, _immune_analysis
+from .requirement_gates import requirement_class_counts
 from .structure_metrics import parse_ca_pdb
 from .workflow import action_due_for_handoff
 
@@ -389,19 +390,16 @@ def verify_post_structure_run(
         immune_expected = merge_requirement_actions(
             parent_actions,
             immune_recomputed["requirements"],
-            required_before_stage="integrated_ranking",
-            question_zh="补充并确认该版本化输入或外部预测结果；在缺失期间保持未评估状态。",
         )
         developability_expected = merge_requirement_actions(
             parent_actions,
             developability_recomputed["requirements"],
-            required_before_stage="protein_product_design",
-            question_zh="补充并确认该版本化输入或外部预测结果；在缺失期间保持未评估状态。",
         )
 
         def action_documents_match(
             node: Path,
             expected: list[dict[str, Any]],
+            requirements: list[dict[str, Any]],
             *,
             current_stage: str,
             to_stages: tuple[str, ...],
@@ -412,22 +410,72 @@ def verify_post_structure_run(
             open_actions = [
                 action for action in expected if action["status"] == "open"
             ]
+            blocking_by_stage = {
+                target_stage: [
+                    action["action_id"]
+                    for action in open_actions
+                    if action_due_for_handoff(
+                        action["required_before_stage"],
+                        current_stage=current_stage,
+                        to_stages=(target_stage,),
+                    )
+                ]
+                for target_stage in to_stages
+            }
+            blocking_ids = {
+                action_id
+                for action_ids in blocking_by_stage.values()
+                for action_id in action_ids
+            }
             due_actions = [
                 action
                 for action in open_actions
-                if action_due_for_handoff(
-                    action["required_before_stage"],
-                    current_stage=current_stage,
-                    to_stages=to_stages,
-                )
+                if action["action_id"] in blocking_ids
             ]
+            execution_blocking_actions = [
+                action
+                for action in due_actions
+                if action.get("requirement_class") == "blocking_now"
+            ]
+            execution_blocking_by_stage = {
+                stage_id: [
+                    action_id
+                    for action_id in action_ids
+                    if next(
+                        action
+                        for action in open_actions
+                        if action["action_id"] == action_id
+                    ).get("requirement_class")
+                    == "blocking_now"
+                ]
+                for stage_id, action_ids in blocking_by_stage.items()
+            }
+            exploratory_progress_allowed = not execution_blocking_actions
             return (
                 human_actions.get("actions") == expected
                 and human_actions.get("open_count") == len(open_actions)
                 and summary.get("open_human_actions") == len(open_actions)
                 and summary.get("due_human_actions") == len(due_actions)
+                and summary.get("requirement_class_counts")
+                == requirement_class_counts(requirements)
+                and summary.get("exploratory_progress_allowed")
+                == exploratory_progress_allowed
                 and handoff.get("blocking_action_ids")
                 == [action["action_id"] for action in due_actions]
+                and handoff.get("blocking_action_ids_by_stage")
+                == blocking_by_stage
+                and handoff.get("execution_blocking_action_ids")
+                == [action["action_id"] for action in execution_blocking_actions]
+                and handoff.get("execution_blocking_action_ids_by_stage")
+                == execution_blocking_by_stage
+                and handoff.get("exploratory_progress_allowed")
+                == exploratory_progress_allowed
+                and handoff.get("execution_readiness")
+                == (
+                    "exploratory_ready"
+                    if exploratory_progress_allowed
+                    else "blocked"
+                )
                 and handoff.get("carried_human_actions") == open_actions
                 and handoff.get("formal_readiness")
                 == ("needs_human_input" if due_actions else "ready")
@@ -436,16 +484,17 @@ def verify_post_structure_run(
         actions_reconciled = action_documents_match(
             immune_node,
             immune_expected,
+            immune_recomputed["requirements"],
             current_stage=IMMUNE_STAGE_ID,
             to_stages=("integrated_ranking",),
         ) and action_documents_match(
             developability_node,
             developability_expected,
+            developability_recomputed["requirements"],
             current_stage=DEVELOPABILITY_STAGE_ID,
             to_stages=(
                 "protein_product_design",
                 "mrna_product_design",
-                "integrated_ranking",
             ),
         )
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):

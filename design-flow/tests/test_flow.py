@@ -1935,12 +1935,57 @@ class CandidateStageEndToEndTests(unittest.TestCase):
             self.assertEqual(analysis.developability_result["status"], "needs_data")
             self.assertTrue(analysis.immune_result["requirements"])
             self.assertTrue(analysis.developability_result["requirements"])
+            requirements = (
+                analysis.immune_result["requirements"]
+                + analysis.developability_result["requirements"]
+            )
+            self.assertTrue(
+                all(
+                    {
+                        "requirement_class",
+                        "required_before_stage",
+                        "resolution_strategy",
+                        "exploratory_progress_allowed",
+                    }
+                    <= set(requirement)
+                    for requirement in requirements
+                )
+            )
+            self.assertTrue(
+                {
+                    "required_before_ranking",
+                    "required_before_release",
+                    "design_variable",
+                }
+                <= {requirement["requirement_class"] for requirement in requirements}
+            )
+            self.assertNotIn(
+                "blocking_now",
+                {requirement["requirement_class"] for requirement in requirements},
+            )
             self.assertTrue(
                 all(
                     candidate["categories"]["surface_accessibility_proxy"]["status"]
                     == "evaluated"
                     for candidate in analysis.immune_result["candidates"]
                 )
+            )
+            developability_handoff = json.loads(
+                (
+                    continuation
+                    / "nodes/developability_assessment/handoff.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                developability_handoff["execution_blocking_action_ids"], []
+            )
+            self.assertTrue(developability_handoff["exploratory_progress_allowed"])
+            self.assertEqual(
+                developability_handoff["execution_blocking_action_ids_by_stage"],
+                {
+                    "mrna_product_design": [],
+                    "protein_product_design": [],
+                },
             )
             verification = verify_run(continuation)
             self.assertEqual(verification["status"], "pass", verification["errors"])
@@ -1977,6 +2022,16 @@ class CandidateStageEndToEndTests(unittest.TestCase):
                     "status": "resolved",
                     "owner": "project_owner",
                     "resolution": "The current versioned project uses CHO cells.",
+                }
+            )
+            config["human_actions"].append(
+                {
+                    "action_id": "provide-a-pathogen-alignment",
+                    "question": "Provide the missing A alignment.",
+                    "required_before_stage": "experiment_release",
+                    "status": "resolved",
+                    "owner": "project_owner",
+                    "resolution": "Declared resolved without supplying evidence.",
                 }
             )
             config_path.write_text(
@@ -2024,6 +2079,26 @@ class CandidateStageEndToEndTests(unittest.TestCase):
                 action_by_id["select-protein-expression-host"]["status"],
                 "resolved",
             )
+            self.assertEqual(
+                action_by_id["provide-a-pathogen-alignment"]["status"],
+                "open",
+            )
+            self.assertEqual(
+                action_by_id["provide-a-pathogen-alignment"][
+                    "requirement_class"
+                ],
+                "required_before_ranking",
+            )
+            self.assertEqual(
+                action_by_id["provide-a-pathogen-alignment"][
+                    "required_before_stage"
+                ],
+                "integrated_ranking",
+            )
+            self.assertEqual(
+                action_by_id["provide-a-pathogen-alignment"]["resolution"],
+                "",
+            )
             blocking = json.loads(
                 (
                     continuation
@@ -2032,6 +2107,65 @@ class CandidateStageEndToEndTests(unittest.TestCase):
             )["blocking_action_ids"]
             self.assertNotIn("project-review", blocking)
             self.assertNotIn("select-protein-expression-host", blocking)
+            verification = verify_run(continuation)
+            self.assertEqual(verification["status"], "pass", verification["errors"])
+
+    def test_stage5_missing_expression_host_blocks_only_protein_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, _ = self._write_stage2_project(root)
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            config["context"]["protein_expression_host"] = "unspecified"
+            config_path.write_text(
+                json.dumps(config, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            source_run = write_run_artifacts(
+                analyze_project(config_path),
+                now=datetime(2026, 7, 15, 7, 0, tzinfo=timezone.utc),
+            )
+            structure_run = self._write_verified_stage3_run(
+                root, config_path, source_run, hour=8
+            )
+            initialize_assessment_specifications(
+                config_path, source_run_dir=structure_run
+            )
+            analysis = analyze_post_structure_stages(
+                config_path, source_run_dir=structure_run
+            )
+            host_requirement = next(
+                requirement
+                for requirement in analysis.developability_result["requirements"]
+                if requirement["requirement_id"]
+                == "declare-protein-expression-host"
+            )
+            self.assertEqual(host_requirement["requirement_class"], "blocking_now")
+            self.assertEqual(
+                host_requirement["required_before_stage"],
+                "protein_product_design",
+            )
+            self.assertFalse(host_requirement["exploratory_progress_allowed"])
+
+            continuation = write_post_structure_run(
+                analysis,
+                now=datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc),
+            )
+            handoff = json.loads(
+                (
+                    continuation
+                    / "nodes/developability_assessment/handoff.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                handoff["execution_blocking_action_ids_by_stage"],
+                {
+                    "mrna_product_design": [],
+                    "protein_product_design": [
+                        "declare-protein-expression-host"
+                    ],
+                },
+            )
+            self.assertFalse(handoff["exploratory_progress_allowed"])
             verification = verify_run(continuation)
             self.assertEqual(verification["status"], "pass", verification["errors"])
 
@@ -2309,6 +2443,33 @@ class CandidateStageEndToEndTests(unittest.TestCase):
             self.assertEqual(product_analysis.mrna_result["status"], "needs_data")
             self.assertEqual(ranking_analysis.result["status"], "needs_data")
             self.assertEqual(ranking_analysis.result["formal_portfolio"], [])
+            protein_handoff = json.loads(
+                (
+                    stage6_run
+                    / "nodes/protein_product_design/handoff.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertTrue(
+                any(
+                    action_id.startswith("provide-")
+                    and action_id.endswith("-pathogen-alignment")
+                    for action_id in protein_handoff["blocking_action_ids"]
+                ),
+                protein_handoff["blocking_action_ids"],
+            )
+            self.assertNotIn(
+                "approve-host-population-and-mhc-panel",
+                protein_handoff["blocking_action_ids"],
+            )
+            ranking_handoff = json.loads(
+                (
+                    stage7_run / "nodes/integrated_ranking/handoff.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertIn(
+                "approve-host-population-and-mhc-panel",
+                ranking_handoff["blocking_action_ids"],
+            )
             self.assertTrue(
                 all(
                     product["translation_verified"]

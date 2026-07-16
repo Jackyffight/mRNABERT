@@ -33,6 +33,16 @@ The word "blocking" is split into three meanings:
 这里的“阻塞”分为三类：是否连探索性计算都不能做、是否禁止正式放行下一阶段、
 以及是否只隔离受影响的候选。三者不能混为一谈。
 
+Since pipeline version 0.17, generated data requirements additionally use four
+deadline classes: `blocking_now`, `design_variable`, `required_before_ranking`, and
+`required_before_release`. This taxonomy answers **when a missing item is due**.
+The three meanings above answer **what scope is blocked**. They are orthogonal and
+both are emitted in handoff artifacts.
+
+从 0.17 版开始，系统生成的数据要求还会按到期时点分为“当前阻塞、设计变量、排名前
+补齐、放行前补齐”四类。四类回答“何时必须补齐”，上面的三种语义回答“阻塞范围
+是什么”；两个维度相互独立，并同时写入 handoff 产物。
+
 ## Decision Summary / 决策摘要
 
 | Action | Current conclusion | What the system can infer | Minimum human decision |

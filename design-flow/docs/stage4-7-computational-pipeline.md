@@ -1,6 +1,6 @@
 # Stage 4-7 Computational Pipeline
 
-Status: implemented exploratory execution path, version `0.16.0`
+Status: implemented exploratory execution path, version `0.17.0`
 
 This document defines the executable path after a verified Stage 3 structure run.
 Under workflow v2, these evaluators also emit structured next-round redesign
@@ -47,6 +47,35 @@ through checksum-bound JSON adapters. An LLM may review the resulting evidence i
 separate audit plane, but it does not create official node scores, change status, or
 release candidates. Human approval remains required for biological assumptions,
 thresholds, exact product sequences, and experiment release.
+
+## Requirement Gates
+
+`needs_data` describes evidence completeness; it is not an instruction to stop all
+work. Every Stage 4/5 requirement therefore carries four independent,
+machine-readable fields: `requirement_class`, `required_before_stage`,
+`resolution_strategy`, and `exploratory_progress_allowed`.
+
+| Class | Meaning | Default continuation behavior |
+|---|---|---|
+| `blocking_now` | A required identity or branch-defining input is absent, so the affected next branch cannot be constructed correctly. | Block only the affected immediate branch. |
+| `design_variable` | The missing choice belongs in the candidate/product design space rather than being guessed as one fixed answer. | Continue exploratory enumeration; select and approve before release. |
+| `required_before_ranking` | Designs can still be generated and assessed, but the missing evidence is required for a formal integrated ranking. | Carry through Stage 6 and block formal Stage 7 handoff. |
+| `required_before_release` | The gap does not invalidate exploratory design or technical ranking, but must be closed before an experiment package is released. | Carry through ranking and block experiment release. |
+
+The handoff records preserve two separate blocker views:
+
+- `blocking_action_ids` and `blocking_action_ids_by_stage` contain all overdue or
+  target-stage human actions that prevent a **formal** handoff;
+- `execution_blocking_action_ids` and
+  `execution_blocking_action_ids_by_stage` contain only `blocking_now`
+  requirements that prevent the affected exploratory branch from proceeding.
+
+`exploratory_progress_allowed` is false only when an execution blocker is due. The
+HTML reports render the class, deadline, resolution path, and continuation state for
+each requirement. Project declarations can resolve an action without deleting this
+system-owned gate metadata only after the corresponding specification or evidence
+removes the deterministic requirement. Marking an action `resolved` while its input
+is still absent reopens it during recomputation.
 
 ## Execution Route
 
@@ -99,8 +128,12 @@ The 2026-07-15 continuation from Stage 3 completed for the complete active set o
   as supported under the pinned predictor thresholds.
 - TMbed found 2 signal-peptide regions and 3 transmembrane regions; metapredict found
   290 disorder regions.
-- Stage 4 remained `needs_data` with 8 explicit requirements. Stage 5 remained
-  `needs_data` with 4 explicit requirements.
+- The version-0.17 rerun remained `needs_data`, but both nodes were explicitly
+  `exploratory_ready` with zero execution blockers. Stage 4 emitted 8 requirements:
+  4 required before ranking and 4 required before experiment release. Stage 5
+  emitted 5 requirements: 1 expression-compartment design variable and 4 required
+  before experiment release. The former combined context requirement is now split
+  by decision type without changing scientific evidence.
 
 These counts validate execution and evidence plumbing, not cattle population
 coverage, immunogenicity, secretion, expression yield, or product release. In
@@ -341,10 +374,15 @@ the implemented scope.
 - `evaluated`: all inputs required by the node specification were supplied and
   validated; this still does not mean experimentally validated or released.
 - `needs_data`: one or more declared datasets, model results, contexts, or policies
-  are absent, or an upstream dependency remains `needs_data`.
+  are absent, or an upstream dependency remains `needs_data`. This status alone
+  does not block exploratory continuation.
 - `needs_human_input`: deterministic calculation is complete but formal decisions
   remain open.
 - `not_evaluated`: a specific category has no valid supplied evidence.
+
+Formal handoff readiness and exploratory execution readiness are reported
+separately. A node may therefore be `needs_data` and still be
+`exploratory_ready`.
 
 No missing evidence is converted into a favorable score.
 

@@ -24,6 +24,7 @@ from .continuation_state import (
 from .design_loop import redesign_request_document, request_id
 from .post_structure_assessment import PostStructureAnalysis
 from .post_structure_html import render_developability_report, render_immune_report
+from .requirement_gates import requirement_class_counts
 from .verification import ARTIFACT_INDEX_FILENAME, build_artifact_index, sha256_file, verify_run
 from .workflow import (
     STAGE_BY_ID,
@@ -85,6 +86,63 @@ def _design_round_id(analysis: PostStructureAnalysis) -> str:
     return round_id
 
 
+def _blocking_actions_by_stage(
+    open_actions: list[dict[str, Any]],
+    *,
+    current_stage: str,
+    target_stages: tuple[str, ...],
+) -> dict[str, list[str]]:
+    return {
+        target_stage: [
+            action["action_id"]
+            for action in open_actions
+            if action_due_for_handoff(
+                action["required_before_stage"],
+                current_stage=current_stage,
+                to_stages=(target_stage,),
+            )
+        ]
+        for target_stage in target_stages
+    }
+
+
+def _due_actions(
+    open_actions: list[dict[str, Any]],
+    blocking_by_stage: dict[str, list[str]],
+) -> list[dict[str, Any]]:
+    blocking_ids = {
+        action_id
+        for action_ids in blocking_by_stage.values()
+        for action_id in action_ids
+    }
+    return [action for action in open_actions if action["action_id"] in blocking_ids]
+
+
+def _execution_blocking_actions(
+    due_actions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        action
+        for action in due_actions
+        if action.get("requirement_class") == "blocking_now"
+    ]
+
+
+def _execution_blocking_by_stage(
+    open_actions: list[dict[str, Any]],
+    blocking_by_stage: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    action_by_id = {action["action_id"]: action for action in open_actions}
+    return {
+        stage_id: [
+            action_id
+            for action_id in action_ids
+            if action_by_id[action_id].get("requirement_class") == "blocking_now"
+        ]
+        for stage_id, action_ids in blocking_by_stage.items()
+    }
+
+
 def _immune_bundle(
     analysis: PostStructureAnalysis,
     run_id: str,
@@ -100,19 +158,20 @@ def _immune_bundle(
     actions = merge_requirement_actions(
         _parent_actions(analysis),
         result["requirements"],
-        required_before_stage="integrated_ranking",
-        question_zh="补充并确认该版本化输入或外部预测结果；在缺失期间保持未评估状态。",
     )
     open_actions = [action for action in actions if action["status"] == "open"]
-    due_actions = [
-        action
-        for action in open_actions
-        if action_due_for_handoff(
-            action["required_before_stage"],
-            current_stage=IMMUNE_STAGE_ID,
-            to_stages=("integrated_ranking",),
-        )
-    ]
+    target_stages = ("integrated_ranking",)
+    blocking_by_stage = _blocking_actions_by_stage(
+        open_actions,
+        current_stage=IMMUNE_STAGE_ID,
+        target_stages=target_stages,
+    )
+    due_actions = _due_actions(open_actions, blocking_by_stage)
+    execution_blocking_actions = _execution_blocking_actions(due_actions)
+    execution_blocking_by_stage = _execution_blocking_by_stage(
+        open_actions, blocking_by_stage
+    )
+    exploratory_progress_allowed = not execution_blocking_actions
     summary = {
         "schema_version": 1,
         "run_id": run_id,
@@ -132,8 +191,10 @@ def _immune_bundle(
             state["status"] == "evaluated" for state in result["adapter_states"].values()
         ),
         "missing_requirement_count": len(result["requirements"]),
+        "requirement_class_counts": requirement_class_counts(result["requirements"]),
         "open_human_actions": len(open_actions),
         "due_human_actions": len(due_actions),
+        "exploratory_progress_allowed": exploratory_progress_allowed,
     }
     input_audit = {
         "stage_id": IMMUNE_STAGE_ID,
@@ -197,6 +258,15 @@ def _immune_bundle(
         "readiness": "needs_data" if result["requirements"] else "exploratory_ready",
         "formal_readiness": "needs_human_input" if due_actions else "ready",
         "blocking_action_ids": [action["action_id"] for action in due_actions],
+        "blocking_action_ids_by_stage": blocking_by_stage,
+        "execution_blocking_action_ids": [
+            action["action_id"] for action in execution_blocking_actions
+        ],
+        "execution_blocking_action_ids_by_stage": execution_blocking_by_stage,
+        "exploratory_progress_allowed": exploratory_progress_allowed,
+        "execution_readiness": (
+            "exploratory_ready" if exploratory_progress_allowed else "blocked"
+        ),
         "carried_human_actions": open_actions,
         "carried_forward": {
             "candidate_ids": [item["candidate_id"] for item in result["candidates"]],
@@ -260,24 +330,23 @@ def _developability_bundle(
     actions = merge_requirement_actions(
         _parent_actions(analysis),
         result["requirements"],
-        required_before_stage="protein_product_design",
-        question_zh="补充并确认该版本化输入或外部预测结果；在缺失期间保持未评估状态。",
     )
     open_actions = [action for action in actions if action["status"] == "open"]
     target_stages = (
         "protein_product_design",
         "mrna_product_design",
-        "integrated_ranking",
     )
-    due_actions = [
-        action
-        for action in open_actions
-        if action_due_for_handoff(
-            action["required_before_stage"],
-            current_stage=DEVELOPABILITY_STAGE_ID,
-            to_stages=target_stages,
-        )
-    ]
+    blocking_by_stage = _blocking_actions_by_stage(
+        open_actions,
+        current_stage=DEVELOPABILITY_STAGE_ID,
+        target_stages=target_stages,
+    )
+    due_actions = _due_actions(open_actions, blocking_by_stage)
+    execution_blocking_actions = _execution_blocking_actions(due_actions)
+    execution_blocking_by_stage = _execution_blocking_by_stage(
+        open_actions, blocking_by_stage
+    )
+    exploratory_progress_allowed = not execution_blocking_actions
     review_count = sum(
         item["review_liability_count"] for item in result["candidates"]
     )
@@ -300,8 +369,10 @@ def _developability_bundle(
             state["status"] == "evaluated" for state in result["adapter_states"].values()
         ),
         "missing_requirement_count": len(result["requirements"]),
+        "requirement_class_counts": requirement_class_counts(result["requirements"]),
         "open_human_actions": len(open_actions),
         "due_human_actions": len(due_actions),
+        "exploratory_progress_allowed": exploratory_progress_allowed,
     }
     relevant_adapter_names = {
         f"adapter:{adapter_id}" for adapter_id in result["adapter_states"]
@@ -365,6 +436,15 @@ def _developability_bundle(
         "readiness": "intrinsic_evidence_ready",
         "formal_readiness": "needs_human_input" if due_actions else "ready",
         "blocking_action_ids": [action["action_id"] for action in due_actions],
+        "blocking_action_ids_by_stage": blocking_by_stage,
+        "execution_blocking_action_ids": [
+            action["action_id"] for action in execution_blocking_actions
+        ],
+        "execution_blocking_action_ids_by_stage": execution_blocking_by_stage,
+        "exploratory_progress_allowed": exploratory_progress_allowed,
+        "execution_readiness": (
+            "exploratory_ready" if exploratory_progress_allowed else "blocked"
+        ),
         "carried_human_actions": open_actions,
         "carried_forward": {
             "candidate_ids": [item["candidate_id"] for item in result["candidates"]],
@@ -538,7 +618,16 @@ def write_post_structure_run(
             ],
             detail_csv="immune_requirements.csv",
             detail_rows=analysis.immune_result["requirements"],
-            detail_fields=["requirement_id", "status", "description"],
+            detail_fields=[
+                "requirement_id",
+                "status",
+                "requirement_class",
+                "required_before_stage",
+                "resolution_strategy",
+                "exploratory_progress_allowed",
+                "description",
+                "description_zh",
+            ],
         )
         _write_node(
             developability_node,
