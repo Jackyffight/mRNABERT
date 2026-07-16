@@ -12,6 +12,10 @@ mostly-planned system that turns a target protein into manufacturable, constrain
 satisfying mRNA. What is built and what is planned is stated plainly below — do not
 read the roadmap as delivered capability.
 
+The audited Internal-600k vs public mRNABERT comparison, Evo 2 probe status, and
+reproducible Python figure are documented in
+[`docs/reports/model-comparison-20260716.md`](docs/reports/model-comparison-20260716.md).
+
 ---
 
 ## Project status (read this first)

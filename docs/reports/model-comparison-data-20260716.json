@@ -1,0 +1,276 @@
+{
+  "as_of": "2026-07-16",
+  "models": [
+    {
+      "id": "internal-600k",
+      "label": "Internal 600k",
+      "parameter_count": 86493002,
+      "role": "Scratch-trained codon-aware encoder"
+    },
+    {
+      "id": "public-mrnabert",
+      "label": "Public mRNABERT",
+      "parameter_count": 113981258,
+      "role": "Pinned YYLY66/mRNABERT baseline",
+      "weight_bytes": 455973118
+    },
+    {
+      "id": "evo2-7b",
+      "label": "Evo 2 7B",
+      "role": "Pinned frozen genome-model baseline",
+      "weight_bytes": 13766621200
+    },
+    {
+      "id": "random-init",
+      "label": "Random initialization",
+      "parameter_count": 86493002,
+      "role": "Same-architecture negative control"
+    }
+  ],
+  "mrfp": {
+    "benchmark": "Public mRFP synonymous-codon expression regression",
+    "clean_split_counts": {
+      "dev": 219,
+      "test": 219,
+      "train": 1018
+    },
+    "full_finetune_lr_sweep": [
+      {
+        "learning_rate": 0.00002,
+        "model_id": "internal-600k",
+        "test": {
+          "mse_mean": 0.1358,
+          "mse_sd": 0.0285,
+          "pearson_mean": 0.8971,
+          "pearson_sd": 0.0151,
+          "r2_mean": 0.7559,
+          "r2_sd": 0.0513,
+          "spearman_mean": 0.8645,
+          "spearman_sd": 0.005
+        }
+      },
+      {
+        "learning_rate": 0.00005,
+        "model_id": "internal-600k",
+        "test": {
+          "mse_mean": 0.1332,
+          "mse_sd": 0.0079,
+          "pearson_mean": 0.8973,
+          "pearson_sd": 0.0041,
+          "r2_mean": 0.7605,
+          "r2_sd": 0.0142,
+          "spearman_mean": 0.8648,
+          "spearman_sd": 0.0073
+        }
+      },
+      {
+        "learning_rate": 0.0001,
+        "model_id": "internal-600k",
+        "test": {
+          "mse_mean": 0.1285,
+          "mse_sd": 0.0114,
+          "pearson_mean": 0.8882,
+          "pearson_sd": 0.014,
+          "r2_mean": 0.769,
+          "r2_sd": 0.0204,
+          "spearman_mean": 0.8372,
+          "spearman_sd": 0.0195
+        }
+      },
+      {
+        "learning_rate": 0.00002,
+        "model_id": "public-mrnabert",
+        "test": {
+          "mse_mean": 0.1082,
+          "mse_sd": 0.0155,
+          "pearson_mean": 0.9022,
+          "pearson_sd": 0.015,
+          "r2_mean": 0.8054,
+          "r2_sd": 0.0279,
+          "spearman_mean": 0.8703,
+          "spearman_sd": 0.0122
+        }
+      },
+      {
+        "learning_rate": 0.00005,
+        "model_id": "public-mrnabert",
+        "test": {
+          "mse_mean": 0.1162,
+          "mse_sd": 0.0144,
+          "pearson_mean": 0.8991,
+          "pearson_sd": 0.0106,
+          "r2_mean": 0.7911,
+          "r2_sd": 0.0258,
+          "spearman_mean": 0.8652,
+          "spearman_sd": 0.0066
+        }
+      },
+      {
+        "learning_rate": 0.0001,
+        "model_id": "public-mrnabert",
+        "test": {
+          "mse_mean": 0.4098,
+          "mse_sd": 0.2526,
+          "pearson_mean": 0.4389,
+          "pearson_sd": 0.4281,
+          "r2_mean": 0.2634,
+          "r2_sd": 0.454,
+          "spearman_mean": 0.5238,
+          "spearman_sd": 0.3647
+        }
+      },
+      {
+        "learning_rate": 0.0001,
+        "model_id": "random-init",
+        "test": {
+          "mse_mean": 7.7046,
+          "mse_sd": 1.713,
+          "pearson_mean": null,
+          "pearson_sd": null,
+          "r2_mean": -12.8498,
+          "r2_sd": 3.0793,
+          "spearman_mean": null,
+          "spearman_sd": null
+        }
+      }
+    ],
+    "frozen_encoder_head": [
+      {
+        "dev_spearman_mean": 0.5541,
+        "dev_spearman_sd": 0.0018,
+        "learning_rate": 0.001,
+        "model_id": "internal-600k",
+        "test": {
+          "mse_mean": 0.3949,
+          "mse_sd": 0.0026,
+          "pearson_mean": 0.5614,
+          "pearson_sd": 0.003,
+          "r2_mean": 0.2902,
+          "r2_sd": 0.0047,
+          "spearman_mean": 0.627,
+          "spearman_sd": 0.003
+        }
+      },
+      {
+        "dev_spearman_mean": 0.6714,
+        "dev_spearman_sd": 0.003,
+        "learning_rate": 0.001,
+        "model_id": "public-mrnabert",
+        "test": {
+          "mse_mean": 0.3098,
+          "mse_sd": 0.0142,
+          "pearson_mean": 0.6861,
+          "pearson_sd": 0.004,
+          "r2_mean": 0.4431,
+          "r2_sd": 0.0256,
+          "spearman_mean": 0.726,
+          "spearman_sd": 0.0073
+        }
+      }
+    ],
+    "presentation_selection": {
+      "internal-600k": 0.00005,
+      "public-mrnabert": 0.00002,
+      "warning": "Exploratory best observed lower-LR test values; test metrics were inspected across the LR grid"
+    },
+    "seeds": [13, 42, 73],
+    "shared_ridge_three_model": {
+      "expected_models": ["internal-600k", "public-mrnabert", "evo2-7b"],
+      "expected_remote_result": "/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_runs/downstream/mRFP/three-model-frozen-ridge/results/internal-600000-vs-public-vs-evo2-7b/results.json",
+      "protocol": "Frozen mean-pooled L2 embeddings, train-only PCA-256 and scaling, shared Ridge head, alpha selected by dev Spearman",
+      "status": "pending-result-artifact"
+    },
+    "token_length": 226
+  },
+  "pipeline_evidence": {
+    "esmfold2_fast_native_agreement": {
+      "ca_lddt_mean": 0.931915464,
+      "ca_rmsd_angstrom_mean": 2.088404004,
+      "ca_tm_full_length_mean": 0.853277133,
+      "ca_tm_resolved_mean": 0.934164993,
+      "records": 40,
+      "status": "passed",
+      "summary_path": "/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/MPNN/ProteinMPNN/runs/benchmarks/esmfold2-fast-pdb-valid-7136a4ecae1956027aa6-full-l3-s50-seed42/evaluations/native-structure-agreement-v1/summary.json"
+    },
+    "proteinmpnn_paired_refold": {
+      "comparisons": 16,
+      "stage2a_minus_official": {
+        "experimental_ca_lddt": 0.0031,
+        "experimental_ca_rmsd_angstrom": 0.7065,
+        "experimental_ca_tm_full_length": -0.0495,
+        "experimental_ca_tm_resolved": -0.0499
+      },
+      "status": "workflow-passed-model-not-qualified"
+    },
+    "proteinmpnn_stage1_v1_test": {
+      "accuracy_delta": 0.0019626153,
+      "nll_delta": -0.0067507231,
+      "perplexity_delta": -0.0322500025,
+      "records": 461,
+      "status": "improved"
+    },
+    "proteinmpnn_stage2a_test": {
+      "accuracy_delta": 0.0061677632,
+      "nll_delta": -0.0092294844,
+      "perplexity_delta": -0.043670419,
+      "records": 13,
+      "status": "improved-small-test"
+    },
+    "proteinmpnn_stage2a_v1_replay_test": {
+      "accuracy_delta": 0.001400738,
+      "nll_delta": -0.0043045695,
+      "perplexity_delta": -0.0204506947,
+      "records": 461,
+      "status": "improved"
+    }
+  },
+  "proxy_mlm": {
+    "evaluation_records": 100000,
+    "mask_seed": 42,
+    "results": [
+      {
+        "eval_loss": 2.294945,
+        "model_id": "internal-600k",
+        "perplexity": 9.923893,
+        "samples_per_second": 135.638
+      },
+      {
+        "eval_loss": 2.046072,
+        "model_id": "public-mrnabert",
+        "perplexity": 7.737445,
+        "samples_per_second": 124.683
+      }
+    ],
+    "status": "diagnostic-not-clean-holdout"
+  },
+  "schema": "mrnabert.model-comparison-evidence.v1",
+  "sources": [
+    "docs/reports/baseline-experiment-20260711.md",
+    "docs/reports/mrnabert-pretraining-run-20260707.md",
+    "../ProteinMPNN/MODEL_CARD_2026_STAGE2A.md",
+    "../ProteinMPNN/protein_mrna_pipeline/docs/ESMFOLD2_FAST_RUNBOOK.md",
+    "../ProteinMPNN/protein_mrna_pipeline/docs/PROTEINMPNN_REFOLD_PILOT.md"
+  ],
+  "training_checkpoint_selection": [
+    {
+      "dev_spearman_mean": 0.8699,
+      "dev_spearman_sd": 0.0048,
+      "model_id": "internal-600k",
+      "proxy_mlm_loss": 2.294945,
+      "test_mse_mean": 0.1332,
+      "test_r2_mean": 0.7605,
+      "test_spearman_mean": 0.8648,
+      "test_spearman_sd": 0.0073
+    },
+    {
+      "dev_spearman_mean": 0.865,
+      "dev_spearman_sd": 0.0049,
+      "model_id": "internal-700k",
+      "proxy_mlm_loss": 2.284286,
+      "test_mse_mean": 0.1396,
+      "test_r2_mean": 0.7491,
+      "test_spearman_mean": 0.8504,
+      "test_spearman_sd": 0.0147
+    }
+  ]
+}
