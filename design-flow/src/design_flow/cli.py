@@ -22,6 +22,11 @@ from .assessment_specs import (
 )
 from .domain import ProjectAnalysis
 from .config import load_project_config
+from .codon_usage import (
+    SELECTION_METHODS,
+    configure_mrna_codon_generation,
+    write_codon_usage,
+)
 from .design_loop import default_design_documents
 from .evo2_adapter import import_evo2_results, prepare_evo2_job
 from .netmhc_adapter import prepare_stage4_mhc_evidence
@@ -287,6 +292,33 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="verified combined Stage 4/5 run; defaults to the project's latest run",
     )
+    codon_usage_parser = subparsers.add_parser(
+        "build-codon-usage",
+        help="derive an audited Stage 6 codon table from a versioned RefSeq CDS FASTA",
+    )
+    codon_usage_parser.add_argument("source_fasta", type=Path)
+    codon_usage_parser.add_argument("output_json", type=Path)
+    codon_usage_parser.add_argument("--audit-output", type=Path, required=True)
+    codon_usage_parser.add_argument("--species", required=True)
+    codon_usage_parser.add_argument("--taxon-id", type=int, required=True)
+    codon_usage_parser.add_argument("--assembly", required=True)
+    codon_usage_parser.add_argument("--annotation-release", required=True)
+    codon_usage_parser.add_argument("--source-url", required=True)
+    codon_usage_parser.add_argument("--expected-md5", required=True)
+    codon_usage_parser.add_argument(
+        "--selection-method",
+        choices=sorted(SELECTION_METHODS),
+        default="longest-valid-cds-per-gene",
+    )
+    configure_codon_parser = subparsers.add_parser(
+        "configure-stage6-mrna-codon-generation",
+        help="bind a target-species codon table and enable exploratory Stage 6 CDS generation",
+    )
+    configure_codon_parser.add_argument("project_config", type=Path)
+    configure_codon_parser.add_argument("--codon-table", type=Path, required=True)
+    configure_codon_parser.add_argument("--designs-per-candidate", type=int, default=4)
+    configure_codon_parser.add_argument("--search-multiplier", type=int, default=32)
+    configure_codon_parser.add_argument("--seed", type=int, default=42)
     prepare_stage6_evo2_parser = subparsers.add_parser(
         "prepare-stage6-evo2",
         help="write a checksum-bound Evo 2 scoring job from a verified Stage 6 run",
@@ -313,6 +345,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--from-run",
         type=Path,
         help="verified combined Stage 6 run; defaults to the project's latest run",
+    )
+    init_stage7_parser.add_argument(
+        "--refresh-candidate-set",
+        action="store_true",
+        help="archive a stale Stage 7 specification and migrate its policy to the current candidate set",
     )
     run_stage7_parser = subparsers.add_parser(
         "run-stage7",
@@ -792,6 +829,48 @@ def main(argv: list[str] | None = None) -> int:
             print(f"mRNA report: {mrna_node / 'report.html'}")
             return 0
 
+        if args.command == "build-codon-usage":
+            built = write_codon_usage(
+                args.source_fasta,
+                args.output_json,
+                args.audit_output,
+                species=args.species,
+                taxon_id=args.taxon_id,
+                assembly=args.assembly,
+                annotation_release=args.annotation_release,
+                source_url=args.source_url,
+                expected_md5=args.expected_md5,
+                selection_method=args.selection_method,
+            )
+            print(
+                "Codon usage table: "
+                f"records={built['selected_cds_records']} "
+                f"sense_codons={built['selected_sense_codons']} "
+                f"sha256={built['codon_table_sha256']}"
+            )
+            print(f"Table: {built['output_path']}")
+            print(f"Audit: {built['audit_path']}")
+            return 0
+
+        if args.command == "configure-stage6-mrna-codon-generation":
+            configured = configure_mrna_codon_generation(
+                args.project_config,
+                args.codon_table,
+                designs_per_candidate=args.designs_per_candidate,
+                search_multiplier=args.search_multiplier,
+                seed=args.seed,
+            )
+            print(
+                "Stage 6 mRNA CDS generation enabled: "
+                f"designs_per_candidate={configured['designs_per_candidate']} "
+                f"search_multiplier={configured['search_multiplier']} "
+                f"seed={configured['seed']}"
+            )
+            print(f"Codon table: {configured['codon_usage_path']}")
+            print(f"mRNA specification: {configured['specification_path']}")
+            print(f"Previous specification: {configured['history_path']}")
+            return 0
+
         if args.command == "prepare-stage6-evo2":
             prepared = prepare_evo2_job(
                 args.project_config,
@@ -833,10 +912,12 @@ def main(argv: list[str] | None = None) -> int:
             initialized = initialize_ranking_specification(
                 args.project_config,
                 source_run_dir=args.from_run,
+                refresh_candidate_set=args.refresh_candidate_set,
             )
             print(f"Stage 7 specification: source_run={initialized['source_run']}")
             print(f"Ranking specification: {initialized['ranking_specification']}")
             print(f"Created files: {len(initialized['created'])}")
+            print(f"Archived stale files: {len(initialized['archived'])}")
             return 0
 
         if args.command == "run-stage7":

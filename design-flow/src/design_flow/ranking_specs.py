@@ -11,6 +11,7 @@ from typing import Any
 
 from .config import ProjectConfig, load_project_config
 from .product_specs import MRNA_PRODUCT_STAGE_ID, PROTEIN_PRODUCT_STAGE_ID
+from .stage6_routing import archive_runtime_file
 from .structure_job import _load_json
 from .verification import verify_run
 
@@ -65,6 +66,30 @@ def default_ranking_specification(
     candidate_batch = _load_json(
         source_run / "nodes/candidate_specification/candidate_batch.json"
     )
+    candidate_by_id = {
+        candidate["candidate_id"]: candidate
+        for candidate in candidate_batch["candidates"]
+    }
+    protein_products = _load_json(
+        source_run / "nodes/protein_product_design/protein_products.json"
+    )["products"]
+    selected_candidate_ids: set[str] = set()
+    for product in protein_products:
+        candidate_id = product.get("candidate_id")
+        candidate = candidate_by_id.get(candidate_id)
+        if (
+            candidate is None
+            or candidate_id in selected_candidate_ids
+            or product.get("candidate_key") != candidate["candidate_key"]
+            or product.get("antigen_sequence_sha256")
+            != candidate["amino_acid_sha256"]
+        ):
+            raise ValueError(
+                "Stage 6 protein products do not bind one exact candidate set"
+            )
+        selected_candidate_ids.add(candidate_id)
+    if not selected_candidate_ids:
+        raise ValueError("Stage 6 has no product candidates for Stage 7")
     bindings = [
         {
             "candidate_id": candidate["candidate_id"],
@@ -72,7 +97,7 @@ def default_ranking_specification(
             "amino_acid_sha256": candidate["amino_acid_sha256"],
         }
         for candidate in candidate_batch["candidates"]
-        if candidate.get("duplicate_of") is None
+        if candidate["candidate_id"] in selected_candidate_ids
     ]
     return {
         "schema_version": 1,
@@ -209,6 +234,7 @@ def initialize_ranking_specification(
     project_config: str | Path,
     *,
     source_run_dir: str | Path | None = None,
+    refresh_candidate_set: bool = False,
 ) -> dict[str, Any]:
     config = load_project_config(Path(project_config))
     source = _resolve_stage6_run(
@@ -216,14 +242,53 @@ def initialize_ranking_specification(
     )
     path = config.runtime_root / RANKING_SPEC_RELATIVE
     created: list[str] = []
+    archived: list[str] = []
+    expected = default_ranking_specification(config, source)
     if not path.exists():
-        _atomic_json(path, default_ranking_specification(config, source))
+        _atomic_json(path, expected)
         created.append(str(path))
+    else:
+        current = _load_json(path)
+        current_candidates = current.get("candidate_set", {}).get("candidates")
+        expected_candidates = expected["candidate_set"]["candidates"]
+        if current_candidates != expected_candidates:
+            if not refresh_candidate_set:
+                raise ValueError(
+                    "Stage 7 ranking candidate set is stale; rerun init-stage7 "
+                    "with --refresh-candidate-set"
+                )
+            if (
+                current.get("schema_version") != 1
+                or current.get("stage_id") != RANKING_STAGE_ID
+                or current.get("mode") != "exploratory"
+            ):
+                raise ValueError("Cannot migrate unsupported Stage 7 specification")
+            archived_path = archive_runtime_file(
+                path,
+                config.runtime_root / "input/stage7/history",
+            )
+            archived.append(str(archived_path))
+            refreshed = dict(expected)
+            for field in (
+                "features",
+                "hard_gates",
+                "portfolio",
+                "sensitivity",
+                "policy",
+            ):
+                if field in current:
+                    refreshed[field] = current[field]
+            refreshed["candidate_set"] = {
+                **expected["candidate_set"],
+                "status": "draft",
+            }
+            _atomic_json(path, refreshed)
     return {
         "project_id": config.project_id,
         "source_run": str(source),
         "ranking_specification": str(path),
         "created": created,
+        "archived": archived,
     }
 
 

@@ -2979,6 +2979,56 @@ class CandidateStageEndToEndTests(unittest.TestCase):
                 verification["errors"],
             )
 
+    def test_stage7_requires_explicit_refresh_for_stale_candidate_set(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            config_path, source_run = self._write_stage2_project(root)
+            stage3_run = self._write_verified_stage3_run(
+                root, config_path, source_run, hour=18
+            )
+            initialize_assessment_specifications(config_path, source_run_dir=stage3_run)
+            stage5_run = write_post_structure_run(
+                analyze_post_structure_stages(config_path, source_run_dir=stage3_run),
+                now=datetime(2026, 7, 15, 19, 0, tzinfo=timezone.utc),
+            )
+            initialize_product_specifications(config_path, source_run_dir=stage5_run)
+            stage6_run = write_product_design_run(
+                analyze_product_designs(config_path, source_run_dir=stage5_run),
+                now=datetime(2026, 7, 15, 20, 0, tzinfo=timezone.utc),
+            )
+            initialized = initialize_ranking_specification(
+                config_path, source_run_dir=stage6_run
+            )
+            specification_path = Path(initialized["ranking_specification"])
+            specification = json.loads(
+                specification_path.read_text(encoding="utf-8")
+            )
+            expected_count = len(specification["candidate_set"]["candidates"])
+            specification["candidate_set"]["candidates"] = specification[
+                "candidate_set"
+            ]["candidates"][:1]
+            specification_path.write_text(
+                json.dumps(specification, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "candidate set is stale"):
+                initialize_ranking_specification(
+                    config_path, source_run_dir=stage6_run
+                )
+            refreshed = initialize_ranking_specification(
+                config_path,
+                source_run_dir=stage6_run,
+                refresh_candidate_set=True,
+            )
+            migrated = json.loads(specification_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                len(migrated["candidate_set"]["candidates"]), expected_count
+            )
+            self.assertEqual(migrated["candidate_set"]["status"], "draft")
+            self.assertEqual(len(refreshed["archived"]), 1)
+            self.assertTrue(Path(refreshed["archived"][0]).is_file())
+
     def test_stage6_generates_translation_safe_pareto_designs_with_versioned_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
