@@ -11,6 +11,12 @@ to a single model implementation.
 > completeness, traceability, and explicit missing evidence; it cannot guarantee
 > manufacturability, safety, immune protection, or efficacy without experiments.
 
+The audited current Stage 1-7 execution snapshot, candidate funnel, authority
+boundaries, and quantified system advantages are summarized in the
+[2026-07-16 closed-loop report](docs/reports/stage-closed-loop-20260716.md). The
+report is generated from versioned evidence and explicitly keeps Stage 7 and the
+wet-lab loop pending.
+
 The current milestone implements the reproducible computational path from source
 intake through provisional integrated ranking:
 

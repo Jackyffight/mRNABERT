@@ -1,0 +1,200 @@
+{
+  "as_of": "2026-07-16",
+  "execution": {
+    "stage1": {
+      "artifact_sha256": "0d657a87fd73f6bffc10149f9f24fc2771aa5b012f360a2be5feb196bd478706",
+      "exact_translation_matches": 3,
+      "execution_state": "executed",
+      "input_proteins": 3,
+      "run_id": "20260715T080421641758Z-25cb00ab",
+      "status": "complete"
+    },
+    "stage2": {
+      "artifact_sha256": "055506ec799afb24439419a68ddfe8eaa9276c7927239c4773c7fdffbd4fc9a9",
+      "candidate_count": 2276,
+      "candidate_types": {
+        "fusion": 2233,
+        "source_control": 3,
+        "truncation": 40
+      },
+      "execution_state": "executed",
+      "generators": {
+        "deterministic-combinatorial-enumerator": 183,
+        "evidence-guided-boundary-search": 36,
+        "evidence-guided-multifamily-search": 2048,
+        "manual_import": 6,
+        "source_intake": 3
+      },
+      "run_id": "20260715T111408094814Z-stage2-caaef819",
+      "status": "needs_human_input"
+    },
+    "stage3": {
+      "artifact_sha256": "d541be99e5427e41ca57a2d564750e2825ef29048c12e06de0d7d7b2890cb529",
+      "confidence_bands": {
+        "higher_confidence": 9,
+        "low_confidence": 357,
+        "mixed_confidence": 18
+      },
+      "execution_state": "executed",
+      "mean_plddt": 69.27876822916662,
+      "mean_ptm": 0.3394546380208335,
+      "run_id": "20260715T153913241225Z-stage3-7d0bd68b",
+      "status": "needs_human_input",
+      "structure_candidates": 384,
+      "tool": "ESMFold2-Fast"
+    },
+    "stage4": {
+      "artifact_sha256": "0966dad5591aa62bc85d2b8bbebf262f5ce89fbd325d2349e41f7127281f96b8",
+      "candidate_count": 384,
+      "evaluated_adapters": [
+        "mhc_binding"
+      ],
+      "execution_state": "executed_needs_data",
+      "mhc_candidate_count": 384,
+      "mhc_observation_count": 881853,
+      "missing_requirement_count": 8,
+      "run_id": "20260716T041527036725Z-stage4-5-aae38adc",
+      "status": "needs_data",
+      "tools": [
+        "NetMHCpan 4.2",
+        "NetMHCIIpan 4.3",
+        "structure-derived surface proxy"
+      ]
+    },
+    "stage5": {
+      "artifact_sha256": "528ad2da3a3e0dc031d66e92430cd1cff2e6ead9d3f67ff905a5a21be3d8f891",
+      "candidate_count": 384,
+      "evaluated_adapter_count": 3,
+      "evaluated_adapters": [
+        "disorder",
+        "signal_peptide",
+        "transmembrane_topology"
+      ],
+      "execution_state": "executed_needs_data",
+      "missing_adapters": [
+        "aggregation",
+        "solubility"
+      ],
+      "missing_requirement_count": 5,
+      "review_liability_count": 2462,
+      "run_id": "20260716T041527036725Z-stage4-5-aae38adc",
+      "status": "needs_data",
+      "tools": [
+        "metapredict",
+        "TMbed"
+      ]
+    },
+    "stage6": {
+      "execution_state": "executed_needs_data",
+      "mrna_artifact_sha256": "9b5f870ee05f18ffebbc7101e3b4e395f9d2a9841c20411178e87969f2b352a2",
+      "mrna_candidate_count": 6,
+      "mrna_design_count": 7,
+      "mrna_missing_requirement_count": 8,
+      "protein_artifact_sha256": "33d64f3d53fcc519fd134b94c67f8431ee34222b6ed92b9dcf02d8e9ad670e79",
+      "protein_draft_count": 384,
+      "protein_missing_requirement_count": 384,
+      "protein_with_cds_count": 6,
+      "routing": {
+        "active": 384,
+        "archive": 332,
+        "diversity_feature_count": 53,
+        "diversity_feature_covered": 53,
+        "diversity_rescue": 25,
+        "expensive_followup": 52,
+        "priority": 27,
+        "routing_artifact_sha256": "663409d9bc7f5990fec58900b0ca4ee534a08ee0cdd9dd35022b51c22ab399d7",
+        "routing_id": "9033b05c23176138c6658e5964c3e37ac3f601b90cf5164864901a4e0ed5cb3a"
+      },
+      "run_id": "20260716T060350582289Z-stage6-29403999",
+      "status": "needs_data",
+      "verification": {
+        "checks_passed": 20,
+        "errors": 0,
+        "status": "pass",
+        "warnings": 0
+      }
+    },
+    "stage7": {
+      "execution_state": "pending",
+      "reason": "Current routed Stage 6 run still lacks product-context and mRNA-generation evidence",
+      "status": "pending_current_round"
+    },
+    "wet_lab_loop": {
+      "assay_ingestion": "not_started",
+      "experiment_release": "not_started",
+      "learning_and_iteration": "not_started"
+    }
+  },
+  "model_and_authority_roles": [
+    {
+      "authority": "Human approves objectives and searchable variables",
+      "deterministic_core": "Pair AA/CDS, validate translation, freeze round contract",
+      "scientific_tools": "None required",
+      "stage": "Stage 1"
+    },
+    {
+      "authority": "Human/LLM proposals remain attributed; neither silently releases candidates",
+      "deterministic_core": "Enumerate, deduplicate, hash identity, record generator lineage",
+      "scientific_tools": "Optional external generators and evidence-guided search",
+      "stage": "Stage 2"
+    },
+    {
+      "authority": "Human reviews low-confidence or domain-mismatched structures",
+      "deterministic_core": "Bind exact sequence-to-structure identities and confidence bands",
+      "scientific_tools": "ESMFold2-Fast",
+      "stage": "Stage 3"
+    },
+    {
+      "authority": "Human approves host population, panels, and release interpretation",
+      "deterministic_core": "Normalize observations and preserve missing evidence",
+      "scientific_tools": "NetMHCpan, NetMHCIIpan, structure surface proxy",
+      "stage": "Stage 4"
+    },
+    {
+      "authority": "Human approves expression and manufacturability context",
+      "deterministic_core": "Compute intrinsic liabilities and adapter-bound requirements",
+      "scientific_tools": "TMbed, metapredict; aggregation/solubility pending",
+      "stage": "Stage 5"
+    },
+    {
+      "authority": "Human approves product assumptions; models cannot create absent facts",
+      "deterministic_core": "Exact translation, product assembly, routing, and audit manifests",
+      "scientific_tools": "ESMFold2 recheck, Evo2 and RNA structure are follow-up adapters",
+      "stage": "Stage 6"
+    },
+    {
+      "authority": "Human releases the experimental portfolio",
+      "deterministic_core": "Multi-objective ranking, portfolio constraints, feedback records",
+      "scientific_tools": "Task heads and calibrated scorers when evidence exists",
+      "stage": "Stage 7+"
+    }
+  ],
+  "project": {
+    "id": "three-protein-vaccine",
+    "intended_host": "cattle (Bos taurus)",
+    "mode": "mock exploratory workflow",
+    "source_proteins": [
+      "A33",
+      "B5",
+      "L1"
+    ]
+  },
+  "schema": "vaxflow.stage-closed-loop-evidence.v1",
+  "sources": [
+    "design-flow/docs/workflow-v2.json",
+    "design-flow/docs/adr/0001-hybrid-audited-workflow.md",
+    "design-flow/docs/adr/0002-round-based-design-optimization.md",
+    "design-flow/docs/adr/0004-post-structure-candidate-routing.md",
+    "/data00/home/wangzhi.wit/models/design-flow-runtime/three-protein/runs/20260715T080421641758Z-25cb00ab",
+    "/data00/home/wangzhi.wit/models/design-flow-runtime/three-protein/runs/20260715T111408094814Z-stage2-caaef819",
+    "/data00/home/wangzhi.wit/models/design-flow-runtime/three-protein/runs/20260715T153913241225Z-stage3-7d0bd68b",
+    "/data00/home/wangzhi.wit/models/design-flow-runtime/three-protein/runs/20260716T041527036725Z-stage4-5-aae38adc",
+    "/data00/home/wangzhi.wit/models/design-flow-runtime/three-protein/runs/20260716T060350582289Z-stage6-29403999"
+  ],
+  "workflow": {
+    "architecture_version": 2,
+    "contract_sha256": "a5e858dba9ae2c4d480f9c2b1661ed79138211f4e5e99157dce3b1f6aef30b0c",
+    "id": "vaccine-design-build-test-learn",
+    "version": 2
+  }
+}
