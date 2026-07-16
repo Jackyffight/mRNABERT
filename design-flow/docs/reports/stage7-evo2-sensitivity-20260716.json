@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "experiment_id": "evo2-observed-77ac93d25202-w0p25",
+  "scope": "Exploratory Stage 7 weight sensitivity over the exact Evo2-observed candidate subset",
+  "source": {
+    "stage6_run_id": "20260716T183446943842Z-stage6-4c8e3256",
+    "evo2_result_sha256": "77ac93d25202a1edb4769bbbc3f5ac3c85444f719d9ad42f3b5b3d091e02e22b",
+    "candidate_count": 52,
+    "design_count": 215
+  },
+  "arms": {
+    "control": {
+      "evo2_weight": 0.0,
+      "run_id": "20260716T192834781776Z-stage7-10e9a930",
+      "ranking_result_sha256": "b72ff11856f9189b99c6bc19cd9ae0c4baf21e18828cc9e65172b10129b95a8d"
+    },
+    "weighted": {
+      "evo2_weight": 0.25,
+      "run_id": "20260716T192835125217Z-stage7-839d2ff4",
+      "ranking_result_sha256": "1d3bff018e5b3685c3e404fa240d9eb4d31378a55f203ed6ba2a250ca1693a93"
+    }
+  },
+  "mrna_rank_comparison": {
+    "candidate_count": 52,
+    "spearman_rank_correlation": 0.9950482370016221,
+    "mean_absolute_rank_change": 1.0384615384615385,
+    "median_absolute_rank_change": 1,
+    "maximum_absolute_rank_change": 4,
+    "unchanged_candidate_count": 20,
+    "top_10_overlap_count": 10
+  },
+  "portfolio_comparison": {
+    "protein_portfolio_unchanged": true,
+    "mrna_portfolio_overlap_count": 3,
+    "mrna_portfolio_size": 4,
+    "control_source_control": "source-A33",
+    "weighted_source_control": "source-B5"
+  },
+  "verification": {
+    "control": {
+      "checks": 13,
+      "errors": 0,
+      "warnings": 0
+    },
+    "weighted": {
+      "checks": 13,
+      "errors": 0,
+      "warnings": 0
+    }
+  },
+  "interpretation": {
+    "incremental_signal": "measurable_but_small_at_weight_0.25",
+    "top_10_disrupted": false,
+    "formal_release_supported": false,
+    "generalizes_to_unscored_candidates": false
+  }
+}

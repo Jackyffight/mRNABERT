@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import copy
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -18,6 +20,7 @@ from .verification import verify_run
 
 RANKING_STAGE_ID = "integrated_ranking"
 RANKING_SPEC_RELATIVE = Path("input/stage7/ranking_specification.json")
+EVO2_SENSITIVITY_RELATIVE = Path("input/stage7/experiments")
 
 
 def _atomic_json(path: Path, value: Any) -> None:
@@ -33,6 +36,14 @@ def _atomic_json(path: Path, value: Any) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _write_new_or_identical_json(path: Path, value: dict[str, Any]) -> None:
+    if path.exists():
+        if _load_json(path) != value:
+            raise ValueError(f"Refusing to overwrite a different Stage 7 policy: {path}")
+        return
+    _atomic_json(path, value)
 
 
 def _resolve_stage6_run(config: ProjectConfig, source_run_dir: Path | None) -> Path:
@@ -292,8 +303,17 @@ def initialize_ranking_specification(
     }
 
 
-def load_ranking_specification(config: ProjectConfig) -> tuple[dict[str, Any], Path]:
-    path = config.runtime_root / RANKING_SPEC_RELATIVE
+def load_ranking_specification(
+    config: ProjectConfig,
+    specification_path: str | Path | None = None,
+) -> tuple[dict[str, Any], Path]:
+    path = (
+        Path(specification_path).expanduser().resolve()
+        if specification_path is not None
+        else config.runtime_root / RANKING_SPEC_RELATIVE
+    )
+    if not path.is_file():
+        raise ValueError(f"Stage 7 ranking specification not found: {path}")
     document = _load_json(path)
     if (
         document.get("schema_version") != 1
@@ -307,3 +327,131 @@ def load_ranking_specification(config: ProjectConfig) -> tuple[dict[str, Any], P
     if policy.get("missing_value_policy") != "coverage_penalty":
         raise ValueError("Only the explicit coverage_penalty missing-value policy is supported")
     return document, path
+
+
+def prepare_evo2_sensitivity_specifications(
+    project_config: str | Path,
+    *,
+    source_run_dir: str | Path | None = None,
+    evo2_weight: float = 0.25,
+) -> dict[str, Any]:
+    if (
+        isinstance(evo2_weight, bool)
+        or not isinstance(evo2_weight, (int, float))
+        or not math.isfinite(float(evo2_weight))
+        or not 0 < float(evo2_weight) <= 1
+    ):
+        raise ValueError("Evo 2 sensitivity weight must be greater than 0 and at most 1")
+
+    config = load_project_config(Path(project_config))
+    source = _resolve_stage6_run(
+        config, Path(source_run_dir) if source_run_dir is not None else None
+    )
+    canonical, canonical_path = load_ranking_specification(config)
+    mrna_document = _load_json(
+        source / "nodes/mrna_product_design/mrna_products.json"
+    )
+    adapter = mrna_document.get("adapter_states", {}).get("evo2_sequence_score", {})
+    observations = adapter.get("observations")
+    result_sha256 = adapter.get("result_sha256")
+    if (
+        adapter.get("status") != "evaluated"
+        or not isinstance(observations, list)
+        or not observations
+        or not isinstance(result_sha256, str)
+        or len(result_sha256) != 64
+    ):
+        raise ValueError("Stage 6 run does not contain checksum-bound Evo 2 evidence")
+
+    design_to_candidate = {
+        design["design_id"]: design["candidate_id"]
+        for design in mrna_document.get("designs", [])
+    }
+    observed_candidate_ids: set[str] = set()
+    observed_design_ids: set[str] = set()
+    for observation in observations:
+        design_id = observation.get("design_id")
+        candidate_id = observation.get("candidate_id")
+        bound_candidate_id = design_to_candidate.get(design_id)
+        if (
+            not isinstance(design_id, str)
+            or bound_candidate_id is None
+            or (candidate_id is not None and candidate_id != bound_candidate_id)
+            or design_id in observed_design_ids
+        ):
+            raise ValueError("Evo 2 evidence contains an invalid or duplicate design binding")
+        observed_design_ids.add(design_id)
+        observed_candidate_ids.add(bound_candidate_id)
+
+    canonical_bindings = canonical.get("candidate_set", {}).get("candidates", [])
+    if not isinstance(canonical_bindings, list):
+        raise ValueError("Canonical Stage 7 candidate set is invalid")
+    selected_bindings = [
+        binding
+        for binding in canonical_bindings
+        if binding.get("candidate_id") in observed_candidate_ids
+    ]
+    if len(selected_bindings) != len(observed_candidate_ids):
+        raise ValueError("Evo 2 evidence is not a subset of the canonical Stage 7 candidates")
+
+    weight = float(evo2_weight)
+    weight_slug = format(weight, ".8g").replace(".", "p")
+    experiment_id = f"evo2-observed-{result_sha256[:12]}-w{weight_slug}"
+    output_dir = config.runtime_root / EVO2_SENSITIVITY_RELATIVE / experiment_id
+    source_manifest = _load_json(source / "manifest.json")
+    common_experiment = {
+        "experiment_id": experiment_id,
+        "experiment_type": "evo2-observed-subset-weight-sensitivity",
+        "source_run_id": source_manifest["run_id"],
+        "source_evo2_result_sha256": result_sha256,
+        "observed_candidate_count": len(selected_bindings),
+        "observed_design_count": len(observed_design_ids),
+        "scope": "Only candidates with checksum-bound Evo 2 evidence are compared.",
+        "formal_release_allowed": False,
+    }
+
+    def build(role: str, feature_weight: float) -> dict[str, Any]:
+        document = copy.deepcopy(canonical)
+        document["created_at_utc"] = source_manifest["created_at_utc"]
+        document["specification_id"] = (
+            f"{canonical['specification_id']}-{experiment_id}-{role}"
+        )
+        document["candidate_set"] = {
+            "status": "draft",
+            "candidates": selected_bindings,
+        }
+        document["experiment"] = {
+            **common_experiment,
+            "role": role,
+            "evo2_weight": feature_weight,
+        }
+        for feature in document["features"]:
+            if feature.get("feature_id") == "mrna_evo2_mean_score":
+                feature["weight"] = feature_weight
+                break
+        else:
+            raise ValueError("Canonical Stage 7 policy does not declare the Evo 2 feature")
+        document["policy"] = {
+            **document["policy"],
+            "status": "draft",
+            "allow_formal_release": False,
+        }
+        return document
+
+    control = build("control", 0.0)
+    weighted = build("weighted", weight)
+    control_path = output_dir / "control.json"
+    weighted_path = output_dir / "weighted.json"
+    _write_new_or_identical_json(control_path, control)
+    _write_new_or_identical_json(weighted_path, weighted)
+    return {
+        "project_id": config.project_id,
+        "source_run": str(source),
+        "canonical_specification": str(canonical_path),
+        "experiment_id": experiment_id,
+        "candidate_count": len(selected_bindings),
+        "design_count": len(observed_design_ids),
+        "evo2_weight": weight,
+        "control_specification": str(control_path),
+        "weighted_specification": str(weighted_path),
+    }

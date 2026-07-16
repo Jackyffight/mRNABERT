@@ -46,7 +46,11 @@ from .product_specs import (
 )
 from .ranking import analyze_integrated_ranking
 from .ranking_reporting import write_ranking_run
-from .ranking_specs import RANKING_STAGE_ID, initialize_ranking_specification
+from .ranking_specs import (
+    RANKING_STAGE_ID,
+    initialize_ranking_specification,
+    prepare_evo2_sensitivity_specifications,
+)
 from .reporting import write_run_artifacts
 from .structure_job import write_structure_job
 from .structure_assessment import analyze_structure_results
@@ -351,6 +355,23 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="archive a stale Stage 7 specification and migrate its policy to the current candidate set",
     )
+    init_stage7_evo2_parser = subparsers.add_parser(
+        "init-stage7-evo2-sensitivity",
+        help="write paired control and weighted ranking policies for the Evo 2 observed subset",
+    )
+    init_stage7_evo2_parser.add_argument("project_config", type=Path)
+    init_stage7_evo2_parser.add_argument(
+        "--from-run",
+        type=Path,
+        required=True,
+        help="verified combined Stage 6 run containing imported Evo 2 evidence",
+    )
+    init_stage7_evo2_parser.add_argument(
+        "--evo2-weight",
+        type=float,
+        default=0.25,
+        help="exploratory Evo 2 feature weight; default: 0.25",
+    )
     run_stage7_parser = subparsers.add_parser(
         "run-stage7",
         help="write deterministic integrated rankings and provisional portfolios",
@@ -360,6 +381,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--from-run",
         type=Path,
         help="verified combined Stage 6 run; defaults to the project's latest run",
+    )
+    run_stage7_parser.add_argument(
+        "--specification",
+        type=Path,
+        help="explicit versioned ranking policy; defaults to input/stage7/ranking_specification.json",
     )
     return parser
 
@@ -920,10 +946,28 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Archived stale files: {len(initialized['archived'])}")
             return 0
 
+        if args.command == "init-stage7-evo2-sensitivity":
+            prepared = prepare_evo2_sensitivity_specifications(
+                args.project_config,
+                source_run_dir=args.from_run,
+                evo2_weight=args.evo2_weight,
+            )
+            print(
+                "Stage 7 Evo 2 sensitivity: "
+                f"experiment={prepared['experiment_id']} "
+                f"candidates={prepared['candidate_count']} "
+                f"designs={prepared['design_count']} "
+                f"weight={prepared['evo2_weight']}"
+            )
+            print(f"Control specification: {prepared['control_specification']}")
+            print(f"Weighted specification: {prepared['weighted_specification']}")
+            return 0
+
         if args.command == "run-stage7":
             ranking_analysis = analyze_integrated_ranking(
                 args.project_config,
                 source_run_dir=args.from_run,
+                specification_path=args.specification,
             )
             run_dir = write_ranking_run(ranking_analysis)
             node = run_dir / "nodes" / RANKING_STAGE_ID

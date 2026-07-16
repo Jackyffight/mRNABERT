@@ -43,7 +43,10 @@ from design_flow.proposal_generation import (
 )
 from design_flow.ranking import _feature_values, analyze_integrated_ranking
 from design_flow.ranking_reporting import write_ranking_run
-from design_flow.ranking_specs import initialize_ranking_specification
+from design_flow.ranking_specs import (
+    initialize_ranking_specification,
+    prepare_evo2_sensitivity_specifications,
+)
 from design_flow.qc import CODON_TABLE, analyze_sequence_pairs, normalize_nucleotide, translate_cds
 from design_flow.reporting import write_run_artifacts
 from design_flow.structure_job import build_structure_job, write_structure_job
@@ -3262,6 +3265,49 @@ class CandidateStageEndToEndTests(unittest.TestCase):
                 all(component["raw_value"] is not None for component in evo2_components)
             )
             self.assertTrue(all(component["weight"] == 0.0 for component in evo2_components))
+
+            sensitivity = prepare_evo2_sensitivity_specifications(
+                config_path,
+                source_run_dir=stage6_run,
+                evo2_weight=0.25,
+            )
+            self.assertEqual(
+                sensitivity["candidate_count"],
+                len(analysis.protein_result["products"]),
+            )
+            control_specification = json.loads(
+                Path(sensitivity["control_specification"]).read_text(encoding="utf-8")
+            )
+            weighted_specification = json.loads(
+                Path(sensitivity["weighted_specification"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(control_specification["experiment"]["role"], "control")
+            self.assertEqual(weighted_specification["experiment"]["role"], "weighted")
+            self.assertEqual(
+                next(
+                    feature["weight"]
+                    for feature in weighted_specification["features"]
+                    if feature["feature_id"] == "mrna_evo2_mean_score"
+                ),
+                0.25,
+            )
+            weighted_ranking = analyze_integrated_ranking(
+                config_path,
+                source_run_dir=stage6_run,
+                specification_path=sensitivity["weighted_specification"],
+            )
+            weighted_components = [
+                component
+                for row in weighted_ranking.result["rankings"]
+                if row["modality"] == "mrna"
+                for component in row["components"]
+                if component["feature_id"] == "mrna_evo2_mean_score"
+            ]
+            self.assertTrue(weighted_components)
+            self.assertTrue(all(component["weight"] == 0.25 for component in weighted_components))
+            self.assertTrue(
+                all(component["weighted_contribution"] is not None for component in weighted_components)
+            )
 
 
 if __name__ == "__main__":

@@ -461,6 +461,7 @@ def analyze_integrated_ranking(
     project_config: str | Path,
     *,
     source_run_dir: str | Path | None = None,
+    specification_path: str | Path | None = None,
 ) -> RankingAnalysis:
     config = load_project_config(Path(project_config))
     source = _resolve_stage6_run(
@@ -468,7 +469,7 @@ def analyze_integrated_ranking(
     )
     manifest = _load_json(source / "manifest.json")
     candidate_batch = _load_json(source / "nodes/candidate_specification/candidate_batch.json")
-    spec, spec_path = load_ranking_specification(config)
+    spec, spec_path = load_ranking_specification(config, specification_path)
     result = _compute_ranking_result(source, spec, spec_path, candidate_batch)
     return RankingAnalysis(
         config=config,

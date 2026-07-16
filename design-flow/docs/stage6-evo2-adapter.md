@@ -118,6 +118,37 @@ The importer:
 5. stores immutable evidence under `input/stage6/mrna-evidence/`;
 6. archives the previous mRNA specification;
 7. updates only the `evo2_sequence_score` adapter declaration;
+
+## Stage 7 observed-subset sensitivity
+
+Status: implemented in pipeline version `0.21.0`.
+
+Imported evidence is optional in the canonical Stage 7 policy and therefore has
+weight `0`. To measure its effect without treating unscored candidates as poor
+candidates, generate paired policies over the exact Evo 2-observed subset:
+
+```bash
+./vaxflow init-stage7-evo2-sensitivity projects/three-protein/project.json \
+  --from-run /absolute/path/to/verified-stage6-run \
+  --evo2-weight 0.25
+```
+
+The command writes immutable `control.json` and `weighted.json` policies under
+`input/stage7/experiments/`. Run each policy explicitly:
+
+```bash
+./vaxflow run-stage7 projects/three-protein/project.json \
+  --from-run /absolute/path/to/verified-stage6-run \
+  --specification /absolute/path/to/control.json
+
+./vaxflow run-stage7 projects/three-protein/project.json \
+  --from-run /absolute/path/to/verified-stage6-run \
+  --specification /absolute/path/to/weighted.json
+```
+
+These are exploratory sensitivity runs, not formal release policies. Restricting
+both arms to the same observed subset prevents missing Evo 2 values from being
+misinterpreted as low scores.
 8. reruns Stage 6 from the pinned Stage 4/5 parent and verifies the new run.
 
 The new Stage 6 run will still be `needs_data`. Evo 2 removes one explicit missing
