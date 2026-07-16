@@ -23,6 +23,7 @@ from .assessment_specs import (
 from .domain import ProjectAnalysis
 from .config import load_project_config
 from .design_loop import default_design_documents
+from .evo2_adapter import import_evo2_results, prepare_evo2_job
 from .netmhc_adapter import prepare_stage4_mhc_evidence
 from .pipeline import analyze_project
 from .post_structure_assessment import analyze_post_structure_stages
@@ -286,6 +287,23 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="verified combined Stage 4/5 run; defaults to the project's latest run",
     )
+    prepare_stage6_evo2_parser = subparsers.add_parser(
+        "prepare-stage6-evo2",
+        help="write a checksum-bound Evo 2 scoring job from a verified Stage 6 run",
+    )
+    prepare_stage6_evo2_parser.add_argument("project_config", type=Path)
+    prepare_stage6_evo2_parser.add_argument("--from-run", type=Path, required=True)
+    prepare_stage6_evo2_parser.add_argument(
+        "--output-root",
+        type=Path,
+        help="external transfer directory; defaults under the project runtime root",
+    )
+    import_stage6_evo2_parser = subparsers.add_parser(
+        "import-stage6-evo2",
+        help="verify Evo 2 results and bind the evidence to the Stage 6 mRNA specification",
+    )
+    import_stage6_evo2_parser.add_argument("project_config", type=Path)
+    import_stage6_evo2_parser.add_argument("--results", type=Path, required=True)
     init_stage7_parser = subparsers.add_parser(
         "init-stage7",
         help="create a versioned transparent integrated-ranking policy",
@@ -772,6 +790,43 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Run artifacts: {run_dir}")
             print(f"Protein report: {protein_node / 'report.html'}")
             print(f"mRNA report: {mrna_node / 'report.html'}")
+            return 0
+
+        if args.command == "prepare-stage6-evo2":
+            prepared = prepare_evo2_job(
+                args.project_config,
+                source_run_dir=args.from_run,
+                output_root=args.output_root,
+            )
+            print(
+                "Stage 6 Evo 2 job: "
+                f"identity={prepared['job_identity']} "
+                f"records={prepared['records']}"
+            )
+            print(
+                "mRNA design batch SHA256: "
+                f"{prepared['mrna_design_batch_sha256']}"
+            )
+            print(f"Job directory: {prepared['job_dir']}")
+            print(f"Transfer archive: {prepared['archive']}")
+            print(f"Transfer SHA256: {prepared['archive_sha256']}")
+            return 0
+
+        if args.command == "import-stage6-evo2":
+            imported = import_evo2_results(
+                args.project_config,
+                result_archive=args.results,
+            )
+            print(
+                "Stage 6 Evo 2 evidence: "
+                f"job={imported['job_identity']} "
+                f"result={imported['result_identity']} "
+                f"observations={imported['observations']}"
+            )
+            print(f"Evidence: {imported['evidence_path']}")
+            print(f"Evidence SHA256: {imported['evidence_sha256']}")
+            print(f"mRNA specification: {imported['specification_path']}")
+            print(f"Stage 4/5 source run for Stage 6 rerun: {imported['stage5_run_path']}")
             return 0
 
         if args.command == "init-stage7":

@@ -258,6 +258,12 @@ source-CDS controls and, after a versioned 61-codon table is configured, creates
 translation-safe Pareto designs. No sequence with a translation mismatch can enter
 the output batch.
 
+Run the checksum-bound Evo 2 Stage 6B adapter with the three-step prepare, GPU-score,
+and import workflow documented in
+[Stage 6 Evo 2 Sequence-Evidence Adapter](docs/stage6-evo2-adapter.md). Evo 2 scores
+only real coding records and cannot create missing product context or coding
+sequences for protein-only candidates.
+
 Initialize and run Stage 7 provisional ranking:
 
 ```bash
