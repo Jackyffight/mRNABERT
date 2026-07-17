@@ -15,7 +15,11 @@ The historical pre-ranking snapshot is preserved in the
 [2026-07-16 closed-loop report](docs/reports/stage-closed-loop-20260716.md). The
 current runtime has since executed exploratory Stage 7 while keeping the formal
 portfolio and wet-lab loop pending. Build the current self-contained showcase with
-[`scripts/build_program_showcase.py`](scripts/build_program_showcase.py).
+[`scripts/build_program_showcase.py`](scripts/build_program_showcase.py). The
+generated delivery dossier explains the research question, rationale, deterministic
+method, and decision at every stage; exposes the exact Stage 7 weights and zero-weight
+evidence; and packages the provisional portfolio as checksum-bound AA/CDS FASTA,
+PDB, structure projections, ranking CSV, and a deterministic ZIP archive.
 
 The boundary between the replayable Stage 1-7 system and the still model-dependent
 research pilot is recorded in the
