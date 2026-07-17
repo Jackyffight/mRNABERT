@@ -11,11 +11,17 @@ to a single model implementation.
 > completeness, traceability, and explicit missing evidence; it cannot guarantee
 > manufacturability, safety, immune protection, or efficacy without experiments.
 
-The audited current Stage 1-7 execution snapshot, candidate funnel, authority
-boundaries, and quantified system advantages are summarized in the
+The historical pre-ranking snapshot is preserved in the
 [2026-07-16 closed-loop report](docs/reports/stage-closed-loop-20260716.md). The
-report is generated from versioned evidence and explicitly keeps Stage 7 and the
-wet-lab loop pending.
+current runtime has since executed exploratory Stage 7 while keeping the formal
+portfolio and wet-lab loop pending. Build the current self-contained showcase with
+[`scripts/build_program_showcase.py`](scripts/build_program_showcase.py).
+
+The boundary between the replayable Stage 1-7 system and the still model-dependent
+research pilot is recorded in the
+[research-system boundary report](docs/reports/research-system-boundary-20260717.md).
+The controlled next steps are maintained in the
+[exploratory research-loop pilot plan](docs/research-loop-pilot-plan.md).
 
 The current milestone implements the reproducible computational path from source
 intake through provisional integrated ranking:
