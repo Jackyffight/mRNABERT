@@ -8,6 +8,8 @@ Normative companion documents:
 - [Audit Automation and LLM Governance](docs/audit-automation-and-llm-governance.md);
 - [ADR 0002](docs/adr/0002-round-based-design-optimization.md).
 - [ADR 0003](docs/adr/0003-multifidelity-stage2-search.md).
+- [ADR 0005](docs/adr/0005-layered-research-graph-control-plane.md), the accepted
+  target control plane that has not yet replaced the frozen v2 executable DAG.
 
 The executable workflow is versioned in `src/design_flow/workflow.py`. A semantic
 architecture or workflow change requires a superseding ADR, explicit version
@@ -28,22 +30,24 @@ predefined gates and experimental confirmation.
 ## Central-Kitchen Mental Model
 
 > [!IMPORTANT]
-> The system is a traceable central kitchen, not an autonomous scientist. The
-> current nine records are antigen recipes that can be inspected and processed;
+> The system is a traceable exploratory central kitchen, not an autonomous release
+> authority. The current nine records are antigen recipes that can be inspected and processed;
 > they are not nine proven vaccines. A computationally complete recipe is not proof
 > that the physical product can be manufactured, is safe, or is protective.
 >
-> 本系统是一套可追溯的中央厨房，而不是自主科学家。当前 9 条记录是可以审计和加工的
-> 抗原菜谱，不是 9 个已经验证的疫苗。数字菜谱完整，不等于实物一定能生产、安全或有效。
+> 本系统是一套可追溯的探索型中央厨房，而不是可以自主放行结论的科学权威。当前 9 条记录
+> 是可以审计和加工的抗原菜谱，不是 9 个已经验证的疫苗。数字菜谱完整，不等于实物一定能
+> 生产、安全或有效。
 
-The project owner is the restaurant owner: they define the product objective and
-accept program assumptions. Domain scientists are the chefs: they approve antigen
-boundaries, target populations, evidence policies, product details, and experiments.
-The deterministic workflow is the kitchen line: it checks identities, follows exact
-recipes, operates pinned instruments, records every result, and refuses to turn a
-missing measurement into a favorable conclusion. The LLM is a review assistant; it
-may explain or propose findings, but it cannot invent scientific evidence or release
-a candidate.
+The project owner is the restaurant owner: they define the minimum objective, hard
+constraints, and release authority. Domain scientists contribute evidence and review
+high-impact assumptions; they do not need to supply a complete recipe before the
+system can explore. The deterministic workflow is the kitchen line: it checks
+identities, follows exact recipes, operates pinned instruments, records every result,
+and refuses to turn a missing measurement into favorable evidence. The target LLM
+research/audit plane searches context, transfers attributed priors, proposes
+hypotheses, and challenges findings, but it cannot invent scientific evidence,
+silently change canonical graph state, or release a candidate.
 
 | Stage | Kitchen question | What the system can establish | What still requires evidence or authority |
 |---|---|---|---|
@@ -124,6 +128,34 @@ Design begins at Stage 1. Each round freezes `design_brief.json`,
 pool; Stages 3-6 evaluate it and emit structured redesign requests. Accepted requests
 become inputs to a later round that restarts at Stage 1. The executable run DAG remains
 acyclic and immutable. See [Round-Based Design Optimization](docs/round-based-design-optimization.md).
+
+## Target Research Graph Control Plane
+
+Workflow v2 is the current executable baseline. The accepted long-term control
+plane is a typed, append-only research graph in which knowledge, hypotheses,
+candidate transformations, executions, and decisions are linked but retain separate
+authority. Logical research loops create new versioned events; they do not mutate
+historical runs.
+
+Stages become reusable capability operators. A Stage 3 structure operator may run
+for an initial candidate, a redesigned child, or a counterfactual branch. Human or
+external evidence can retire hypotheses, invalidate only their downstream closure,
+cancel pending work, and reallocate compute without restarting unrelated branches.
+
+The orchestration boundary is fixed:
+
+- Python owns graph state, identity, dependency propagation, budgets, permissions,
+  caching, execution, and replay;
+- Pi or another agent framework owns interaction and tool loops only;
+- general or open LLMs use versioned Skills to propose research nodes and edges;
+- pinned scientific models produce domain evidence through adapters;
+- a smaller learned policy may rank eligible actions only after audited traces and
+  benchmarks exist.
+
+See [ADR 0005](docs/adr/0005-layered-research-graph-control-plane.md) for graph
+states, planner semantics, convergence limits, model evaluation, and implementation
+order. Until a new workflow contract implements that ADR, `workflow-v2.json` and
+the immutable round model remain authoritative.
 
 ## Stages
 

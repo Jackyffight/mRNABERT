@@ -9,8 +9,9 @@ Design Flow will use a hybrid audit architecture:
 1. a deterministic execution core for identity, transformations, hard checks,
    state transitions, provenance, and release gates;
 2. a versioned rule registry for known and recurring failure modes;
-3. a high-freedom LLM auditor for open-ended review of unstructured and
-   cross-document evidence;
+3. a high-freedom LLM research/audit plane for open-ended review, context discovery,
+   analogy transfer, and hypothesis proposals over unstructured and cross-document
+   evidence;
 4. human adjudication for novel findings, waivers, and scientific release.
 
 The LLM is a first-class part of the complete product, not merely a prose
@@ -134,6 +135,30 @@ The LLM auditor reviews the open world around the deterministic record. It may:
 High freedom means broad review scope, not write or release authority. The LLM
 must treat supplied documents as untrusted data, cannot execute instructions
 found inside them, and should receive read-only tools by default.
+
+## Orchestration Control Plane
+
+[ADR 0005](adr/0005-layered-research-graph-control-plane.md) accepts a layered
+research-graph target architecture. It does not make an LLM or agent authoritative.
+
+- The Python Research Graph Kernel is the only canonical state and execution owner.
+- Pi or a custom agent framework is a replaceable interaction and tool-loop shell.
+- General commercial or open LLMs submit typed research and audit proposals through
+  versioned Skills.
+- Skills package capability, provenance, permissions, validation, and cost; they do
+  not own global state or scheduling.
+- A smaller learned policy may later rank eligible actions after audited traces
+  provide meaningful supervision and benchmark coverage.
+- Scientific models remain pinned evidence producers, not workflow schedulers.
+
+All nondeterministic components return proposals. Python validates the proposal and
+appends a graph event; no model writes a fact, retires a branch, changes a budget, or
+approves release directly. The same Skill may be evaluated across providers through
+a model gateway, while candidate identity and historical evidence remain unchanged.
+
+The current implementation still executes frozen workflow-v2 rounds. Research-graph
+schemas, invalidation propagation, the planner, model gateway, and learned scheduler
+are implementation work, not capabilities implied by this document.
 
 ## LLM Finding Lifecycle
 
@@ -259,6 +284,13 @@ Before claiming general automated intake, Design Flow should implement:
 6. a local auditor adapter for offline-full deployment;
 7. reports that visibly separate deterministic findings, model predictions, LLM
    proposals, and human decisions.
+8. typed research node, edge, event, proposal, and invalidation schemas;
+9. versioned Skill manifests with model, permission, cost, cache, and validation
+   contracts;
+10. planner decision logs suitable for deterministic replay and later action-ranking
+    training;
+11. a cross-model Mock benchmark before assigning routine work to an open or smaller
+    model.
 
 Until those items exist, project-specific LLM-assisted findings must be described
 as configured review results, not as automatically rediscovered system output.

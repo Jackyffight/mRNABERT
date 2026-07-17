@@ -316,6 +316,10 @@ prevent either contract from drifting away from the executable DAG.
 The boundary between deterministic rules, LLM review, and human authority is
 defined in
 [docs/audit-automation-and-llm-governance.md](docs/audit-automation-and-llm-governance.md).
+The accepted target for branching research, agent integration, versioned Skills,
+model routing, and a future learned scheduler is recorded in
+[ADR 0005](docs/adr/0005-layered-research-graph-control-plane.md). It is a target
+architecture; the frozen workflow-v2 DAG remains the current executable contract.
 The initial supplied archive review is recorded in
 [docs/supplied-data-audit.md](docs/supplied-data-audit.md); raw sequences are not
 stored in Git.
