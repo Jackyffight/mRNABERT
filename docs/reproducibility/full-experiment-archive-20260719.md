@@ -14,6 +14,20 @@ Three independently verifiable bundles are required:
 | `mrna-gpu` | Every non-Git child under the mRNA NAS root and existing mRNA HDFS archive, plus `/home/tiger/.local` and relevant user caches: training corpus/shards, checkpoints, logs, downstream evaluations, public baseline weights, Evo2 checkpoint/venv, and benchmark artifacts |
 | `mpnn-gpu` | Every non-Git child under the MPNN NAS root plus `/home/tiger/.local` and relevant user caches: tar-shard datasets, training runs, promoted checkpoints, ESMFold2 runtime, Stage 3 jobs/results, and transfer artifacts |
 
+The control host has two profiles:
+
+- `control-host.tsv` is the standalone, offline-source profile. It includes the
+  unpacked/downloaded ProteinMPNN corpora and original mRNA archives and resolves
+  to about 246 GiB on the 2026-07-19 host.
+- `control-host-card-complement.tsv` is the profile for the current migration,
+  where both GPU NAS roots are archived in full. It omits training corpora and
+  derived training shards already owned by those GPU bundles, while retaining
+  local build logs, source manifests, compact smoke datasets, workflow runtime,
+  tools, and Mock inputs. It resolves to about 24 GiB on the same host.
+
+Do not combine the standalone control profile with complete GPU-root archives
+unless duplicate source-data preservation is intentional.
+
 If an immediate GPU-root child is a Git worktree, only its state outside Git is
 archived. For repository worktrees this means:
 
@@ -105,7 +119,7 @@ Preflight resolves all entries and sizes but writes no bundle:
 
 ```bash
 /data00/home/wangzhi.wit/models/mRNABERT/scripts/repro_bundle/package_profile.sh \
-  /data00/home/wangzhi.wit/models/mRNABERT/scripts/repro_bundle/profiles/control-host.tsv \
+  /data00/home/wangzhi.wit/models/mRNABERT/scripts/repro_bundle/profiles/control-host-card-complement.tsv \
   /mnt/backup/vaxflow-20260719/control-host \
   --dry-run
 
@@ -130,7 +144,7 @@ the same source root.
 
 ```bash
 /data00/home/wangzhi.wit/models/mRNABERT/scripts/repro_bundle/package_profile.sh \
-  /data00/home/wangzhi.wit/models/mRNABERT/scripts/repro_bundle/profiles/control-host.tsv \
+  /data00/home/wangzhi.wit/models/mRNABERT/scripts/repro_bundle/profiles/control-host-card-complement.tsv \
   /mnt/backup/vaxflow-20260719/control-host
 
 /home/tiger/vaxflow-repro-tool-20260719/scripts/repro_bundle/package_profile.sh \
