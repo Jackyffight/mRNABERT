@@ -144,7 +144,7 @@ add_entry() {
 git_file_is_disposable() {
   local relative=$1
   case "$relative" in
-    __pycache__/*|*/__pycache__/*|*.pyc|*.pyo|*.pyd|.pytest_cache/*|*/.pytest_cache/*|.mypy_cache/*|*/.mypy_cache/*|.ruff_cache/*|*/.ruff_cache/*|*/build/*|build/*|*.egg-info/*|.git-credentials|*/.git-credentials|.netrc|*/.netrc|.huggingface/token|*/.huggingface/token)
+    __pycache__/*|*/__pycache__/*|*.pyc|*.pyo|*.pyd|.pytest_cache/*|*/.pytest_cache/*|.mypy_cache/*|*/.mypy_cache/*|.ruff_cache/*|*/.ruff_cache/*|*/build/*|build/*|*.egg-info/*|.git-credentials|*/.git-credentials|.netrc|*/.netrc|.huggingface/token|*/.huggingface/token|.huggingface/stored_tokens|*/.huggingface/stored_tokens|huggingface/token|*/huggingface/token|huggingface/stored_tokens|*/huggingface/stored_tokens)
       return 0
       ;;
     *)
@@ -313,7 +313,9 @@ while IFS=$'\t' read -r archive_id archive_kind source_path source_parent member
   else
     tar --create --file=- --directory="$source_parent" --numeric-owner --sparse \
       --exclude-vcs --exclude='*/.git-credentials' --exclude='*/.netrc' \
-      --exclude='*/.huggingface/token' \
+      --exclude='*/.huggingface/token' --exclude='*/.huggingface/stored_tokens' \
+      --exclude='*/huggingface/token' --exclude='*/huggingface/stored_tokens' \
+      --exclude='huggingface/token' --exclude='huggingface/stored_tokens' \
       -- "$member_name" 2>>"$log" \
       | zstd --threads=0 -1 --quiet 2>>"$log" \
       | split --bytes="$PART_SIZE" --numeric-suffixes=0 --suffix-length=4 - "$prefix" \

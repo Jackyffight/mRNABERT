@@ -58,6 +58,13 @@ class ReproBundleScriptsTest(unittest.TestCase):
 
             (repository / ".cache").mkdir()
             (repository / ".cache" / "model.bin").write_bytes(bytes(range(256)) * 20)
+            (repository / ".cache" / "huggingface").mkdir()
+            (repository / ".cache" / "huggingface" / "token").write_text(
+                "hf_secret\n", encoding="utf-8"
+            )
+            (repository / ".cache" / "huggingface" / "stored_tokens").write_text(
+                "another_secret\n", encoding="utf-8"
+            )
             (repository / "__pycache__").mkdir()
             (repository / "__pycache__" / "module.pyc").write_bytes(b"disposable")
             (repository / "research.json").write_text('{"result": true}\n', encoding="utf-8")
@@ -69,6 +76,11 @@ class ReproBundleScriptsTest(unittest.TestCase):
             data = root / "source" / "runtime"
             data.mkdir()
             (data / "result.tsv").write_text("metric\tvalue\nloss\t2.1\n", encoding="utf-8")
+            (data / "huggingface").mkdir()
+            (data / "huggingface" / "model.bin").write_bytes(b"model cache")
+            (data / "huggingface" / "token").write_text(
+                "hf_runtime_secret\n", encoding="utf-8"
+            )
 
             profile = root / "profile.tsv"
             profile.write_text(
@@ -129,11 +141,21 @@ class ReproBundleScriptsTest(unittest.TestCase):
                 ).hexdigest(),
                 hashlib.sha256((repository / ".cache/model.bin").read_bytes()).hexdigest(),
             )
+            self.assertFalse(
+                (restored_repository / ".cache/huggingface/token").exists()
+            )
+            self.assertFalse(
+                (restored_repository / ".cache/huggingface/stored_tokens").exists()
+            )
             restored_data = restore_prefix / data.relative_to("/")
             self.assertEqual(
                 (restored_data / "result.tsv").read_text(encoding="utf-8"),
                 "metric\tvalue\nloss\t2.1\n",
             )
+            self.assertEqual(
+                (restored_data / "huggingface/model.bin").read_bytes(), b"model cache"
+            )
+            self.assertFalse((restored_data / "huggingface/token").exists())
 
     def test_dry_run_rejects_output_inside_source(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

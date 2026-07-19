@@ -11,8 +11,8 @@ Three independently verifiable bundles are required:
 | Profile | Contents |
 |---|---|
 | `control-host` | Git-untracked/meaningful-ignored state from both repositories; all Stage 1-7, research, retrieval, showcase, and report runtime; Mock/project inputs; ProteinMPNN source datasets and tar shards; NetMHC, BLAST/MAFFT, TMbed/metapredict models and environments |
-| `mrna-gpu` | Every non-Git child under the mRNA NAS root and existing mRNA HDFS archive: training corpus/shards, checkpoints, logs, downstream evaluations, public baseline weights, Evo2 checkpoint/venv, and benchmark artifacts |
-| `mpnn-gpu` | Every non-Git child under the MPNN NAS root: tar-shard datasets, training runs, promoted checkpoints, ESMFold2 runtime, Stage 3 jobs/results, and transfer artifacts |
+| `mrna-gpu` | Every non-Git child under the mRNA NAS root and existing mRNA HDFS archive, plus `/home/tiger/.local` and relevant user caches: training corpus/shards, checkpoints, logs, downstream evaluations, public baseline weights, Evo2 checkpoint/venv, and benchmark artifacts |
+| `mpnn-gpu` | Every non-Git child under the MPNN NAS root plus `/home/tiger/.local` and relevant user caches: tar-shard datasets, training runs, promoted checkpoints, ESMFold2 runtime, Stage 3 jobs/results, and transfer artifacts |
 
 If an immediate GPU-root child is a Git worktree, only its state outside Git is
 archived. For repository worktrees this means:
@@ -24,6 +24,42 @@ archived. For repository worktrees this means:
 - remote URL, branch, and exact HEAD commit as metadata.
 
 No Git object bundle and no committed tracked file is included.
+
+## GPU worker path map
+
+The launchers deliberately keep authoritative weights and caches on NAS. The
+default Hugging Face cache in `/home/tiger` is supplementary state from manual
+or older commands, not the primary copy used by the pinned launchers.
+
+| Asset | Authoritative path |
+|---|---|
+| mRNABERT training outputs and checkpoints | `/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_runs` |
+| mRNABERT dataset cache | `/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_runs/cache/datasets` |
+| mRNABERT pretrained/Hugging Face cache | `/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_runs/cache/huggingface` |
+| YYLY66 public mRNABERT baseline | `/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_baselines/YYLY66-mRNABERT-a1eb7df25804d23f08646e1cb996b234d7208a40` |
+| Evo2 environment and checkpoint | `/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA/mrna_baselines/evo2` |
+| ProteinMPNN datasets, runs, and repository-side weights | `/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/MPNN` |
+| Pinned ESMFold2-Fast/ESMC-6B environment, weights, and HF cache | `/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/MPNN/structure_runtime/esmfold2-fast` |
+| User-installed Python packages | `/home/tiger/.local` |
+| Supplementary default Hugging Face cache | `/home/tiger/.cache/huggingface` |
+| Supplementary Torch and pip caches | `/home/tiger/.cache/torch`, `/home/tiger/.cache/pip` |
+
+`run_train.sh` sets mRNABERT's `HF_HOME` to the configured NAS output cache and
+rejects a home-directory cache by default. The ESMFold2 setup and launch scripts
+set `HF_HOME` to `structure_runtime/esmfold2-fast/hf-home`; its model snapshots
+are under `structure_runtime/esmfold2-fast/models`.
+
+The following `/tmp` use is disposable and is intentionally not archived:
+
+- `/tmp/triton_cache_mrnabert_*` from mRNABERT training;
+- `/tmp/proteinmpnn-pip-bootstrap` when no explicit `TMPDIR` is supplied;
+- transient tar, compiler, and predictor scratch.
+
+The pinned ESMFold2 setup already redirects both `TMPDIR` and `HF_HOME` into its
+NAS runtime root. GPU profiles still include `/home/tiger/.local` and the three
+default caches as optional entries so manually installed ABI-sensitive packages
+or one-off model downloads are not silently missed. Hugging Face `token` and
+`stored_tokens` credential files are always excluded.
 
 ## Bundle format
 
@@ -53,14 +89,14 @@ the original absolute paths.
 4. Keep the bundles private. NetMHC licensing and supplied Mock inputs do not
    permit treating this as a public redistribution package.
 
-On **each GPU worker**, clone the packaging tool into a neutral temporary path.
+On **each GPU worker**, clone the packaging tool into a neutral home path.
 Do not checkout or pull the experiment worktree that is about to be archived:
 
 ```bash
 git clone --single-branch \
   --branch feature/research-showcase-20260717 \
   git@github.com:Jackyffight/mRNABERT.git \
-  /tmp/vaxflow-repro-tool-20260719
+  /home/tiger/vaxflow-repro-tool-20260719
 ```
 
 ## Preflight
@@ -73,13 +109,13 @@ Preflight resolves all entries and sizes but writes no bundle:
   /mnt/backup/vaxflow-20260719/control-host \
   --dry-run
 
-/tmp/vaxflow-repro-tool-20260719/scripts/repro_bundle/package_profile.sh \
-  /tmp/vaxflow-repro-tool-20260719/scripts/repro_bundle/profiles/mrna-gpu.tsv \
+/home/tiger/vaxflow-repro-tool-20260719/scripts/repro_bundle/package_profile.sh \
+  /home/tiger/vaxflow-repro-tool-20260719/scripts/repro_bundle/profiles/mrna-gpu.tsv \
   /mnt/backup/vaxflow-20260719/mrna-gpu \
   --dry-run
 
-/tmp/vaxflow-repro-tool-20260719/scripts/repro_bundle/package_profile.sh \
-  /tmp/vaxflow-repro-tool-20260719/scripts/repro_bundle/profiles/mpnn-gpu.tsv \
+/home/tiger/vaxflow-repro-tool-20260719/scripts/repro_bundle/package_profile.sh \
+  /home/tiger/vaxflow-repro-tool-20260719/scripts/repro_bundle/profiles/mpnn-gpu.tsv \
   /mnt/backup/vaxflow-20260719/mpnn-gpu \
   --dry-run
 ```
@@ -97,12 +133,12 @@ the same source root.
   /data00/home/wangzhi.wit/models/mRNABERT/scripts/repro_bundle/profiles/control-host.tsv \
   /mnt/backup/vaxflow-20260719/control-host
 
-/tmp/vaxflow-repro-tool-20260719/scripts/repro_bundle/package_profile.sh \
-  /tmp/vaxflow-repro-tool-20260719/scripts/repro_bundle/profiles/mrna-gpu.tsv \
+/home/tiger/vaxflow-repro-tool-20260719/scripts/repro_bundle/package_profile.sh \
+  /home/tiger/vaxflow-repro-tool-20260719/scripts/repro_bundle/profiles/mrna-gpu.tsv \
   /mnt/backup/vaxflow-20260719/mrna-gpu
 
-/tmp/vaxflow-repro-tool-20260719/scripts/repro_bundle/package_profile.sh \
-  /tmp/vaxflow-repro-tool-20260719/scripts/repro_bundle/profiles/mpnn-gpu.tsv \
+/home/tiger/vaxflow-repro-tool-20260719/scripts/repro_bundle/package_profile.sh \
+  /home/tiger/vaxflow-repro-tool-20260719/scripts/repro_bundle/profiles/mpnn-gpu.tsv \
   /mnt/backup/vaxflow-20260719/mpnn-gpu
 ```
 
@@ -153,7 +189,8 @@ mapped.
 - all committed Git objects and tracked files;
 - SSH keys, Git credentials, HF tokens, proxy credentials, and shell history;
 - nested VCS metadata inside non-Git algorithm/data roots;
-- `.agents`, `.codex`, and arbitrary home-directory state;
+- `.agents`, `.codex`, and arbitrary home-directory state outside the explicitly
+  listed user Python/Hugging Face/Torch/pip paths;
 - regenerable Python bytecode, test caches, build directories, and egg metadata;
 - the OS image and proprietary GPU-driver installer themselves.
 

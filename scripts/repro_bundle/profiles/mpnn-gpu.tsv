@@ -1,2 +1,6 @@
 # requirement	mode	label	absolute_path
 required	children-except-git	mpnn-nas	/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/MPNN
+optional	entry	gpu-user-python	/home/tiger/.local
+optional	entry	gpu-huggingface-cache	/home/tiger/.cache/huggingface
+optional	entry	gpu-torch-cache	/home/tiger/.cache/torch
+optional	entry	gpu-pip-cache	/home/tiger/.cache/pip
