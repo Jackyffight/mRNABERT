@@ -1,0 +1,2 @@
+# requirement	mode	label	absolute_path
+required	children-except-git	mpnn-nas	/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/MPNN

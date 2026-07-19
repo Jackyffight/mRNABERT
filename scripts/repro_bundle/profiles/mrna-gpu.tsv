@@ -1,0 +1,3 @@
+# requirement	mode	label	absolute_path
+required	children-except-git	mrna-nas	/mnt/bn/neptune/mlx/users/wangzhi.wit/playground/models/mRNA
+optional	children-except-git	mrna-hdfs	/mnt/hdfs/byte_neptune_ai/mrna

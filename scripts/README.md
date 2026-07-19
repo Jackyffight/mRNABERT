@@ -1,5 +1,10 @@
 # Operational Scripts
 
+Full archival of the state outside Git across the control host, mRNABERT GPU
+root, and ProteinMPNN GPU root is implemented under
+[`repro_bundle/`](repro_bundle/). Exact commands and restore constraints are in
+the [full experiment archive runbook](../docs/reproducibility/full-experiment-archive-20260719.md).
+
 These scripts pin the current NAS/HDFS paths used for the 2026-07-07 mRNABERT run.
 Run them from the repository root or by absolute script path; no shell variables need
 to be exported by the caller.
